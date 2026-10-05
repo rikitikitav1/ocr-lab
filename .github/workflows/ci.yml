@@ -52,8 +52,6 @@ jobs:
           uv export --no-hashes --no-emit-project --format requirements-txt -o requirements.txt
           uvx pip-audit -r requirements.txt
 
-      # secret scan across the full history
+      # secret scan across the full history; the CLI, because the action asks for the parent of a root commit
       - name: gitleaks (secrets)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.24.3 detect --source /repo --no-banner --redact

@@ -25,7 +25,7 @@ audit() {
 
 # the same gitleaks image CI runs, over the whole history
 secrets() {
-  docker run --rm -v "$PWD":/repo zricethezav/gitleaks:latest detect --source /repo --no-banner --redact
+  docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.24.3 detect --source /repo --no-banner --redact
 }
 
 step ruff uv run ruff check app tests scripts
