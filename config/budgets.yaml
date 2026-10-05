@@ -1,0 +1,11 @@
+# attempts each stage gets before it stops and waits for attention; 3 to 5 each
+attempts:
+  book_run: 3
+  intake: 3
+  metadata: 4
+  toc: 4
+  profile_search: 3
+  assemble_chapter: 5
+  book_metrics: 3
+  eval_run: 3
+  cleanup: 3
