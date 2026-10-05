@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx ruff check app/ tests/ scripts/
+
+  test:
+    runs-on: ubuntu-latest
+    # the database tests build a throwaway base from db/schema.sql; without postgres they are skipped
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_POSTGRES_URL: postgresql+psycopg://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --all-groups
+      # a skipped database test would pass for the wrong reason, so the run fails if any is skipped
+      - run: uv run pytest -q -n 4 -rs | tee pytest.log
+      - run: "! grep -q SKIPPED pytest.log"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+
+      # SAST over our own code, fails on medium+ severity
+      - name: bandit (SAST)
+        run: uvx bandit -r app/ -ll -c pyproject.toml
+
+      # dependency CVEs, blocking
+      - name: pip-audit (dependencies)
+        run: |
+          uv export --no-hashes --no-emit-project --format requirements-txt -o requirements.txt
+          uvx pip-audit -r requirements.txt
+
+      # secret scan across the full history
+      - name: gitleaks (secrets)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
