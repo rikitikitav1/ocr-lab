@@ -1,0 +1,333 @@
+# Checked metadata for the books in the stand: the reference for SC-010 and for choosing models.
+# Fix a wrong value in place; null means the book (or any catalogue) really does not have it.
+# Leave `checked: false` on a book you did not look at. Comments show where the stand took each value.
+
+- book: 1
+  file: "kafka-the-definitive-guide-2e.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/rag-lab/datasets/inbox/books/kafka-the-definitive-guide-2e/kafka-the-definitive-guide-2e.pdf
+  sha256: 74f81f87e1e90458
+  checked: true
+  fields:
+    title: "Kafka: The Definitive Guide"  # catalogue:open_library 0.59
+    authors: ["Neha Narkhede", "Gwen Shapira", "Todd Palino", "Rajini Sivaram", "Krit Petty"]  # catalogue:open_library 0.59
+    translators: null  # not found
+    illustrators: null  # not found
+    publisher: "O'Reilly Media"  # catalogue:open_library 0.56
+    year: 2021  # catalogue:open_library 0.56
+    edition: 2  # title_pages 0.7
+    series: null  # not found
+    isbn: "9781492043089"  # title_pages 0.8
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["en"]  # detector 0.9
+    subject: "kafka, data processing, textbook"  # model 0.5
+    pages: 793  # intake 1.0
+
+- book: 2
+  file: "analiz-dannyh-s-pomoshyu-genai-i-python.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/rag-lab/datasets/inbox/books/analiz-dannyh-genai-python/analiz-dannyh-s-pomoshyu-genai-i-python.pdf
+  sha256: a41a6ea223301dcf
+  checked: true
+  fields:
+    title: "Анализ данных с помощью GenAI и Python"  # catalogue:labirint 0.85
+    authors: ["Гуджа Артур", "Сивяк Марлена", "Сивяк Мариан"]  # catalogue:labirint 0.8
+    translators: ["Черников Сергей"]  # catalogue:labirint 0.8
+    illustrators: null  # not found
+    publisher: "Питер"  # catalogue:labirint 0.85
+    year: 2026  # catalogue:labirint 0.59
+    edition: null  # not found
+    series: "Библиотека программиста"  # catalogue:labirint 0.8
+    isbn: "9785446143139"  # title_pages 0.8
+    original_title: "Starting Data Analytics"  # model 0.5
+    original_year: 2024  # model 0.5
+    original_isbn: "9781633437210"  # title_pages 0.2
+    languages: ["ru"]  # detector 0.9
+    subject: "data analysis using generative ai and python, textbook"  # model 0.5
+    pages: 400  # intake 1.0
+
+- book: 3
+  file: "arhitektury-dannyh.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/rag-lab/datasets/inbox/books/control-arhitektury-dannyh/arhitektury-dannyh.pdf
+  sha256: d8a4f0da572fef64
+  checked: true
+  fields:
+    title: "Архитектуры данных. Современные решения для любых задач"  # catalogue:labirint 0.59
+    authors: ["Серра Джеймс"]  # catalogue:labirint 0.56
+    translators: ["Григорьева Н. В."]  # catalogue:labirint 0.8
+    illustrators: null  # not found
+    publisher: "Питер"  # catalogue:labirint 0.59
+    year: 2026  # catalogue:labirint 0.59
+    edition: 3  # title_pages 0.7
+    series: "Библиотека программиста"  # catalogue:labirint 0.8
+    isbn: "9786011250337"  # title_pages 0.8
+    original_title: "Deciphering Data Architectures"  # model 0.5
+    original_year: 2024  # model 0.5
+    original_isbn: "9781098150761"  # title_pages 0.2
+    languages: ["ru"]  # detector 0.9
+    subject: "data architecture, popular science"  # model 0.5
+    pages: 288  # intake 1.0
+
+- book: 4
+  file: "eloquent-javascript.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/rag-lab/datasets/inbox/books/eloquent-javascript/eloquent-javascript.pdf
+  sha256: 0db2c21ebe1a7019
+  checked: true
+  fields:
+    title: "Eloquent JavaScript"  # model 0.5
+    authors: ["Marijn Haverbeke"]  # model 0.5
+    translators: null  # not found
+    illustrators: ["Madalina Tantareanu"]  # title_pages 0.6
+    publisher: "No Starch Press"  # owner: the paper version, named on page 3
+    year: 2024  # title_pages 0.6
+    edition: 4  # title_pages 0.7
+    series: null  # not found
+    isbn: "9781718504103"  # owner: 4th edition paperback; the link on page 3 carries 1593279507, the 3rd edition
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["en"]  # detector 0.9
+    subject: "programming in javascript, textbook"  # model 0.5
+    pages: 463  # intake 1.0
+
+- book: 5
+  file: "ref.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/rag-lab/datasets/inbox/books/freepascal/ref.pdf
+  sha256: 55e2165219b4b324
+  checked: true
+  fields:
+    title: "Free Pascal Reference guide"  # model 0.35
+    authors: ["Michaël Van Canneyt"]  # model 0.35
+    translators: null  # not found
+    illustrators: null  # not found
+    publisher: null  # not found
+    year: 2021  # model 0.5
+    edition: "3.2.2"  # owner: "Document version 3.2.2" on the title page
+    series: null  # not found
+    isbn: null  # not found
+    original_title: null  # not found
+    original_year: 1970  # title_pages 0.5
+    original_isbn: null  # not found
+    languages: ["en"]  # detector 0.9
+    subject: "pascal programming language reference guide, reference"  # model 0.5
+    pages: 268  # intake 1.0
+
+- book: 6
+  file: "cloud-native-docker-k8s-scan.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/rag-lab/datasets/inbox/books/cloud-native-docker-k8s-scan/cloud-native-docker-k8s-scan.pdf
+  sha256: ae7f479289e83706
+  checked: true
+  fields:
+    title: "Программирование Cloud Native. Микросервисы, Docker и Kubernetes"  # model 0.5
+    authors: ["Иван Портянкин"]  # model 0.5
+    translators: null  # not found
+    illustrators: null  # not found
+    publisher: "Leanpub"  # owner: this file is the Leanpub version of 2024-01-24; print: Ridero / Издательские решения, 2022
+    year: 2024  # owner: "Эта версия была опубликована 2024-01-24"
+    edition: 2  # owner: the 2nd edition, per the author site
+    series: null  # not found
+    isbn: "9785449833877"  # title_pages 0.8
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "cloud native programming, microservices, docker, kubernetes, textbook"  # model 0.5
+    pages: 233  # intake 1.0
+
+- book: 7
+  file: "Skotny_dvor_Dzhordzh_Oruell.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/Skotny_dvor_Dzhordzh_Oruell.pdf
+  sha256: ffb4aaebaf341bd1
+  checked: true
+  fields:
+    title: "Скотный двор"  # model 0.5
+    authors: ["Джордж Оруэлл"]  # model 0.5
+    translators: ["Беспалова"]  # title_pages 0.42
+    illustrators: null  # not found
+    publisher: null  # not found
+    year: 1992  # title_pages 0.42
+    edition: null  # not found
+    series: null  # not found
+    isbn: null  # not found
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "animals revolt on a farm, novel"  # model 0.5
+    pages: 78  # intake 1.0
+
+- book: 8
+  file: "Mir_rasteniy_Rasskazy_o_kulturnykh_rasteniakh.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/Mir_rasteniy_Rasskazy_o_kulturnykh_rasteniakh.pdf
+  sha256: bcb8ce4c952f371d
+  checked: true
+  fields:
+    title: "Мир растений: Рассказы о культурных растениях"  # model 0.35
+    authors: ["Алексей Смирнов"]  # model 0.35
+    translators: null  # not found
+    illustrators: ["А. Колли"]  # title_pages 0.6
+    publisher: "Молодая гвардия"  # model 0.35
+    year: 1988  # catalogue:open_library 0.8
+    edition: null  # not found
+    series: "Эврика"  # model 0.5
+    isbn: "5235006135"  # title_pages 0.8
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "stories about cultivated plants, popular science"  # model 0.5
+    pages: 306  # intake 1.0
+
+- book: 9
+  file: "Udivitelnye_priklyuchenia_v_strane_Ekonomika.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/Udivitelnye_priklyuchenia_v_strane_Ekonomika.pdf
+  sha256: 1a249238100e33e0
+  checked: true
+  fields:
+    title: "Удивительные приключения в стране экономики"  # model 0.5
+    authors: ["Липсиц И.В."]  # model 0.5
+    translators: null  # not found
+    illustrators: ["А.В.Балдин"]  # title_pages 0.42
+    publisher: "фирма \"Нивекс\", изд-во \"Триада\""  # model 0.5
+    year: 1992  # title_pages 0.6
+    edition: null  # not found
+    series: null  # not found
+    isbn: "5886000011"  # title_pages 0.8
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "economics for children, children's book"  # model 0.5
+    pages: 341  # intake 1.0
+
+- book: 10
+  file: "21_originalny_sposob_zavarki_chaya.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/21_originalny_sposob_zavarki_chaya.pdf
+  sha256: 9e618b282d5b1ac5
+  checked: true
+  fields:
+    title: "Как заваривать чай? 21 оригинальный способ заварки чая"  # model 0.5
+    authors: ["Гаппуров Илья"]  # model 0.35
+    translators: null  # not found
+    illustrators: null  # not found
+    publisher: "www.chaochay.ru"  # model 0.5
+    year: null  # not found
+    edition: null  # not found
+    series: null  # not found
+    isbn: null  # not found
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "different ways to brew tea, popular science"  # model 0.5
+    pages: 33  # intake 1.0
+
+- book: 11
+  file: "Bolezni_ukha_gorla_i_nosa_V_T_Palchun.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/Bolezni_ukha_gorla_i_nosa_V_T_Palchun.pdf
+  sha256: ab1d9601144b306a
+  checked: true
+  fields:
+    title: "Болезни уха, горла и носа"  # model 0.5
+    authors: ["Пальчун Владимир Тимофеевич"]  # model 0.5
+    translators: null  # not found
+    illustrators: null  # not found
+    publisher: "ГЭОТАР-Медиа"  # model 0.5
+    year: 2010  # title_pages 0.6
+    edition: 2  # model 0.5
+    series: null  # not found
+    isbn: "9785970415566"  # title_pages 0.8
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "diseases of the ear, nose, and throat, textbook"  # model 0.5
+    pages: 325  # intake 1.0
+
+- book: 12
+  file: "yozhik-i-ego-schaste_RuLit_Me_682904.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/yozhik-i-ego-schaste_RuLit_Me_682904.pdf
+  sha256: f83bd8332564e031
+  checked: true
+  fields:
+    title: "Ёжик и его счастье"  # owner: a Russian edition, the title in the language of the text
+    authors: ["Богдан Ковальчук"]  # model 0.35
+    translators: null  # not found
+    illustrators: null  # not found
+    publisher: null  # not found
+    year: null  # not found
+    edition: null  # not found
+    series: null  # not found
+    isbn: null  # not found
+    original_title: "Їжачок та його щастя"  # owner: the Ukrainian original
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "a hedgehog's search for happiness, children's book"  # model 0.5
+    pages: 16  # intake 1.0
+
+- book: 13
+  file: "Yakovlev_Malchik-s-konkami_RuLit_Me_819.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/Yakovlev_Malchik-s-konkami_RuLit_Me_819.pdf
+  sha256: 5fe1c676ab5c97f1
+  checked: false
+  fields:
+    title: "Мальчик с коньками"  # model 0.5
+    authors: ["Юрий Яковлев"]  # model 0.5
+    translators: null  # not found
+    illustrators: ["Г. Мазурина"]  # title_pages 0.6
+    publisher: "Детская литература"  # model 0.5
+    year: 1988  # model 0.5
+    edition: "reissue"  # title_pages 0.5
+    series: "Книга за книгой"  # title_pages 0.7
+    isbn: null  # not found
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["ru"]  # detector 0.9
+    subject: "a boy helps a stranger, children's book"  # model 0.5
+    pages: 27  # intake 1.0
+
+- book: 14
+  file: "7628-ua.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/7628-ua.pdf
+  sha256: ce0c0d89a216eb62
+  checked: false
+  fields:
+    title: "1984"  # model 0.5
+    authors: ["Джордж Орвелл"]  # model 0.5
+    translators: ["В’ячеслав Стельмах"]  # title_pages 0.6
+    illustrators: null  # not found
+    publisher: "BOOKCHEF"  # model 0.5
+    year: 2023  # model 0.5
+    edition: null  # not found
+    series: "серія класика"  # model 0.5
+    isbn: null  # not found
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["uk"]  # detector 0.9
+    subject: "dystopian society, surveillance, totalitarianism, novel"  # model 0.5
+    pages: 21  # intake 1.0
+
+- book: 15
+  file: "Lart_grec_-_Jean-Jacques_Maffre.pdf"
+  open: /home/knechaev/code/github.com/rikitikitav1/ocr-lab/data/inbox/Lart_grec_-_Jean-Jacques_Maffre.pdf
+  sha256: 567e0f6f7847e324
+  checked: false
+  fields:
+    title: "L'art grec"  # catalogue:open_library 0.85
+    authors: ["Jean-Jacques Maffre"]  # catalogue:open_library 0.85
+    translators: null  # not found
+    illustrators: null  # not found
+    publisher: "Flammarion"  # catalogue:open_library 0.8
+    year: 1997  # catalogue:open_library 0.56
+    edition: null  # not found
+    series: "TOUT L'ART Grammaire des styles"  # model 0.5
+    isbn: "2080101420"  # title_pages 0.8
+    original_title: null  # not found
+    original_year: null  # not found
+    original_isbn: null  # not found
+    languages: ["fr"]  # detector 0.9
+    subject: "history of greek art, reference"  # model 0.5
+    pages: 84  # intake 1.0

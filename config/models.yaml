@@ -1,0 +1,5 @@
+# which model each of the stand's own model steps calls; a provider is ollama or cloud (OpenAI-compatible)
+steps:
+  metadata_reader: {provider: ollama, model: "qwen2.5:7b-w16384", temperature: 0}
+  # measured on six books: qwen2.5 answered in Chinese on two, llama3.1 misnamed two kinds, gemma2 got all six
+  subject: {provider: ollama, model: "gemma2:9b", temperature: 0}
