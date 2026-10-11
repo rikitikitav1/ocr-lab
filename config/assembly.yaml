@@ -1,0 +1,18 @@
+# the assembler's passes and their defaults; a pass becomes a default only after a gate run shows it does no harm
+passes:
+  # code text from the text layer inside each code block's box, when the face there is monospace
+  code_from_layer: true
+  # each table takes this engine's grid at the same place, unless it split the place into several tables
+  tables_from: mineru
+  # how the table is chosen: "prefer" takes the engine above, "layer" the grid agreeing better with the layer words
+  tables_by: layer
+  # a paragraph whose glyphs all keep one advance is code an engine read as prose
+  mono_paragraphs: true
+  # every code box either engine drew is kept where the layer is monospace and only prose sits; off: measured worse
+  code_union: false
+  # a table only the preferred engine drew joins when its cells agree with the layer words in its box; off: measured worse
+  table_union: false
+  # a code block ending low on a page and one starting high on the next, with only the page between, are one
+  join_code_across_pages: true
+  # on a recognised (scanned) range the text is this engine's; the other one's words measure the agreement
+  scan_engine: mineru
