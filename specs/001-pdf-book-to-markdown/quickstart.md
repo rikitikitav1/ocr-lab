@@ -7,14 +7,14 @@ Run guide, not an implementation. Routes and fields: `contracts/http_api.md`,
 
 - rag-lab stack down (`docker compose --profile '*' down` in `../rag-lab`): both stands share the GPU.
 - Local images `rag-lab-converter-docling` and `rag-lab-converter-mineru` present
-  (`docker images | grep rag-lab-converter`), `~/.cache/huggingface` populated.
+  (`docker images | grep rag-lab-converter`); their models are baked into the images.
 - `../rag-lab/datasets/inbox/books` present (the shelf).
 - `.env` from `.env.example` with the model provider URL and key (ollama needs none).
 
 ## 1. Stand up (User Story 0, SC-009)
 
 ```bash
-docker compose --profile convert up -d
+docker compose up -d
 curl -s localhost:8100/v1/stand | jq
 ```
 
@@ -42,7 +42,7 @@ Expect: every field filled with source and confidence, or null with every source
 curl -s -XPOST localhost:8100/v1/books/1/runs -d '{"format": "markdown"}' \
      -H 'content-type: application/json' | jq '.run.id, .job.id'
 curl -s 'localhost:8100/v1/jobs/<job>/wait?timeout=3600' | jq '.finished'
-curl -s localhost:8100/v1/runs/<run>/report | jq '.verdict, .structure, .images'
+curl -s localhost:8100/v1/runs/<run>/report | jq '.numbers, .images'
 ```
 
 Expect: bundle under `data/bundles/1/<run>/` with `.md`, `images/`, `profile.yaml`, `report.json`;

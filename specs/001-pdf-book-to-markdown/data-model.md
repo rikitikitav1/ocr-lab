@@ -19,7 +19,8 @@ The catalogue record (spec: Source book, Catalogue record).
 | toc_sources | jsonb | sources found at intake, with entry counts |
 | stage | text | current stage, see state machine |
 | result_run_id | fk runs | best finished run (FR-053), recomputed when a run finishes |
-| knobs | jsonb | book-level knob overrides (FR-059): `metadata.title_pages.head`, `metadata.title_pages.tail`, `toc.contents_pages` |
+| knobs | jsonb | book-level knob overrides (FR-059): `metadata.title_pages.head`, `metadata.title_pages.tail`, `toc.contents_pages`, `toc.skip_root_bookmark` |
+| page_offset | int | book page minus printed page number, measured on the printed contents when the text confirms most entries, whichever toc source won; null otherwise |
 
 ## metadata_fields
 
@@ -28,9 +29,9 @@ One row per book and field (FR-037, FR-038).
 | field | type | notes |
 |---|---|---|
 | metadata_version_id | fk metadata_versions | |
-| name | text | `title`, `authors`, `edition`, `year`, `languages`, `publisher`, `translators`, `illustrators`, `editions` (related editions found on the web), `series`, `volume`, `isbn`, `subject`, `pages`, and the optional `original_title`, `original_year`, `original_isbn` (`translators` optional too); `year` is the year of this edition or translation |
+| name | text | `title`, `authors`, `edition`, `year`, `languages`, `publisher`, `series`, `volume`, `isbn`, `subject`, `pages`, and the optional `original_title`; `year` is the year of this edition or translation |
 | value | jsonb | null when unknown |
-| source | text | `file_metadata`, `title_pages`, `catalogue:<name>`, `model`, `detector`, `manual` |
+| source | text | `file_metadata`, `title_pages`, `imprint`, `model`, `detector`, `intake`, `manual` |
 | confidence | real | 0..1 |
 | attempts | jsonb | every source tried, with outcome (`found`, `absent`, `conflict`, `failed`) |
 | unique | | (metadata_version_id, name) |
@@ -86,7 +87,7 @@ Reconciled table of contents (FR-008, FR-009, FR-043).
 | title | text | |
 | level | int | 1..6 |
 | level_source | text | `bookmarks`, `printed_contents`, `numbering`, `typography`, `catalogue`, `model` |
-| first_page, last_page | int | file pages |
+| first_page, last_page | int | book pages, numbered across files; the file and in-file page come from `book_files.first_page` |
 | kind | text | `chapter`, `part`, `section`, `front_matter`, `back_matter` (filtered entries are kept with their kind) |
 | votes | jsonb | which sources had this entry, with their levels |
 
@@ -148,7 +149,6 @@ One processing of one book with one profile (spec: Run).
 | stage | text | current stage |
 | code_hash | text | hash of `app/` the worker ran |
 | engine_builds | jsonb | build stamps of engines used |
-| verdict | text | `ok`, `dirty`, `bad`, null while running |
 | bundle_dir | text | set when done |
 
 ## chapters
@@ -160,11 +160,10 @@ Chapter of a run (spec: Chapter; FR-042, FR-044, FR-046).
 | run_id | fk runs | |
 | ord | int | matches the toc entry |
 | toc_entry_id | fk toc_entries | |
-| status | text | `pending`, `running`, `done`, `failed` (error kept in `reasons`) |
+| status | text | `pending`, `running`, `done`, `failed` (error kept in `errors`) |
 | engine | text | |
-| checks | jsonb | chapter metrics |
-| verdict | text | |
-| reasons | jsonb | |
+| checks | jsonb | chapter numbers: text lost and not in the layer, sub-entries found, headings, figures, pass counts |
+| errors | jsonb | why a failed chapter failed |
 | seconds, gpu_seconds | real | |
 | unique | | (run_id, ord) |
 
@@ -181,7 +180,7 @@ Manifest of stage artifacts (FR-020, FR-022, FR-023).
 | stage | text | |
 | chapter_ord | int | null for book-level stages |
 | name | text | e.g. `toc.bookmarks.json`, `engine.docling.p101-140.json`, `model.after.drop_running_heads.json` |
-| path | text | relative to the run dir |
+| path | text | relative to `data/` (run artifacts under `runs/<book_id>/<run_id>/`, versioned book-level ones under `books/<book_id>/metadata/v<N>/` and `books/<book_id>/toc/v<N>/`) |
 | sha256 | text | |
 | input_hash | text | hash of inputs, profile sha and engine builds; reuse on resume only if equal |
 | meta | jsonb | engine build, knobs applied, model call ids |
@@ -194,11 +193,24 @@ Cached model calls (FR-026).
 
 | field | type | notes |
 |---|---|---|
-| request_hash | text pk | model id, parameters and prompt |
+| request_hash | text pk | provider, model id, parameters and prompt |
+| provider | text | `ollama` or the cloud provider; part of the hash, since one model name may live in both |
 | model | text | |
 | params | jsonb | |
 | response_path | text | artifact path of the response |
 | tokens_in, tokens_out | int | |
+| created_at | timestamptz | |
+
+## outside_hosts
+
+Hosts that failed recently, so every caller waits out the same pause instead of each finding it again (`app/net.py`).
+
+| field | type | notes |
+|---|---|---|
+| host | text pk | |
+| until | timestamptz | no call to the host before this time |
+| reason | text | the last failure |
+| updated_at | timestamptz | |
 
 ## jobs
 
@@ -207,24 +219,29 @@ Queue (research R4).
 | field | type | notes |
 |---|---|---|
 | id | bigint | |
-| type | text | `book_run`, `intake`, `metadata`, `toc`, `profile_search`, `assemble_chapter`, `book_metrics`, `eval_run` |
+| type | text | `book_run`, `intake`, `metadata`, `toc`, `toc_scan` (a scan's toc on the GPU lane), `profile_search`, `assemble_chapter`, `book_metrics`, `eval_run`, `toc_eval`, `cleanup`, and `noop`, `noop_gpu` for tests of the queue; the list follows `SPECS` in `app/job_specs.py`; a recollection runs as `intake`, `metadata` or `toc` |
 | lane | text | `gpu`, `cpu` |
 | parent_id | fk jobs | book run → stage jobs → chapter jobs |
 | run_id | fk runs | |
+| book_id | fk books | the book a job works on, for book-level jobs and their children |
 | options | jsonb | validated by a pydantic spec per type |
 | status | text | `new`, `running`, `done`, `error`, `paused`, `cancelled` |
-| attempts | int | |
+| attempts | int | spent by failures only; a deferral spends none |
+| reclaims | int | times a running job was taken back from a worker that stopped answering |
 | apply_since | timestamptz | backoff and deferral |
-| waiting_because | text | |
+| waiting_because | jsonb | why a new job waits: `{kind, ...}`, e.g. `deferred` with its reason |
 | code_hash | text | worker code hash that ran it |
 | result, error | jsonb | |
 | elapsed | real | |
+| deferred_seconds | int | the deferral delays added up, so a job's wait is told apart from its work |
+| created_at, updated_at | timestamptz | |
 
 ## evaluation_sets, evaluation_members
 
 | field | type | notes |
 |---|---|---|
 | evaluation_sets.name | text unique | |
+| evaluation_sets.targets | jsonb | SC-002 target (0.95) and the SC-011 margin, set by the owner after the first evaluation run |
 | evaluation_members.set_id | fk | |
 | evaluation_members.book_id | fk books | |
 | evaluation_members.mode | text | `normal`, `bookmarks_off`, `as_scan` (FR-029, FR-049) |
@@ -257,6 +274,9 @@ means every chapter is done or failed and at least one failed after its retries 
 reruns the failed chapters. `failed` and `cancelled` runs can be resumed into `running` in the
 same `dir`.
 
+Job status: `new → running → done | error`, plus `paused` and `cancelled`. Jobs end in `error`, runs
+and chapters in `failed`; the two words are kept apart on purpose.
+
 Chapter status: `pending → running → done | failed`; rerunning a chapter sets it back to
 `pending`, then `book_metrics` recomputes (FR-044, FR-045).
 
@@ -264,6 +284,6 @@ Chapter status: `pending → running → done | failed`; rerunning a chapter set
 
 - Heading levels 1..6 in the document model; a writer rejects anything else (FR-004).
 - A chapter's level comes from its toc entry; inner headings are relative to it (FR-043).
-- Book verdict = worst of chapter verdicts and whole-book checks (FR-045).
+- Book numbers = sums of the chapters' words and sub-entries, with the worst chapters named; no verdict label (FR-045).
 - A new knob option is selected only by profiles naming it; the evaluation run counts members whose
   output changed without selecting it (FR-016, FR-028).

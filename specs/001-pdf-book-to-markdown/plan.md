@@ -1,6 +1,6 @@
 # Implementation Plan: PDF Book to Measured Markdown Bundle
 
-**Branch**: none yet (`001-pdf-book-to-markdown` once the repository goes under git) | **Date**: 2026-10-05 | **Spec**: [spec.md](spec.md)
+**Branch**: `001-pdf-book-to-markdown` (P0, merged in PR #1); P1 on `002-p1-toc` | **Date**: 2026-10-05 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/001-pdf-book-to-markdown/spec.md`
 
@@ -26,7 +26,8 @@ providers: ollama, DeepSeek and similar); engines Docling
 (docling-serve 1.35.0) and MinerU 4.0.7 in the reused rag-lab images; reportlab for test fixtures
 
 **Storage**: PostgreSQL 17 (catalogue, queue, manifests, evaluation); filesystem volume `data/`
-for books, run artifacts and bundles; read-only mounts of the rag-lab shelf and HF cache
+for books, run artifacts and bundles; read-only mounts of the rag-lab shelf. No HuggingFace
+cache mount: the converter images carry their models and ollama keeps its own volume
 
 **Testing**: pytest with xdist, scratch database per module from `db/schema.sql`, FastAPI
 TestClient and MCP client for doors, a kill-and-resume stand test; ruff
@@ -51,23 +52,25 @@ overwritten, removed only by an explicit cleanup
 
 | principle | how the plan meets it | status |
 |---|---|---|
-| I. Autonomous Conversion | one `POST /books/{id}/runs` produces the bundle; profile search runs inside the stand; failures still produce a bundle with a `bad` verdict | pass |
+| I. Autonomous Conversion | one `POST /books/{id}/runs` produces the bundle; profile search runs inside the stand; failures still produce a bundle whose numbers show the loss | pass |
 | II. Book Profile of Knobs | `config/knobs.yaml` registry, presets, immutable profiles with source and evidence per value, chapter overrides | pass |
 | III. Measured Quality | report schema in `contracts/bundle.md`; structure metrics are first-class; search scores with the report's own checks | pass |
-| IV. Structure Matches the Book | toc stage with six sources, reconciliation with level source stamp, chapters as the unit, levels from toc | pass |
+| IV. Structure Matches the Book | toc stage reconciling bookmarks, printed contents (recognised on scans), chapter files and numbering, level source stamped per entry, chapters as the unit, levels from toc | pass |
 | V. Format-Agnostic Core | own document model; engine adapters; Markdown writer reads only the model | pass |
 | VI. Gated Shared Behaviour | evaluation sets, gates registered before runs, per-member deltas, unexpected-change count | pass |
 | VII. Reproducible Runs | profile sha, engine build stamps, code hash on every run; model calls cached | pass |
 | VIII. Artifacts and Resumable Runs | atomic write plus manifest row per artifact; resume by input hash; kill-and-resume test | pass |
 | Technical Constraints | Python, Compose, models for narrow steps inside, external agent via MCP, local storage | pass |
 | Output Contract | bundle layout and link rules in `contracts/bundle.md`, link checker in tests | pass |
-| Development Workflow | evaluation set as regression; plain one-line comments; plans in `~/working_docs` | pass |
+| Development Workflow | evaluation set as regression; plain one-line comments; plans, notes and logs in `~/working_docs`, Spec Kit artifacts in `specs/<feature>/` as the constitution (1.1.2) allows | pass |
 
 Post-design re-check (after `data-model.md` and `contracts/`): no change, all pass. Points to
 watch during implementation:
 
-- No genre is assumed (Principle II, FR-050): rules for code, sidebars and formulas are knob
-  options, and the default preset selects none of them; a few non-technical books join the
+- No genre is assumed (Principle II, FR-050): rules for code, formulas, verse and picture-led
+  pages are knob options the default preset does not select. Keeping running heads, footers,
+  sidebars and captions out of the headings is on for every book in the default preset
+  (Principle IV, FR-006); a few non-technical books join the
   evaluation set before its first run (research R15).
 
 - Principle VII with reused images: the images are built in rag-lab, so reproducibility rests on
@@ -101,37 +104,50 @@ app/
 ├── api/v1/                   # books, runs, profiles, jobs, eval, stand routers
 ├── use_cases/                # what routes and tools call; no HTTP inside
 ├── worker.py                 # lanes gpu and cpu, code hash stamp
+├── job_handlers/             # book.py (intake, metadata, toc chain), run.py, evaluation.py
 ├── job_queue.py              # claim, retry, defer, notify, wait
 ├── job_specs.py              # pydantic option specs per job type
 ├── stages/
 │   ├── intake.py             # sha, pages, text layer map, bookmarks, contents probe
-│   ├── metadata.py           # field sources and attempts
-│   ├── toc/                  # sources/*.py, reconcile.py, filter.py
+│   ├── metadata/             # resolve.py, file_metadata.py, title_pages.py,
+│   │                         # model_reader.py, language.py, candidates.py (field list)
+│   ├── toc/                  # sources/*.py, pages.py (printed pages to book pages), scan.py, reconcile.py, collect.py
 │   ├── profile_search.py     # probes, presets, sampled coordinate search
 │   ├── assemble.py           # one chapter: engine, adapter, rules, checks
-│   └── book_metrics.py       # aggregate, whole-book checks, verdict, bundle
+│   └── book_metrics.py       # aggregate, whole-book checks, numbers, bundle
 ├── engines/                  # borrowed from rag-lab and adapted: converter client, card handover, adapters, model client
 ├── document/                 # document model (pydantic blocks)
 ├── rules/                    # knob option implementations that transform the model
 ├── probes/                   # knob probes
 ├── writers/markdown.py
-├── quality/                  # chapter checks, scan measures, verdicts
+├── quality/                  # chapter checks, scan measures, book numbers
 ├── evaluation/               # sets, gates, comparison
 ├── artifacts.py              # atomic write, manifest, input hash, resume lookup
 ├── models_client.py          # OpenAI-compatible model client with cache
+├── net.py                    # one wrapper for outside calls: retries, hosts set aside (FR-060)
+├── book_knobs.py             # book-level knobs and their defaults (FR-059)
+├── pdf.py                    # pypdfium2 helpers: pages, text layer, garbled pages
+├── settings.py, code_version.py, logging_setup.py
 └── orm/                      # SQLAlchemy tables
 config/
 ├── knobs.yaml
 ├── presets/*.yaml
-└── quality.yaml
+├── quality.yaml
+├── budgets.yaml              # attempts per stage
+├── metadata.yaml             # book knob defaults (title-page window)
+├── net.yaml                  # retry pauses, set-aside time
+├── models.yaml               # model provider per step
+└── isbn_groups.yaml
 db/
-├── migrations/*.sql
+├── migrations/*.sql          # 20261009000001_init (the first five squashed), then profile_candidates and evaluation
 └── schema.sql
+eval/gold/metadata.yaml       # owner-checked metadata, the SC-010 reference
 scripts/
 ├── check.sh
+├── dump_schema.sh
 └── check_links.py
 tests/
-├── unit/                     # document model, writer, reconcile, verdicts
+├── unit/                     # document model, writer, reconcile, report numbers
 ├── stages/                   # each stage on fixture PDFs
 ├── doors/                    # REST and MCP parity, contracts
 └── stand/                    # kill-and-resume, compose smoke
@@ -151,9 +167,11 @@ Follows the spec priorities; each step ends runnable and measured.
 
 1. **P0**: compose, migrations, queue and worker with lanes, artifacts and manifest, intake and
    metadata stages, books doors, `wait_job`, stand door.
-2. **P1**: toc stage (bookmarks, printed contents, numbering, typography, catalogue, model),
-   document model, engine adapters, chapter assembly with default preset, Markdown writer, book
-   metrics, report, bundle.
+2. **P1**: toc stage (bookmarks, printed contents and their recognition on scans, chapter files,
+   numbering; typography, catalogue and model later), measured against bookmarks before assembly,
+   document model, engine adapters, Markdown writer, then a detection scheme per element (code,
+   tables, formulas, running heads, images) measured on rag-lab `converter_gold` before any rule,
+   chapter assembly with default preset, book metrics, report, bundle.
 3. **P2**: resume at stage and chapter level and the kill-and-resume test; it comes before profile
    search because search multiplies run time and must be cheap to interrupt.
 4. **P3**: knob registry loading, probes, presets, sampled search, candidates, chapter rerun with

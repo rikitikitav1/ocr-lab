@@ -12,7 +12,8 @@ sits between the two.
 - The agent, not the user, assembles the book's profile (Principle II), runs the conversion and
   judges the result.
 - When the agent cannot reach acceptable quality, it still produces the bundle and says so in the
-  verdict, naming the defects and the knobs it tried. Poor quality never stops a run.
+  report's numbers, naming the chapters they come from and the knobs it tried. Poor quality never
+  stops a run.
 - A failure is different from poor quality: when a step still crashes after its retries, the run
   finishes what it can, then waits for attention, visible through the doors with the error, until
   an agent or the owner has looked into it and restarted the failed part. It never fails silently.
@@ -49,11 +50,12 @@ next to the document.
 
 - The report MUST cover at least: structure against the book's table of contents (chapters found,
   levels, order), text fidelity against the source text layer, heading level sanity (no level past
-  the format's maximum, no chapter below its own sections), image and link integrity, and an
-  overall verdict (`ok`, `dirty`, `bad`) with the reasons.
+  the format's maximum, no chapter below its own sections), image and link integrity. Each is a
+  number per chapter and for the book, with the worst chapters named; the report gives no verdict
+  label, since a label hides how much is wrong (owner's decision, 2026-10-10).
 - Metrics MUST measure structure, not only words. Word similarity on short page cuts stays high
   while heading levels are wrong, so it is never the sole gate.
-- A verdict of `ok` with lost structure is a defect of the metric and is fixed as such.
+- Numbers that look fine while structure is lost are a defect of the metric and are fixed as such.
 - The same metrics drive knob selection (Principle II), so the agent optimises what the report
   shows and not a private score.
 - Gold references are preferred where they come free: books with PDF bookmarks serve as gold for
@@ -65,7 +67,9 @@ The sections of the output match the sections of the book: same chapters, same n
 
 - The table of contents is acquired first and from several sources, then reconciled: PDF
   bookmarks, the printed contents pages, numbering in the text, typography, and a model reading
-  the contents pages as the last source. Which sources are used and in what order is a knob group.
+  the contents pages as the last source. Sources are ranked; the contents printed in the book outrank
+  the PDF's bookmarks once the text confirms them, and the bookmarks give the levels where an entry
+  has one.
 - Each heading carries the source that decided its level, and the report counts headings per
   source.
 - Heading levels are decided across the whole book, never per processing chunk. Chunking, when an
@@ -190,6 +194,8 @@ Rules for the bundle:
 - Code comments state what the code does and why in one plain line; they never reference commits,
   plan sections, review rounds or dates.
 - Plans, research notes and logs live outside the repository, in `~/working_docs/projects/ocr-lab/`.
+  The one exception is the Spec Kit feature folder `specs/<feature>/` (spec, plan, research, data
+  model, contracts, tasks), which belongs with the code it describes.
 - Findings carried over from rag-lab (`~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`) are the
   starting defect list and the first candidates for knobs, not settled design.
 
@@ -208,4 +214,4 @@ the constitution wins until it is amended.
 - Reviews verify that a change ships with its measurement (Principle III) and, for shared
   behaviour, its gate run (Principle VI).
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-05 | **Last Amended**: 2026-10-05
+**Version**: 1.2.0 | **Ratified**: 2026-10-05 | **Last Amended**: 2026-10-10
