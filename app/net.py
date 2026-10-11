@@ -24,8 +24,7 @@ def conf() -> dict:
     return yaml.safe_load((settings.CONFIG_DIR / "net.yaml").read_text())
 
 
-# kept in Postgres so the api's stand door sees what the worker set aside; the dict is the fallback when the
-# database is out of reach (unit tests, a stand still starting)
+# kept in Postgres so the api sees what the worker set aside; the dict serves when the database is away
 _inactive: dict[str, tuple[float, str]] = {}
 _lock = threading.Lock()
 
@@ -106,8 +105,7 @@ def reset(host: str | None = None) -> None:
     _db_clear(host)
 
 
-def request(method: str, url: str, client: httpx.Client | None = None, **kwargs) -> httpx.Response:
-    host = host_of(url)
+def _retried(host: str, send) -> httpx.Response:
     if host in inactive():
         raise SourceDown(host, inactive()[host]["reason"])
     delays = [0.0, *conf()["delays"]]
@@ -116,21 +114,41 @@ def request(method: str, url: str, client: httpx.Client | None = None, **kwargs)
         if delay:
             time.sleep(delay)
         try:
-            if client is not None:
-                seen = client.request(method, url, **kwargs)
-            else:
-                kwargs.setdefault("timeout", 25)
-                seen = httpx.request(method, url, **kwargs)
+            seen = send()
+        except httpx.ReadTimeout as e:
+            # the request reached the server and it is still working: sending it again only queues it twice
+            reason = f"ReadTimeout: {e}"
+            break
         except httpx.TransportError as e:
             reason = f"{type(e).__name__}: {e}"
             continue
         if seen.status_code not in conf()["retry_status"]:
             return seen
+        seen.close()
         reason = f"HTTP {seen.status_code}"
         if attempt == len(delays) - 1:
             break
     _set_aside(host, reason)
     raise SourceDown(host, reason)
+
+
+def request(method: str, url: str, client: httpx.Client | None = None, **kwargs) -> httpx.Response:
+    if client is None:
+        kwargs.setdefault("timeout", 25)
+        return _retried(host_of(url), lambda: httpx.request(method, url, **kwargs))
+    return _retried(host_of(url), lambda: client.request(method, url, **kwargs))
+
+
+# for SDKs that take an httpx client (the openai one): their calls get the same retries and set-aside rule
+class Transport(httpx.BaseTransport):
+    def __init__(self, inner: httpx.BaseTransport | None = None):
+        self._inner = inner or httpx.HTTPTransport()
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return _retried(host_of(str(request.url)), lambda: self._inner.handle_request(request))
+
+    def close(self) -> None:
+        self._inner.close()
 
 
 def get(url: str, **kwargs) -> httpx.Response:
