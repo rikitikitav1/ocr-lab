@@ -41,6 +41,21 @@ def input_hash(**parts) -> str:
     return hashlib.sha256(canonical(parts).encode()).hexdigest()
 
 
+# what an artifact was made from: one key for reuse, and a hash per part so a reader sees which part changed
+@dataclass(frozen=True)
+class Inputs:
+    parts: dict
+    stamp: str | None = None
+
+    @property
+    def key(self) -> str:
+        return self.stamp or input_hash(**self.parts)
+
+    def hashed(self) -> dict:
+        return {name: hashlib.sha256(canonical(value).encode()).hexdigest()[:16]
+                for name, value in sorted(self.parts.items())}
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -70,12 +85,12 @@ def atomic_write(path: Path, data) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
-def write(owner: Owner, base: Path, stage: str, name: str, data, input_hash: str,
+def write(owner: Owner, base: Path, stage: str, name: str, data, inputs: Inputs,
           chapter_ord: int | None = None, meta: dict | None = None, heavy: bool = False) -> Artifact:
     relative = base / stage / (f"{chapter_ord:03d}" if chapter_ord is not None else "") / name
     sha = atomic_write(settings.DATA_DIR / relative, data)
     row = Artifact(**owner.columns(), stage=stage, chapter_ord=chapter_ord, name=name, path=str(relative),
-                   sha256=sha, input_hash=input_hash, meta=meta or {}, heavy=heavy)
+                   sha256=sha, input_hash=inputs.key, meta={**(meta or {}), "inputs": inputs.hashed()}, heavy=heavy)
     with Session() as session:
         session.add(row)
         session.commit()
@@ -96,6 +111,12 @@ def find_done(owner: Owner, stage: str, name: str, input_hash: str, chapter_ord:
         if path.exists() and sha256_file(path) == row.sha256:
             return row
     return None
+
+
+def directory(relative: Path) -> Path:
+    path = settings.DATA_DIR / relative
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def read(row: Artifact) -> bytes:

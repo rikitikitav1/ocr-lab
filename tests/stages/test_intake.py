@@ -50,3 +50,20 @@ def test_probe_is_reused_when_files_did_not_change(stand, files, monkeypatch):
     intake.probe(book)
     monkeypatch.setattr(intake, "_probe", lambda files: pytest.fail("probed twice"))
     intake.probe(book)
+
+
+def test_contents_at_the_end_of_the_book_count_as_printed_contents(stand, tmp_path):
+    from tests.fixtures import FILLER
+
+    body = [text_page(f"Chapter {n}", FILLER[:90]) for n in range(1, 71)]
+    path = build(tmp_path / "late.pdf", [*body, contents_page()])
+    book, _ = intake.register([(path, "late.pdf")])
+    probed = intake.probe(book)
+    assert probed["has_printed_contents"] is True and probed["toc_sources"]["printed_contents_pages"] == [71]
+
+
+def test_a_listed_book_page_names_its_file_and_its_page_in_that_file():
+    from types import SimpleNamespace
+
+    files = [SimpleNamespace(ord=0, first_page=1, pages=10), SimpleNamespace(ord=1, first_page=11, pages=5)]
+    assert intake.located(files, [3, 12, 12, 16]) == {3: [0, 3], 12: [1, 2]}

@@ -51,9 +51,12 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
     restart cost at most one chapter, and `requeue_stale` picks the job up again;
   - jobs were found by polling: `pg_notify` on every state change, and a `wait_job` door
     (long-poll, REST and MCP) that returns when the job or any child finishes;
-  - the worker silently ran old code: the worker stamps the hash of `app/` at start, every job row
-    records it, the stand door reports "worker code differs from disk", and the worker refuses new
-    jobs until restarted when they differ;
+  - the worker silently ran old code: the worker runs from a copy of `app/` and `config/` made at
+    start (`scripts/worker.sh`), so an edit on disk never reaches a running job and lazily imported
+    modules never mix two versions; every job row records the copy's hash, the stand door reports
+    `worker_behind_disk`, and the worker restarts itself onto newer code once no job is running and
+    none is due, so a run started on one version finishes on it (owner, 2026-10-09: refusing new jobs
+    froze the queue on every edit);
   - scripts run by `docker compose exec` were invisible: every operation is a job type behind a
     door, there are no exec-only scripts for normal work.
 - **GPU handover**: reuse rag-lab's supervisor pattern unchanged: each converter container runs
@@ -66,8 +69,9 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 ## R5. Reusing what rag-lab downloaded
 
 - **Decision**: in this feature, compose references the existing local images by name
-  (`rag-lab-converter-docling`, `rag-lab-converter-mineru`) with `pull_policy: never`, mounts
-  `${HOME}/.cache/huggingface` read-only, and mounts `../rag-lab/datasets/inbox/books` and
+  (`rag-lab-converter-docling`, `rag-lab-converter-mineru`) with `pull_policy: never` (their models
+  are baked in, so no Hugging Face cache is mounted), reuses the `rag-lab_ollama_data` volume, and
+  mounts `../rag-lab/datasets/inbox/books` and
   `../rag-lab/datasets/converter_gold` read-only as the book shelf. The build stamp each image
   carries (`/opt/converter/build.json`, served by `GET /supervisor`) is recorded per reading.
 - **Rationale**: SC-009 (no re-download of 10.6 GB and 28 GB images); the stamp keeps runs
@@ -139,6 +143,10 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
   for what scripts missed and picks among conflicting candidates, so a weak local model is enough.
   Scout: `~/working_docs/projects/ocr-lab/notes/metadata_sources_scout.md`.
 - **Alternatives**: model only (expensive, unverifiable); catalogue only (no ISBN in many PDFs).
+- **Revised 2026-10-09 (owner's decision)**: step 3 is removed, with the web book cards and SearXNG:
+  over the first 15 books the outside sources filled 7 of 140 values, all optional (translators, a
+  series, links to other editions), while each site added parsing, rate limits and bans. Every value
+  now comes from the book itself; the code stays in git history.
 
 ## R9. Table of contents sources and reconciliation
 
@@ -159,6 +167,18 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
   typography prototype took `#######` from 277 to 0 and sections from 237 to 507.
 - **Alternatives**: Docling's built-in heading hierarchy alone (ranks style per chunk; dannyh in one
   piece still put all 16 chapters at levels 6 to 7).
+- **Revised 2026-10-09 (owner's decisions, measured on 59 shelf books)**: the toc exists for chapter
+  page ranges. Sources read in this feature: bookmarks, printed contents (text layer; on a scan the
+  contents window is recognised by MinerU, its index blocks are the entries and its page-number blocks
+  give the offset), chapter files, numbering (votes only). Base: the printed contents when the text
+  confirms over half of their pages, else bookmarks, else chapter files; titles and pages from the base,
+  levels from the bookmarks where an entry has one, the rest moved onto the bookmarks' scale. Printed
+  pages are placed by the offset most titles vote for (each title votes for the first page it is on,
+  running heads are left out of the text), and a title not found follows the offset of the last one
+  found, which carries placement over inserted plates. No contents: at most 100 pages is one chapter,
+  longer waits. Typography, the model over heading candidates and catalogues are later sources.
+  Measured against bookmarks on 41 books: 1677 of 1681 bookmark chapters start on the same page (±1);
+  with printed levels instead of bookmark levels the top level collapsed on 20 books.
 
 ## R10. Profile search inside the stand
 
@@ -179,16 +199,18 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 
 - **Decision**:
   - structure: chapters found against the reconciled table of contents (recall and level
-    agreement), levels within 1..6, no chapter below its own sections, flat-chapter check
-    (`structure.flat` calibrated in rag-lab: 20 pieces / 2 sections);
-  - text fidelity on text pages: token F1 against the text layer (rag-lab `layer_f1`);
+    agreement), levels within 1..6, no chapter below its own sections, toc sub-entries found out of
+    those listed (no page threshold for a flat chapter);
+  - text fidelity on text pages: the share of layer words lost and the share of words not in the
+    layer, kept apart rather than folded into one F1, with running heads the engines set aside left
+    out;
   - scans: agreement of two engines on the same pages (character-level similarity) and share of
     dictionary words by `wordfreq` for the book's language, plus engine confidence where given;
     calibrated on text books run as scans (FR-049);
   - images and links: every link resolves, every file referenced, decorative images (same image
     hash on many pages) excluded;
-  - chapter verdict from thresholds in `config/quality.yaml`; book verdict is the worst of chapter
-    verdicts and whole-book checks.
+  - chapters and the book are reported in numbers with the worst chapters named, no verdict label
+    (owner's decision, 2026-10-10).
 - **Alternatives**: word similarity only (stays ~98% while structure is wrong).
 
 ## R12. Model calls inside the stand
@@ -249,9 +271,10 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
     papers) up to 105 pages, human-verified TOC trees, scored by tree edit distance (TEDS). The paper
     says it is released, but no data link was found on 2026-10-05; the fetch script records its
     absence until a link appears.
-- **Scores**: entry recall and precision (fuzzy title plus page), level agreement on matched
-  entries, and TEDS over the TOC tree, so our numbers sit on the same scale as LongDocBench's
-  published ones (best parser 0.55 Macro TEDS).
+- **Scores**: chapters starting on the right page first (the toc exists for chapter ranges); then
+  entry recall and precision (fuzzy title plus page) and level agreement on matched entries. TEDS
+  over the TOC tree is dropped (owner, 2026-10-09): it would only put our numbers on LongDocBench's
+  scale (best parser 0.55 Macro TEDS), and chapter boundaries are what the stand needs.
 - **Metadata window**: the first 20 and the last 20 pages by default (owner's choice), a book knob
   in `config/metadata.yaml`. Measured on the shelf: every book's own ISBN sat on pages 1-6, and pages
   12-18 carried other books' ISBNs; so only the first ISBN is the book's own, a later one becomes the

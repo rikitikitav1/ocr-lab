@@ -1,0 +1,32 @@
+# the fields each engine is called with, per regime; text_pdf follows rag-lab's settings for text-layer PDFs
+docling:
+  text_pdf:
+    fields: &docling_text
+      to_formats: json
+      do_ocr: "true"
+      ocr_preset: tesseract
+      do_pdf_heading_hierarchy: "true"
+      pdf_heading_hierarchy_options: '{"enabled": true, "max_level": 5}'
+      do_code_enrichment: "false"
+      do_formula_enrichment: "false"
+      code_formula_preset: codeformulav2
+      do_picture_classification: "false"
+  # pages without a usable layer: the whole page recognised, with every language of the book
+  scan:
+    fields:
+      <<: *docling_text
+      force_ocr: "true"
+mineru:
+  text_pdf:
+    fields:
+      tier: standard
+      ocr_mode: txt
+      output_formats: [middle_json]
+  # MinerU's standard tier is a vision model with no language setting
+  scan:
+    fields:
+      tier: standard
+      ocr_mode: ocr
+      output_formats: [middle_json]
+# a range read out of GPU memory is halved and read again, at most this many times over
+out_of_memory_splits: 3

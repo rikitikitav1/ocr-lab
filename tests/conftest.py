@@ -22,8 +22,9 @@ def stand(db, tmp_path, monkeypatch):
     orm_db.bind(previous)
 
 
+# a client always talks to the throwaway database, so a test can never write into the stand's own
 @pytest.fixture
-def client():
+def client(stand):
     from fastapi.testclient import TestClient
     from server import app
 

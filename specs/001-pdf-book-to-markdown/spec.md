@@ -1,10 +1,10 @@
 # Feature Specification: PDF Book to Measured Markdown Bundle
 
-**Feature Branch**: none (the repository goes under git after the implementation plan)
+**Feature Branch**: `001-pdf-book-to-markdown` (P0, merged in PR #1); P1 continues on `002-p1-toc`
 
 **Created**: 2026-10-05
 
-**Status**: Draft
+**Status**: In progress (P0 done)
 
 **Input**: User description (assembled from the constitution session, the command was run without
 arguments): "A book in electronic form (PDF) becomes structured Markdown whose sections match the
@@ -36,16 +36,18 @@ publisher), maybe the clean table of contents too, as it turns out." Scanned PDF
 - Q: How is recognition quality measured on scanned pages with nothing to compare against? → A:
   Gold from text-layer books run as scans, plus agreement of two engines and dictionary word share
   on real scans.
-- Q: How do chapter verdicts add up to the book verdict? → A: Worst of the chapter verdicts and
-  the whole-book checks; one `bad` chapter makes the book `bad`.
+- Q: How do chapter results add up to the book's? → A: As numbers, not verdict labels: the book
+  sums its chapters' words (text lost against the layer, text not in it, sub-entries found) and
+  names the worst chapters by each number (owner's decision, 2026-10-10).
 - Q: May the owner set a metadata field by hand? → A: Yes, as source `manual` overriding found
   values; content and table of contents are never edited by hand.
 - Q: On a second run of a book, are metadata and the table of contents collected again or reused?
   → A: They belong to the book and are versioned; a run uses the current versions and records
   them; recollection is explicit or triggered by a change in their knobs or source code, and
   creates new versions.
-- Q: Which bundle is the book's result when it has several runs? → A: The best finished run: by
-  verdict (`ok` over `dirty` over `bad`), then by structure metrics, then the latest.
+- Q: Which bundle is the book's result when it has several runs? → A: The best finished run: least
+  text lost against the layer, then most toc sub-entries found, then least text not in the layer,
+  then the latest.
 - Q: What if a book comes in several PDF files (volumes, parts, chapters)? → A: A book split into
   files (parts, chapters) is submitted as several files in order and becomes one book with one
   bundle. Volumes are separate books, each with its own bundle, linked in the catalogue through
@@ -66,7 +68,57 @@ publisher), maybe the clean table of contents too, as it turns out." Scanned PDF
   first 20 and the last 20 by default, a book knob; the printed contents pages can be given as page
   ranges at submission or later.
 
+### Session 2026-10-09
+
+- Q: What is the table of contents for? → A: The start and end page of every chapter, so that each
+  chapter can be assembled, checked and rerun on its own. Deeper levels are taken as the sources give
+  them and never invented; headings found later inside a chapter are that chapter's own contents.
+- Q: Which source is trusted most? → A: The contents printed in the book, read from the text layer or
+  recognised on a scan, once the text confirms its pages; bookmarks are written by whoever made the
+  PDF and may be wrong. Bookmarks then vote and add what the printed contents lack, and give the levels
+  where an entry has one. Numbering in the text only votes.
+- Q: What if no source gives a contents? → A: A book of at most 100 pages is one chapter; a longer one
+  fails with "structure not recognised" and the sources' reasons, and is not split by pages (owner's
+  decision, 2026-10-10).
+- Q: A book split into chapter files whose order nobody wrote down? → A: Each file is a chapter; the
+  files can be ordered by the chapter number each prints on its opening pages, chosen at submission.
+- Q: Does the stand go to the internet for metadata or the contents? → A: Not at this stage. The
+  catalogue and web lookups are removed; every value comes from the book itself.
+- Q: What share of chapters must be found? → A: All of them: a lost chapter cannot be worked on, so
+  SC-002 and SC-011 target 100%, and each miss is explained.
+- Q: What does the stand answer for, and what not? → A: Correct chapters, tables and code. How the
+  text looks (letter-spaced titles, typography) is left to text processors after the stand. The
+  stand's own reading of the text layer for measures and toc matching joins letter-spaced glyphs
+  (refined 2026-10-11).
+- Q: In what order is chapter content built? → A: The document model and writer, the Docling and
+  MinerU adapters, then a detection scheme per element (code, tables, formulas, running heads,
+  images) measured on a gold set before any rule that changes content.
+- Q: Is the toc also scored by tree similarity (TEDS)? → A: No. Chapter boundaries are what the
+  stand needs, and chapters on the right page with level agreement measure them; TEDS would only
+  put our numbers beside LongDocBench's.
+
+### Session 2026-10-11
+
+- Q: Is the ICDAR/INEX Book Structure Extraction gold added to the table-of-contents measurement, and
+  how much of it? → A: A seeded sample of about 50 books of the 2013 set beside HiPS, scored with the
+  measures of FR-058 plus the set's own title-based and link-based scorers.
+- Q: Are repetition and order measured on every book? → A: Yes: repeated paragraphs and paragraphs
+  out of the layer's order are book columns and can be gate columns, read from the bundle and the
+  text layer without gold; the spec names the four measure families (present, absent, not repeated,
+  in order).
+- Q: Real scans have no text gold; what closes the gap? → A: A small hand-checked set of 20 to 30
+  pages from Russian scans on the shelf, checked by the owner; scans in scripts the owner cannot read
+  (Farsi and others) stay a stated gap, measured only by engine agreement and dictionary share.
+- Q: The stand's layer reader returns letter-spaced titles as single letters; is the layer read with
+  them joined? → A: Yes for measures and toc matching, which must not read artefacts of our own
+  reader; the bundle text is not changed by this, and joining goes through the evaluation gate as a
+  shared change.
+
 ## User Scenarios & Testing *(mandatory)*
+- Q: Do the code passes run on every book? → A: No, only on technical books. The default preset leaves them off; a
+  `technical` preset turns them on. The stand picks it from the book itself: the text layer's share of monospace
+  text, and for a scan without a layer the metadata subject. The owner can set or clear it by hand when the book is
+  submitted, and the hand value wins.
 
 ### User Story 0 - Stand up the stand and catalogue a book (Priority: P0)
 
@@ -107,14 +159,13 @@ records; no engine or model is downloaded again, and each field shows where its 
 
 The owner hands a PDF book to the stand and asks for Markdown. Without any further action they get
 a bundle: the Markdown document with the book's chapters and sections at the right levels, an
-images folder linked from the document, the profile that was used, and a quality report with a
-verdict.
+images folder linked from the document, the profile that was used, and a quality report in numbers.
 
 **Why this priority**: this is the product. Every other story improves or protects this one.
 
 **Independent Test**: convert a PDF that has bookmarks; open the bundle; check that chapters in
-the document match the bookmarks, every image link opens, and the report carries a verdict with
-reasons.
+the document match the bookmarks, every image link opens, and the report carries the numbers with
+the worst chapters named.
 
 **Acceptance Scenarios**:
 
@@ -124,15 +175,15 @@ reasons.
 2. **Given** the finished bundle, **When** the owner moves the bundle directory elsewhere, **Then**
    every image link in the document still opens.
 3. **Given** a book whose structure the stand could not recover, **When** the run ends, **Then**
-   the bundle is still produced and the verdict is `dirty` or `bad`, naming the defects and the
+   the bundle is still produced and its report's numbers show the loss, naming the chapters and the
    knobs that were tried.
 4. **Given** a book, **When** the report is read, **Then** it shows chapters found against the
    table of contents, heading levels per table-of-contents source, text fidelity against the PDF
-   text layer, image and link counts, and the verdict.
+   text layer, image and link counts.
 5. **Given** a book in progress, **When** the owner looks at it, **Then** they see which stage it
    is in (upload, metadata, table of contents, chapter assembly, book metrics) and, during chapter
-   assembly, which chapters are done, with their own verdicts.
-6. **Given** a finished book with one `bad` chapter, **When** the owner (or an external agent) changes the
+   assembly, which chapters are done, with their own numbers.
+6. **Given** a finished book with one chapter that lost much of its text, **When** the owner (or an external agent) changes the
    knobs for that chapter and reruns it, **Then** only that chapter is reassembled and the book
    metrics are recomputed.
 
@@ -265,9 +316,12 @@ books that do not select the new knob.
 
 ### Functional Requirements
 
+Requirement ids are stable, not ordered: a requirement added later keeps the next free id and sits
+in the group it belongs to.
+
 **Conversion and bundle**
 
-- **FR-001**: The stand MUST accept a PDF book, as one file or several files in order, and a
+- **FR-001**: The stand MUST accept a PDF book (one file or several in order, see FR-054) and a
   target format, and produce a bundle without any human step during the run.
 - **FR-002**: For format Markdown, the bundle MUST contain the document, an `images/` folder, the
   resolved profile and the quality report.
@@ -279,14 +333,23 @@ books that do not select the new knob.
   from the PDF text layer where one exists.
 - **FR-006**: Running heads, footers, sidebars and captions MUST NOT be output as headings;
   duplicate pages MUST be removed and reported.
-- **FR-007**: Decorative images repeated on many pages MUST be distinguishable from figures and
+- **FR-007**: Decorative images repeated on many pages (the page count is a threshold in
+  configuration) MUST be distinguishable from figures and
   MUST NOT be emitted as figures.
 
 **Structure**
 
-- **FR-008**: The table of contents MUST be gathered from every available source (bookmarks,
-  printed contents pages, numbering in the text, typography, a model reading the contents pages,
-  external book catalogues and publisher sites) and reconciled into one.
+- **FR-008**: The table of contents MUST be gathered from every available source and reconciled into
+  one. This feature reads bookmarks, the printed contents pages (from the text layer, or recognised on
+  a scan), the files of a book split into chapter files, and numbering in the text; typography, a model
+  assigning levels and external catalogues are later sources. The printed contents are the base when
+  the text confirms over half of their pages, else bookmarks, else chapter files; titles and pages
+  come from the base, levels from the bookmarks where an entry has one. Other sources vote on the
+  base's entries, and an entry the base lacks comes in when two sources have it or when it is a top
+  entry of a source whose page was seen holding its title; numbering adds alone only a labelled part or
+  chapter ("PART TWO", "Chapter 3") set as a heading. The pages before the first entry are a front matter
+  section, so no page is left out of the toc.
+  Entries placed on different pages by two sources are reported.
 - **FR-009**: Each heading MUST record which source decided its level, and the report MUST count
   headings per source.
 - **FR-010**: Heading levels MUST be decided across the whole book, never per processing chunk.
@@ -314,9 +377,11 @@ books that do not select the new knob.
 - **FR-017**: Every run MUST produce a machine-readable report and a short human-readable summary.
 - **FR-018**: The report MUST cover structure against the table of contents (chapters found,
   levels, order), text fidelity against the PDF text layer, heading level sanity, image and link
-  integrity, and a verdict `ok`, `dirty` or `bad` with reasons.
-- **FR-019**: The verdict MUST NOT be `ok` when chapters are missing, a chapter sits below its own
-  sections, or a long chapter has lost all internal sections that the table of contents shows.
+  integrity, each as a number per chapter and for the book, with no verdict label.
+- **FR-019**: The report MUST show per chapter the share of text lost against the PDF text layer,
+  the share of text not in it, and the table-of-contents sub-entries found out of those it lists,
+  and MUST name chapters that failed or sit below their own sections; a chapter that lost its
+  sections shows as found 0 of N, with no page threshold.
 
 **Artifacts and resume**
 
@@ -350,7 +415,8 @@ books that do not select the new knob.
   reason, and separately count books whose output changed although the change did not fire on
   them.
 - **FR-029**: The evaluation MUST be able to switch bookmarks off and score the other
-  table-of-contents sources against them.
+  table-of-contents sources against them; the same mode serves the table-of-contents measurement
+  of FR-058.
 
 **Formats**
 
@@ -367,13 +433,19 @@ books that do not select the new knob.
   engine confidence where an engine gives it).
 - **FR-049**: The evaluation set MUST include text-layer books run as scans (text layer ignored),
   whose recognised text is scored against the text layer; this calibrates the measures of FR-032.
+  Real scans get text gold only where the owner can check it: a small hand-checked set of 20 to 30
+  pages from Russian scans on the shelf. Real scans in scripts the owner cannot read (Farsi, Chinese
+  and others) have no text gold, a stated gap: there they are measured only by FR-032.
 - **FR-033**: The recognition engine for a book or page range MUST be a knob in the profile.
 
 **Genre**
 
-- **FR-050**: Shared behaviour MUST NOT assume a genre: rules for code, sidebars, formulas, verse or
+- **FR-050**: Shared behaviour MUST NOT assume a genre: rules for code, formulas, verse or
   picture-led pages apply only when the book's profile selects them, and a book with none of these
-  goes through the stand with the same guarantees as any other.
+  goes through the stand with the same guarantees as any other. Code rules belong to a `technical` preset, chosen
+  from the layer's share of monospace text or, for a scan, the metadata subject, and overridable at submission. Keeping running heads, footers,
+  sidebars and captions out of the headings (FR-006) is not a genre rule: it is on for every book,
+  in the default preset, and its options only tune how those are recognised.
 
 **Stand and intake**
 
@@ -388,13 +460,15 @@ books that do not select the new knob.
   publisher, series and volume number, ISBN, subject, page count, text layer presence per page,
   presence of bookmarks and of printed contents pages. The year is that of this edition or
   translation. Required for every book (owner's rule): title, authors, language, subject, pages.
-  Sought everywhere, by title and author when there is no ISBN, and taken from a title search only
-  when exactly one edition matches: publisher, year, ISBN. Optional fields, which only a translation has and whose absence is not a gap
-  (SC-010): translators, illustrators, original title, original year, original ISBN, and related
-  editions: other editions of the same book found on the web (ISBN, publisher, year, format, link),
-  kept apart so the main fields describe the file in hand.
+  Sought in the book: publisher, year, ISBN. Optional, and not a gap when absent (SC-010): the
+  original title of a translation, and the tools that wrote the files (`made_with`, the PDF info Producer and
+  Creator), which tell how a text layer was made. Translators, illustrators and the original's year and ISBN are not
+  collected: metadata tells books apart and finds the contents, it does not catalogue (owner's
+  decision, 2026-10-09). Every value comes from the book itself (its files, its title pages, the
+  stand's model reading them); outside catalogues and the web are not queried; the words the title-page
+  scripts look for live in a per-language table, not in code.
 - **FR-038**: Each metadata field MUST record its value, its source (file metadata, title pages,
-  external book catalogue, model reading the pages) and a confidence. Intake MUST try every
+  model reading the pages) and a confidence. Intake MUST try every
   source before giving up on a field; a field marked unknown MUST list the sources tried, and a
   field the stand could not determine MUST NOT be guessed silently.
 - **FR-051**: The owner MUST be able to set a metadata field by hand; the value gets source
@@ -402,7 +476,9 @@ books that do not select the new knob.
   marked as manual in the report. This is the only hand edit the stand accepts: book content and
   the table of contents are never edited by hand.
 - **FR-039**: Intake SHOULD extract the table of contents when a source for it is found; when it
-  cannot, the record says which sources exist and extraction is left to conversion.
+  cannot, the record says which sources exist and extraction is left to conversion. In this
+  feature intake only counts entries from bookmarks and dot-leader contents pages; extraction
+  belongs to the table-of-contents stage.
 - **FR-040**: Intake MUST leave its own stage artifacts and be resumable like any other stage.
 
 **Stages and chapters**
@@ -411,18 +487,23 @@ books that do not select the new knob.
   (search across sources, reconciliation, filtering of non-chapter entries), profile, chapter
   assembly, book metrics. Each stage has a status the owner can see.
 - **FR-042**: Chapters MUST be the unit of assembly: each chapter is assembled on its own, with
-  its own checks, its own verdict and its own artifacts.
+  its own checks and its own artifacts.
 - **FR-043**: Chapter boundaries and chapter levels MUST come from the table-of-contents stage;
   levels inside a chapter are set relative to the chapter's level, so FR-010 holds.
 - **FR-044**: A single chapter MUST be re-assemblable on its own, with knobs overridden for that
   chapter only, without redoing the other chapters.
 - **FR-045**: Book metrics MUST be computed from the chapter results plus whole-book checks
   (chapters against the table of contents, duplicates across chapters, image and link integrity),
-  and recomputed whenever a chapter is redone. The book verdict is the worst of the chapter
-  verdicts and the whole-book checks: one `bad` chapter makes the book `bad`, and the report names
-  the chapters that set it.
-- **FR-046**: Resume MUST work at chapter granularity: an interrupted chapter assembly continues
-  with the chapters not yet done.
+  and recomputed whenever a chapter is redone. The book's numbers sum its chapters' words and
+  sub-entries, and the report names the worst chapters by each number. Measures come in four
+  families read against the text layer without gold: text present, text absent (running heads and
+  page numbers left out), text not repeated (no paragraph twice) and text in order (neighbouring
+  layer paragraphs keep their order); repeated and out-of-order paragraphs are book columns and
+  can be gate columns (FR-027). Measures and toc matching read the text layer with letter-spaced
+  glyphs joined; this does not change the bundle text, and the joining is a shared change that goes
+  through the evaluation gate (FR-027).
+- **FR-046**: Resume (FR-023) MUST work at chapter granularity: an interrupted chapter assembly
+  continues with the chapters not yet done.
 - **FR-056**: A chapter that still fails after all retries MUST NOT stop the other chapters. When
   every chapter is done or failed and at least one failed, the run MUST wait for attention: no book
   metrics and no bundle yet, the failed chapters and their errors visible through the doors, and a
@@ -432,17 +513,28 @@ books that do not select the new knob.
   configuration; when a stage spends it, the stage stops and its part of the run waits for
   attention as in FR-056. A budget for tool and model calls and their accounting come later.
 - **FR-058**: The table-of-contents stage MUST be measurable on its own, before chapter assembly
-  exists: against external gold sets (HiPS legal textbooks; LongDocBench once its data is
-  reachable) and against bookmarks with bookmarks switched off, reporting entry recall and
-  precision, level agreement and tree similarity per book.
+  exists: against external gold sets (HiPS legal textbooks; a seeded sample of about 50 books of the
+  ICDAR/INEX Book Structure Extraction 2013 set, also scored by its own title-based and link-based
+  scorers; LongDocBench once its data is reachable) and against bookmarks with bookmarks switched off (the mode of FR-029). The first score is
+  chapters found starting on the right page; entry recall and precision and level agreement follow,
+  per book. Tree similarity (TEDS) is not computed.
 - **FR-059**: Book-level knobs MUST be settable at submission and changed later, each with a default
   in configuration: the title-page window for metadata (default the first 20 and the last 20
-  pages) and the printed contents pages given by hand as page ranges. A change takes effect at the
+  pages), the printed contents pages given by hand as page ranges, and whether the first top bookmark
+  is the book itself and its children are the top level (default off). A change takes effect at the
   next collection of metadata or the table of contents.
-- **FR-060**: Every call to an outside service (catalogues, shops, search, model providers, engines)
+- **FR-061**: When no source gives a table of contents, a book of at most a configured number of pages
+  (100) MUST become one chapter, and a longer book MUST fail as "structure not recognised" with the
+  reason visible through the doors.
+- **FR-062**: The offset between printed page numbers and book pages MUST be kept with the book when
+  it is measured: on the printed contents confirmed by the text, or on the page numbers recognised on
+  a scan.
+- **FR-060**: Every call to an outside service (model providers, engines)
   MUST go through one wrapper: up to three retries with pauses of 0.1, 0.5 and 1 second on a network
   error or a temporary refusal, then the host is set aside for a configured time and the stage moves
-  on to the next source. Set-aside hosts and the reason are shown by the stand door.
+  on to the next source. Set-aside hosts and the reason are shown by the stand door. One exception:
+  a request that starts work on an engine (a conversion or a parse job) is sent once, because a
+  retry could start the same work twice; its failure goes to the stage's own attempt budget.
 
 **Versions of book-level results**
 
@@ -450,12 +542,17 @@ books that do not select the new knob.
   versioned. A run MUST use the current versions and record which ones it used. Recollecting them
   MUST be possible on request and MUST happen when their knobs or the code of their sources
   changed; it creates new versions and never alters the old ones.
-- **FR-053**: The book's result MUST be the bundle of its best finished run: highest verdict
-  (`ok` over `dirty` over `bad`), ties broken by structure metrics, then by the latest run. It is
-  recomputed whenever a run of the book finishes, and the catalogue record points to it.
+- **FR-053**: The book's result MUST be the bundle of its best finished run: least text lost against
+  the layer, then the largest share of toc sub-entries found, then fewest paragraphs met in two chapters,
+  then least text not in the layer, then the latest run. Only a run on the book's current table of contents can be
+  the result: one on an older toc cuts the book at chapters it no longer has. It is recomputed whenever a run of the
+  book finishes and cleared when a new toc version is made, and the catalogue record points to it.
 - **FR-054**: A submission MAY consist of several PDF files in a given order (a book split into
   parts or chapters); they form one book with one page sequence across the files, one table of contents
-  (bookmarks of each file placed under its position), and one bundle. The book's identity is the
+  (bookmarks of each file placed under its position, or one chapter per file when the files carry no
+  contents), and one bundle. The submission MAY ask the stand to order the files by the chapter number
+  each prints on its opening pages (unnumbered files first, then numbers, then appendix letters); the
+  order is settled before the book is registered. The book's identity is the
   ordered list of file contents; the same files in the same order map to the same record, and
   every page keeps its file and in-file page number in artifacts and reports.
 - **FR-055**: Volumes of a multi-volume work, and books of a publisher's series, MUST stay separate
@@ -490,13 +587,13 @@ books that do not select the new knob.
 - **Book profile**: the resolved set of knob values for one book, each with source and evidence.
 - **Profile candidate**: one profile the stand tried, with its measurement and keep or drop reason.
 - **Chapter**: one entry of the reconciled table of contents and the unit of assembly; has its page
-  range, level, knob overrides, checks, verdict and artifacts.
+  range, level, knob overrides, checks and artifacts.
 - **Run**: one processing of one book with one profile; owns its run directory and stage artifacts;
   can be resumed.
 - **Stage artifact**: the output of one stage of a run, with stage name, inputs, profile and
   engine versions.
 - **Bundle**: the deliverable of a run: document, images, profile, report.
-- **Quality report**: metrics and verdict of a bundle.
+- **Quality report**: the numbers of a bundle, per chapter and for the book.
 - **Evaluation set**: the books used for regression, with their best known profiles.
 - **Gate**: a pre-registered pass rule for an evaluation run (columns, tolerance, untouchable
   books) and its result.
@@ -506,18 +603,19 @@ books that do not select the new knob.
 ### Measurable Outcomes
 
 - **SC-001**: For 100% of submitted books, a run ends either with a bundle and a report, whatever
-  the verdict, or waiting for attention with every failed chapter and its error visible through
+  its numbers, or waiting for attention with every failed chapter and its error visible through
   the doors; no run ends silently.
-- **SC-002**: On evaluation books with bookmarks, run with bookmarks switched off, at least 95% of
-  bookmark chapters are found at the right level (initial target, revised after the first
-  evaluation run).
-- **SC-003**: On books whose verdict is `ok`, no chapter sits below its own sections and no
-  heading exceeds level 6, checked across the whole evaluation set.
+- **SC-002**: On evaluation books with bookmarks, run with bookmarks switched off, 100% of bookmark
+  chapters are found starting on the right page: a lost chapter cannot be worked on, so every miss is
+  a defect to explain (owner's decision, 2026-10-09). Bookmarks that point at the cover, the copyright
+  page or the contents pages themselves are not chapters and are not counted.
+- **SC-003**: On every book of the evaluation set, no chapter sits below its own sections and no
+  heading exceeds level 6.
 - **SC-004**: 100% of image links in every bundle resolve after the bundle directory is moved.
 - **SC-005**: A run killed at any point and restarted redoes at most the one stage or chapter
   that was in progress, and its bundle is identical to an uninterrupted run on deterministic stages.
-- **SC-006**: For every value in every resolved profile, the owner can find the measurement that
-  chose it in under a minute from the bundle.
+- **SC-006**: Every value in every resolved profile names the artifact that holds the measurement
+  that chose it, and that artifact opens through the artifacts door of the run.
 - **SC-007**: Profiles assembled by the stand reach at least 90% of the best known profile's
   structure score on each evaluation book (initial target, revised after the first evaluation
   run).
@@ -526,10 +624,10 @@ books that do not select the new knob.
 - **SC-009**: Bringing the stand up on a machine with the rag-lab downloads fetches no engine
   image or model weight that is already present.
 - **SC-010**: On the evaluation set, 100% of metadata fields are filled and correct for every book
-  whenever the value exists in the book or in an external catalogue; a field is left unknown only
+  whenever the value exists in the book; a field is left unknown only
   when no source has it, and then it lists every source tried.
-- **SC-011**: On scanned evaluation books, chapters are found at the right level as often as on
-  text books within a margin set at the first evaluation run.
+- **SC-011**: On scanned evaluation books, 100% of chapters are found starting on the right page, as
+  on text books.
 
 ## Assumptions
 
@@ -555,7 +653,11 @@ books that do not select the new knob.
 - The first evaluation set is drawn from the rag-lab corpus books already studied there.
 - Already downloaded in rag-lab and reused: the converter engine images with their models baked
   in, the shared model weights cache, local model server data, and the source books themselves.
-- External book catalogues (Open Library, Google Books, publisher sites) may be queried freely
-  for metadata and for the table of contents; taking these from public sources is allowed.
+- External book catalogues and the web are not queried in this feature, neither for metadata nor
+  for the table of contents (owner's decision, 2026-10-09): over the first 15 books they filled 7 of
+  140 values, all optional (translators, a series, links to other editions).
+- The stand answers for correct chapters, tables and code. Cosmetic cleanup of text (letter-spaced
+  titles, typography) is out of scope and left to text processors after the stand; text is only
+  cleaned of invisible and control characters as it enters.
 - "Subject" is a short free label of the book's field and kind (for example "databases,
   textbook" or "detective novel"); a fixed taxonomy is out of scope.

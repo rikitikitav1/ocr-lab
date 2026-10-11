@@ -62,3 +62,27 @@ def test_a_host_set_aside_in_one_process_is_seen_by_another(stand, monkeypatch):
     assert "litres.ru" in net.inactive()
     net.reset()
     assert net.inactive() == {}
+
+
+def test_an_sdk_call_through_the_transport_is_retried_and_set_aside(local):
+    seen = []
+
+    def answer(request):
+        seen.append(request.url.host)
+        return httpx.Response(503 if len(seen) < 3 else 200, json={})
+
+    with httpx.Client(transport=net.Transport(httpx.MockTransport(answer))) as client:
+        assert client.post("https://api.provider.test/v1/chat/completions", json={}).status_code == 200
+    assert len(seen) == 3 and net.inactive() == {}
+
+    with httpx.Client(transport=net.Transport(httpx.MockTransport(lambda r: httpx.Response(429)))) as client:
+        with pytest.raises(net.SourceDown):
+            client.post("https://api.provider.test/v1/chat/completions", json={})
+    assert "api.provider.test" in net.inactive()
+
+
+def test_a_read_timeout_is_not_sent_again(local):
+    client = _Flaky([httpx.ReadTimeout("slow"), 200])
+    with pytest.raises(net.SourceDown, match="ReadTimeout"):
+        net.request("GET", "https://www.litres.ru/x", client=client)
+    assert client.calls == 1

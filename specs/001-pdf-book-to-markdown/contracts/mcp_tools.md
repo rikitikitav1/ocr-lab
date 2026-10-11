@@ -1,12 +1,13 @@
 # MCP tools contract
 
 One FastMCP server `ocr-lab` mounted at `/mcp` in the API process. Each tool calls the same use
-case as the REST route named next to it, with the same arguments and result shape.
+case as the REST route named next to it, with the same arguments and result shape. A failed tool's
+error text starts with the same kind the route returns: `refused:`, `missing:`, `retry_later:` or `fault:`.
 
 | tool | route | notes |
 |---|---|---|
 | `add_book(file_paths?, shelf_paths?, knobs?)` | POST `/books` | ordered lists; paths the API container can read |
-| `books(stage?, verdict?, q?, series?)` | GET `/books` | |
+| `books(stage?, q?, series?)` | GET `/books` | |
 | `book(id)` | GET `/books/{id}` | includes metadata, toc sources and the result run |
 | `book_bundle(id)` | GET `/books/{id}/bundle` | returns the bundle path; the tar stream stays REST-only |
 | `metadata_coverage()` | GET `/metadata/coverage` | |
@@ -26,13 +27,16 @@ case as the REST route named next to it, with the same arguments and result shap
 | `artifacts(run_id, stage?, chapter?)` | GET `/runs/{id}/artifacts` | |
 | `artifact(run_id, artifact_id, max_bytes=200000)` | GET `/runs/{id}/artifacts/{aid}` | text truncated with a marker |
 | `knobs()`, `presets()` | GET `/knobs`, `/presets` | |
-| `profile(id)`, `derive_profile(id, set)` | GET, POST derive | |
+| `profile(id)`, `derive_profile(id, set, chapters)` | GET, POST derive | |
 | `candidates(run_id)` | GET `/runs/{id}/candidates` | |
-| `jobs(status?, type?, run_id?)`, `job(id)` | GET `/jobs`, `/jobs/{id}` | |
-| `wait_job(id, timeout=600)` | GET `/jobs/{id}/wait` | replaces polling loops |
+| `jobs(status?, type?, run_id?, book_id?, lane?)`, `job(id)` | GET `/jobs`, `/jobs/{id}` | |
+| `wait_job(id, timeout=600, tree=false)` | GET `/jobs/{id}/wait` | replaces polling loops; counts and jobs not done, the whole tree on request |
 | `retry_jobs`, `pause_jobs`, `resume_jobs`, `cancel_jobs` | POST `/jobs/*` | bulk |
 | `queue()` | GET `/queue` | |
+| `job_types()` | GET `/job_types` | lane, attempts, options schema, built |
 | `create_eval_set`, `eval_set`, `register_gate`, `start_eval_run`, `eval_run` | `/eval/*` | |
+| `toc_eval(set, book_ids?)` | POST `/eval/toc` | |
+| `element_eval(engines?, ids?)` | POST `/eval/elements` | |
 | `stand()` | GET `/stand` | |
 
 A door test asserts that every route has a tool and every tool a route.

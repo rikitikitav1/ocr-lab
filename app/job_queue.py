@@ -1,5 +1,6 @@
 import json
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import job_specs
 import psycopg
 import settings
-from orm.catalogue import Run
+from orm.catalogue import Run, RunStatus
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import func, select, text, update
@@ -21,6 +22,7 @@ MAX_RECLAIMS = 5
 
 # the job running in this context: what its handler enqueues names it as the parent
 running_job: ContextVar[int | None] = ContextVar("running_job", default=None)
+running_lane: ContextVar[str | None] = ContextVar("running_lane", default=None)
 
 
 @dataclass
@@ -39,16 +41,23 @@ def enqueue(type: str, options: dict | None = None, parent_id: int | None = None
     job = Job(type=type, lane=job_specs.lane(type), options=job_specs.check(type, options),
               parent_id=parent_id if parent_id is not None else running_job.get(), run_id=run_id, book_id=book_id)
     if session is not None:
-        session.add(job)
-        session.flush()
-        _notify(session, job)
-        return job.id
+        return _add(session, job)
     with Session() as own:
-        own.add(job)
-        own.flush()
-        _notify(own, job)
+        id = _add(own, job)
         own.commit()
-        return job.id
+        return id
+
+
+# the parent row is locked, so a cancel either sees this child or this child sees the cancel
+def _add(session, job: Job) -> int:
+    if job.parent_id is not None:
+        parent = session.scalar(select(Job.status).where(Job.id == job.parent_id).with_for_update())
+        if parent == "cancelled":
+            job.status = "cancelled"
+    session.add(job)
+    session.flush()
+    _notify(session, job)
+    return job.id
 
 
 def claim_next(lane: str, code_hash: str | None = None) -> ClaimedJob | None:
@@ -69,6 +78,13 @@ def claim_next(lane: str, code_hash: str | None = None) -> ClaimedJob | None:
                              job.book_id)
         session.commit()
         return claimed
+
+
+# a job in any lane that could start now; one waiting out a deferral does not count
+def has_due() -> bool:
+    with Session() as session:
+        return session.scalar(select(Job.id).where(Job.status == "new", Job.apply_since <= func.now()).limit(1)) \
+            is not None
 
 
 # single worker by design: anything still running belongs to a process that died
@@ -146,18 +162,26 @@ def live_ids(statuses=None, type: str | None = None, run_id: int | None = None, 
 
 
 # after someone looked into a failure: a fresh budget, the error kept in waiting_because
-def retry(ids: list[int]) -> list[int]:
+def retry(ids: list[int], session=None) -> list[int]:
     if not ids:
         return []
-    with Session() as session:
-        jobs = session.scalars(select(Job).where(Job.id.in_(ids), Job.status.in_(("error", "cancelled")))).all()
-        for job in jobs:
-            job.waiting_because = {"kind": "retried", "previous_error": job.error}
-            job.status, job.attempts, job.reclaims, job.error, job.deferred_seconds = "new", 0, 0, None, 0
-            job.apply_since = func.now()
-            _notify(session, job)
-        session.commit()
-        return sorted(j.id for j in jobs)
+    if session is not None:
+        return _retry(session, ids)
+    with Session() as own:
+        retried = _retry(own, ids)
+        own.commit()
+        return retried
+
+
+def _retry(session, ids: list[int]) -> list[int]:
+    jobs = session.scalars(select(Job).where(Job.id.in_(ids), Job.status.in_(("error", "cancelled")))).all()
+    for job in jobs:
+        job.waiting_because = {"kind": "retried", "previous_error": job.error}
+        job.status, job.attempts, job.reclaims, job.error, job.deferred_seconds = "new", 0, 0, None, 0
+        job.apply_since = func.now()
+        _notify(session, job)
+    session.flush()
+    return sorted(j.id for j in jobs)
 
 
 def pause(ids: list[int]) -> list[int]:
@@ -187,7 +211,14 @@ def cancel(ids: list[int]) -> list[int]:
     if not ids:
         return []
     with Session() as session:
-        tree_ids = {r["id"] for i in ids for r in (dict(x._mapping) for x in session.execute(TREE, {"id": i}))}
+        tree_ids: set[int] = set()
+        # locked rows take no new children, so the tree read again after locking is complete
+        while True:
+            found = {r["id"] for i in ids for r in (dict(x._mapping) for x in session.execute(TREE, {"id": i}))}
+            if found == tree_ids:
+                break
+            session.execute(select(Job.id).where(Job.id.in_(found - tree_ids)).with_for_update())
+            tree_ids = found
         jobs = session.scalars(select(Job).where(Job.id.in_(tree_ids), Job.status.in_(ACTIVE))).all()
         for job in jobs:
             job.status = "cancelled"
@@ -207,11 +238,11 @@ def _notify_raw(session, payload: dict) -> None:
 
 TREE = text("""
     WITH RECURSIVE tree AS (
-        SELECT id, status, run_id FROM jobs WHERE id = :id
+        SELECT id, type, status, run_id FROM jobs WHERE id = :id
         UNION ALL
-        SELECT j.id, j.status, j.run_id FROM jobs j JOIN tree t ON j.parent_id = t.id
+        SELECT j.id, j.type, j.status, j.run_id FROM jobs j JOIN tree t ON j.parent_id = t.id
     )
-    SELECT id, status, run_id FROM tree
+    SELECT id, type, status, run_id FROM tree
 """)
 
 
@@ -230,34 +261,51 @@ def settled(id: int) -> dict | None:
     run_ids = {r["run_id"] for r in rows if r["run_id"] is not None}
     if run_ids:
         with Session() as session:
-            waiting = session.scalars(select(Run.id).where(Run.id.in_(run_ids), Run.status == "needs_attention")).all()
+            waiting = session.scalars(select(Run.id).where(Run.id.in_(run_ids),
+                                                           Run.status == RunStatus.ATTENTION)).all()
         if waiting:
             return {"finished": False, "needs_attention": sorted(waiting)}
     return None
 
 
-# listens rather than polls: every state change is announced on the channel
-def wait(id: int, timeout: float = 600) -> dict:
+# listens rather than polls: every job change wakes it, and a check every 5 s catches state no job announces
+def listen(check: Callable[[], dict | None], timeout: float) -> dict | None:
     deadline = time.monotonic() + timeout
     url = make_url(settings.DATABASE_URL).set(drivername="postgresql")
     with psycopg.connect(url.render_as_string(hide_password=False), autocommit=True) as conn:
         conn.execute(f"LISTEN {CHANNEL}")
         while True:
-            state = settled(id)
+            state = check()
             if state is not None:
-                return {**state, "tree": tree(id)}
+                return state
             left = deadline - time.monotonic()
             if left <= 0:
-                return {"finished": False, "timeout": True, "tree": tree(id)}
+                return None
             for _ in conn.notifies(timeout=min(left, 5.0), stop_after=1):
                 pass
+
+
+def wait(id: int, timeout: float = 600) -> dict:
+    state = listen(lambda: settled(id), timeout)
+    if state is None:
+        return {"finished": False, "timeout": True, "tree": tree(id)}
+    return {**state, "tree": tree(id)}
+
+
+# the worker says which code it runs and that it is alive, idle or not, so the stand never guesses from old jobs
+def heartbeat(host: str, code: str, started: bool = False) -> None:
+    with Session() as session:
+        session.execute(text("INSERT INTO workers (host, code) VALUES (:host, :code) ON CONFLICT (host) DO UPDATE "
+                             "SET code = :code, seen_at = now()" + (", started_at = now()" if started else "")),
+                        {"host": host, "code": code})
+        session.commit()
 
 
 def stats() -> dict:
     with Session() as session:
         counts = session.execute(select(Job.lane, Job.status, func.count()).group_by(Job.lane, Job.status)).all()
         oldest = session.scalar(select(func.min(Job.apply_since)).where(Job.status == "new"))
-        attention = session.scalars(select(Run.id).where(Run.status == "needs_attention")).all()
+        attention = session.scalars(select(Run.id).where(Run.status == RunStatus.ATTENTION)).all()
     out: dict = {}
     for lane, status, n in counts:
         out.setdefault(lane, {})[status] = n

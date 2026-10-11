@@ -1,10 +1,13 @@
 # one adapter per tool: each speaks its tool's HTTP API and answers in the stand's statuses
+import json
 import mimetypes
 import time
 from pathlib import Path
 
+import artifacts
 import httpx
 import net
+import text_clean
 from artifacts import sha256_file
 
 from engines import converter
@@ -28,11 +31,14 @@ def _timeout(started: float, said: str, ceiling: float) -> dict:
 # submitted, polled, fetched: an hour of conversion is never one open request
 def docling(path: Path, fields: list[tuple[str, str]], first: int, last: int, ceiling: float) -> dict:
     base = converter.base_url("docling")
-    fields = fields + [("page_range", str(first)), ("page_range", str(last))]
+    # a form posted with a file takes repeated fields as lists, not as pairs
+    data: dict[str, list[str]] = {}
+    for name, value in [*fields, ("page_range", str(first)), ("page_range", str(last))]:
+        data.setdefault(name, []).append(value)
     started = time.monotonic()
     with path.open("rb") as f:
         files = {"files": (path.name, f, mimetypes.guess_type(path.name)[0] or "application/pdf")}
-        seen = httpx.post(base + "/v1/convert/file/async", data=fields, files=files, timeout=POST_TIMEOUT)
+        seen = httpx.post(base + "/v1/convert/file/async", data=data, files=files, timeout=POST_TIMEOUT)
     seen.raise_for_status()
     task = seen.json()["task_id"]
     deadline = time.monotonic() + ceiling
@@ -50,10 +56,10 @@ def docling(path: Path, fields: list[tuple[str, str]], first: int, last: int, ce
     document = body.get("document") or {}
     said = body.get("status") or status["task_status"]
     stand = DOCLING_STATUSES.get(said, "failure")
-    return {"status": stand, "tool_status": said, "seconds": round(time.monotonic() - started, 2),
+    return text_clean.deep({"status": stand, "tool_status": said, "seconds": round(time.monotonic() - started, 2),
             "errors": body.get("errors") or [x for x in (status.get("error_message"),) if x],
             "markdown": document.get("md_content") if stand in KEPT else None,
-            "structure": document.get("json_content") if stand in KEPT else None}
+            "structure": document.get("json_content") if stand in KEPT else None})
 
 
 # an uploaded file lives in the tool's process, so the process start is part of the key
@@ -111,11 +117,42 @@ def mineru(path: Path, fields: list[tuple[str, str]], first: int, last: int, cei
     if stand in KEPT:
         if (outputs.get("markdown") or {}).get("file_id"):
             markdown = net.get(f"{base}/v1/files/{outputs['markdown']['file_id']}/content", timeout=POST_TIMEOUT).text
-        if (outputs.get("content_list") or {}).get("file_id"):
-            structure = net.get(f"{base}/v1/files/{outputs['content_list']['file_id']}/content",
+        # the page layout with lines and their boxes, running heads included
+        if (outputs.get("middle_json") or {}).get("file_id"):
+            structure = net.get(f"{base}/v1/files/{outputs['middle_json']['file_id']}/content",
                                   timeout=POST_TIMEOUT).json()
-    return {"status": stand, "tool_status": result.get("status"), "seconds": round(time.monotonic() - started, 2),
-            "errors": [result["error"]] if result.get("error") else [], "markdown": markdown, "structure": structure}
+    return text_clean.deep({"status": stand, "tool_status": result.get("status"),
+                            "seconds": round(time.monotonic() - started, 2),
+                            "errors": [result["error"]] if result.get("error") else [], "markdown": markdown,
+                            "structure": structure})
 
 
-READ = {"docling": docling, "mineru": mineru}
+# a kept reading is cleaned on the way out too, so one kept before a cleaning rule changed reads the same as a fresh one
+def kept_json(done) -> dict:
+    return text_clean.deep(json.loads(artifacts.read(done)))
+
+
+# a reading kept outside the artifact table (the element evaluation's cuts) is cleaned the same way
+def kept_file(path: Path) -> dict:
+    return text_clean.deep(json.loads(path.read_text()))
+
+
+def kept_text(done) -> str:
+    return text_clean.clean(artifacts.read(done).decode())
+
+
+# a reading names the build that made it, asked after the work; a build other than the one expected fails it
+def stamped(name: str, read):
+    def run(path: Path, fields: list[tuple[str, str]], first: int, last: int, ceiling: float,
+            build: dict | None = None) -> dict:
+        got = read(path, fields, first, last, ceiling=ceiling)
+        got["build"] = converter.build(name)
+        if build is not None and got["build"] != build:
+            got["status"], got["errors"] = "failure", [*got.get("errors", []),
+                                                       f"{name} build changed during the reading"]
+        return got
+
+    return run
+
+
+READ = {"docling": stamped("docling", docling), "mineru": stamped("mineru", mineru)}

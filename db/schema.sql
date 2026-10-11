@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ndGyjBXg0bhHlZCrQy8tgH8rrpsmv1YnXuZs9MFfwpBciHVeDG1NkhBo5Cr6eN5
+\restrict ZdawWCas73kaPIW94hzyM5CHg10Mov1dKwrnBESkcTlplI2ErKX5FNsPgdeUP58
 
 -- Dumped from database version 17.10 (Debian 17.10-1.pgdg12+1)
 -- Dumped by pg_dump version 17.10 (Debian 17.10-1.pgdg12+1)
@@ -18,6 +18,13 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: public; Type: SCHEMA; Schema: -; Owner: -
+--
+
+-- *not* creating schema, since initdb creates it
+
 
 SET default_tablespace = '';
 
@@ -92,8 +99,9 @@ CREATE TABLE public.books (
     toc_sources jsonb,
     stage text DEFAULT 'uploaded'::text NOT NULL,
     result_run_id bigint,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    knobs jsonb DEFAULT '{}'::jsonb NOT NULL
+    knobs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    page_offset integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -122,13 +130,11 @@ CREATE TABLE public.chapters (
     status text DEFAULT 'pending'::text NOT NULL,
     engine text,
     checks jsonb DEFAULT '{}'::jsonb NOT NULL,
-    verdict text,
-    reasons jsonb DEFAULT '[]'::jsonb NOT NULL,
+    errors jsonb DEFAULT '[]'::jsonb NOT NULL,
     seconds real,
     gpu_seconds real,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chapters_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'failed'::text]))),
-    CONSTRAINT chapters_verdict_check CHECK ((verdict = ANY (ARRAY['ok'::text, 'dirty'::text, 'bad'::text])))
+    CONSTRAINT chapters_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'failed'::text])))
 );
 
 
@@ -153,9 +159,9 @@ CREATE TABLE public.jobs (
     result jsonb,
     error jsonb,
     elapsed real,
+    deferred_seconds integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    deferred_seconds integer DEFAULT 0 NOT NULL,
     CONSTRAINT jobs_lane_check CHECK ((lane = ANY (ARRAY['gpu'::text, 'cpu'::text]))),
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['new'::text, 'running'::text, 'done'::text, 'error'::text, 'paused'::text, 'cancelled'::text])))
 );
@@ -294,11 +300,9 @@ CREATE TABLE public.runs (
     stage text,
     code_hash text,
     engine_builds jsonb DEFAULT '{}'::jsonb NOT NULL,
-    verdict text,
     bundle_dir text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT runs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'needs_attention'::text, 'done'::text, 'failed'::text, 'cancelled'::text]))),
-    CONSTRAINT runs_verdict_check CHECK ((verdict = ANY (ARRAY['ok'::text, 'dirty'::text, 'bad'::text])))
+    CONSTRAINT runs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'needs_attention'::text, 'done'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 
@@ -386,6 +390,18 @@ ALTER TABLE public.toc_versions ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: workers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workers (
+    host text NOT NULL,
+    code text NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    seen_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -531,6 +547,14 @@ ALTER TABLE ONLY public.toc_versions
 
 ALTER TABLE ONLY public.toc_versions
     ADD CONSTRAINT toc_versions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workers workers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workers
+    ADD CONSTRAINT workers_pkey PRIMARY KEY (host);
 
 
 --
@@ -747,5 +771,5 @@ ALTER TABLE ONLY public.toc_versions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ndGyjBXg0bhHlZCrQy8tgH8rrpsmv1YnXuZs9MFfwpBciHVeDG1NkhBo5Cr6eN5
+\unrestrict ZdawWCas73kaPIW94hzyM5CHg10Mov1dKwrnBESkcTlplI2ErKX5FNsPgdeUP58
 
