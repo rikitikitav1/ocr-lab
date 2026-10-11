@@ -2,6 +2,7 @@
 import time
 
 import httpx
+import job_queue
 import logging_setup
 import net
 import settings
@@ -19,13 +20,24 @@ class CardNotHanded(RuntimeError):
     pass
 
 
-def _ollama_loaded() -> list[str]:
+# the card belongs to the GPU lane: a CPU job that needs it hands its work to a GPU job instead
+class WrongLane(RuntimeError):
+    pass
+
+
+# the models ollama keeps loaded, with the card memory each takes
+def ollama_models() -> list[dict]:
     try:
         seen = net.get(settings.OLLAMA_BASE_URL + "/api/ps", timeout=5)
         seen.raise_for_status()
-        return [m["name"] for m in seen.json().get("models", [])]
+        return [{"name": m["name"], "vram_mb": round((m.get("size_vram") or 0) / 2**20)}
+                for m in seen.json().get("models", [])]
     except httpx.HTTPError:
         return []
+
+
+def _ollama_loaded() -> list[str]:
+    return [m["name"] for m in ollama_models()]
 
 
 def _ollama_unload(model: str) -> None:
@@ -41,6 +53,9 @@ def holders() -> list[str]:
 
 
 def hand_to(target: str) -> None:
+    # only a job on the GPU lane takes the card: a CPU job, a door or a script outside the worker never does
+    if job_queue.running_lane.get() != "gpu":
+        raise WrongLane(f"{target} is needed, and the card is taken only on the GPU lane")
     try:
         _hand_to(target)
     except net.SourceDown as e:
@@ -48,7 +63,8 @@ def hand_to(target: str) -> None:
 
 
 def _hand_to(target: str) -> None:
-    for name in holders():
+    before = holders()
+    for name in before:
         if name == target:
             continue
         if name == OLLAMA:
@@ -69,7 +85,9 @@ def _hand_to(target: str) -> None:
     left = [h for h in holders() if h != target]
     if left:
         raise CardNotHanded(f"{target} took the card and {', '.join(left)} still hold it")
-    log.info("card.handed", engine=target)
+    # a target that already held the card alone is no handover, so only a real change is logged
+    if before != [target]:
+        log.info("card.handed", engine=target, released=[h for h in before if h != target])
 
 
 def _until(done, why: str) -> None:

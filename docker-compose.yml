@@ -15,7 +15,6 @@ x-app-env: &app-env
   CONVERTER_DOCLING_BASE_URL: http://converter-docling:5001
   CONVERTER_MINERU_BASE_URL: http://converter-mineru:5001
   OLLAMA_BASE_URL: http://ollama:11434
-  SEARXNG_URL: http://searxng:8080
   PYTHONDONTWRITEBYTECODE: "1"
 
 x-app-volumes: &app-volumes
@@ -76,7 +75,8 @@ services:
   worker:
     build:
       dockerfile: Dockerfile
-    command: ["python", "app/worker.py"]
+    # the worker runs from a copy of app/ and config/, so an edit on disk never reaches a running job
+    command: ["sh", "scripts/worker.sh"]
     # a native crash in a PDF library must not stop the queue; a restart requeues the held job
     restart: unless-stopped
     user: *host-user
@@ -90,17 +90,6 @@ services:
       dbmate:
         condition: service_completed_successfully
     volumes: *app-volumes
-
-  # local metasearch: title and author in, result links out; the stand reads book cards from those links
-  searxng:
-    image: searxng/searxng@sha256:76b0bf285aca014c7191fc4d9234c4bfb358624ac33d8883833d496c059ec072
-    pull_policy: never
-    environment:
-      SEARXNG_BASE_URL: http://searxng:8080/
-      SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env}
-    volumes:
-      # read-only: the container chowned a writable mount to its own user
-      - ./config/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
   ollama:
     image: ollama/ollama@sha256:57f573b47f1f71ebb445789f279fe3e596a8beab182f7cf486db9205bad87c5a
@@ -117,13 +106,16 @@ services:
 
   # each converter image carries its models and a supervisor that holds the card only on request
   converter-docling: &converter
-    profiles: ["convert"]
     image: rag-lab-converter-docling
     pull_policy: never
     init: true
     stop_grace_period: 45s
     environment:
       DOCLING_SERVE_ENABLE_UI: "0"
+      # the stand's Tesseract languages: the image's own plus those fetched through POST /v1/engines/ocr_languages
+      TESSDATA_PREFIX: /tessdata
+    volumes:
+      - ./data/tessdata:/tessdata:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
       start_period: 10s
@@ -135,7 +127,10 @@ services:
   converter-mineru:
     <<: *converter
     image: rag-lab-converter-mineru
-    environment: {}
+    # MinerU sizes vLLM's share by this figure in GB: 10 gives it 60% of the 7.6 GB card, leaving the layout models room
+    environment:
+      MINERU_VIRTUAL_VRAM_SIZE: "10"
+    volumes: []
 
 volumes:
   pg_data:
