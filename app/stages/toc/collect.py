@@ -1,0 +1,316 @@
+# the book's toc as chapter page ranges; with no contents a short book is one chapter, a long one is not recognised
+import json
+from dataclasses import asdict, replace
+from pathlib import Path
+
+import artifacts
+import book_knobs
+import code_version
+import model_steps
+import numerals
+import pdf
+import settings
+from job_signals import Final
+from orm.catalogue import Book, TocEntry, TocVersion
+from orm.db import Session
+
+from stages import book_stage, intake, versions
+from stages.toc import pages, reconcile, scan
+from stages.toc.sources import (
+    Entry,
+    SourceToc,
+    book_lines,
+    bookmarks,
+    conf,
+    files,
+    labelled,
+    numbering,
+    printed_contents,
+)
+from stages.toc.sources.numbering import title_depth
+
+STAGE = "toc"
+
+
+def code_hash() -> str:
+    # the toc reads the layer, running heads and numerals, so the code that reads them is its code
+    own = [*sorted((settings.APP_DIR / "stages" / "toc").rglob("*.py")), settings.APP_DIR / "model_steps.py",
+           settings.APP_DIR / "stages" / "running_heads.py", settings.APP_DIR / "numerals.py",
+           settings.APP_DIR / "pdf.py"]
+    digest = code_version.files_hash(own, ("toc.yaml",))
+    digest.update(json.dumps(model_steps.steps()["toc_reader"], sort_keys=True).encode())
+    return digest.hexdigest()[:16]
+
+
+# a book whose contents MinerU reads is stale when its build changes, as when the code does
+def inputs(book_id: int) -> artifacts.Inputs:
+    # only the knobs set on the book: a new knob at its default leaves every other book's toc fresh
+    knobs = {k: v for k, v in book_knobs.overrides(book_id).items() if k.startswith("toc.")}
+    parts = {"stage": STAGE, "code": code_hash(), "files": [f.sha256 for f in intake.files_of(book_id)],
+             "knobs": knobs}
+    if scanned(book_id) or scan.raster_contents(book_id, knobs.get("toc.contents_pages"), run=False) is not None:
+        from engines import reading
+
+        parts["mineru"] = reading.build("mineru")
+    return artifacts.Inputs(parts)
+
+
+def current_version(book_id: int) -> TocVersion | None:
+    with Session() as session:
+        return versions.current(session, TocVersion, book_id)
+
+
+def _printed(files, given, lines: dict) -> tuple[SourceToc, dict]:
+    found = printed_contents.read(files, given)
+    if found.failed or not found.entries:
+        return found, {}
+    text = pages.page_text(lines, set(found.notes.get("pages", [])))
+    return found, pages.place(found.entries, text, sum(f.pages for f in files))
+
+
+def _whole_book(files) -> Entry:
+    return Entry(Path(files[0].file_name).stem, 1, 1, evidence="no contents in a short book: one chapter",
+                 source="whole_book")
+
+
+def scanned(book_id: int) -> bool:
+    with Session() as session:
+        return scan.is_scan(session.get(Book, book_id))
+
+
+# a knob for books whose first top bookmark is the book itself: it goes, and the entries under it rise a level
+def without_root(entries: list[Entry]) -> list[Entry]:
+    if len(entries) < 2 or entries[1].level <= entries[0].level:
+        return entries
+    root, out, inside = entries[0], [], True
+    for e in entries[1:]:
+        inside = inside and e.level > root.level
+        out.append(replace(e, level=e.level - 1) if inside else e)
+    return out
+
+
+# the bookmarks as every reader of them sees them, after the book's bookmark knobs
+def book_bookmarks(book_files, knobs: dict) -> SourceToc:
+    if knobs["toc.ignore_bookmarks"]:
+        return SourceToc("bookmarks", failed="ignored by the book knob toc.ignore_bookmarks")
+    marks = bookmarks.read(book_files)
+    if knobs["toc.skip_root_bookmark"]:
+        marks.entries = without_root(marks.entries)
+    return marks
+
+
+# no readable contents in the text layer, no bookmarks or chapter files to stand for them, raster never read
+def needs_raster(book_id: int) -> bool:
+    if scanned(book_id):
+        return False
+    knobs = book_knobs.of(book_id)
+    given = knobs["toc.contents_pages"]
+    book_files = intake.files_of(book_id)
+    pages_found, lines = printed_contents.find_pages(book_files, given)
+    text = " ".join(x.text for p in pages_found for x in lines.get(p, []))
+    # contents pages the owner named but that are pictures are read by recognition
+    if pages_found and (not given or (pdf.has_layer(text) and not pdf.garbled(text))):
+        return False
+    if len([e for e in book_bookmarks(book_files, knobs).entries if e.page is not None]) >= 2:
+        return False
+    if len(files.read(book_files).entries) >= 2:
+        return False
+    return scan.raster_contents(book_id, given, run=False) is None
+
+
+# a scan, or a text book whose layer gave no contents, has its toc read from the raster on the GPU lane
+def wants_raster(book_id: int) -> bool:
+    return scanned(book_id) or needs_raster(book_id)
+
+
+# all sources reconciled; `off` leaves sources out, `raster` lets a text book's contents be recognised
+def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tuple[str, list[Entry], dict]:
+    book_files = intake.files_of(book_id)
+    total = sum(f.pages for f in book_files)
+    knobs = book_knobs.of(book_id)
+    marks = SourceToc("bookmarks", failed="switched off") if "bookmarks" in off and not knobs["toc.ignore_bookmarks"] \
+        else book_bookmarks(book_files, knobs)
+    given = knobs["toc.contents_pages"]
+    label = knobs["toc.chapter_label"]
+    if scanned(book_id):
+        printed, placement = scan.read(book_id, given)
+        counted = SourceToc("numbering", failed="a scan has no text to count numbers in")
+        heads = scan.top_blocks(book_id, total) if label else {}
+    else:
+        lines = book_lines(book_files)
+        first = conf()["numbering"]["head_lines"]
+        heads = {p: [x.text for x in ls[:first]] for p, ls in lines.items()} if label else {}
+        printed, placement = _printed(book_files, given, lines)
+        if not printed.entries and (seen := scan.raster_contents(book_id, given, run=raster)) and seen.entries:
+            printed = seen
+            text = pages.page_text(lines, set(seen.notes["pages"]))
+            placement = pages.place(seen.entries, text, total)
+        counted = numbering.read(book_files, set(printed.notes.get("pages", [])), lines)
+    by_file = files.read(book_files)
+    found = {s.source: s.entries for s in (marks, printed, by_file, counted) if s.source not in off}
+    base, merged, report = reconcile.reconcile(found)
+    evidence = {"pages": total, "bookmarks": asdict(marks), "printed_contents": asdict(printed),
+                "placement": placement, "files": asdict(by_file), "numbering": asdict(counted), "reconcile": report}
+    if base is not None:
+        return base, merged, evidence
+    if label:
+        labels = labelled.read(heads, label, "a recognised page" if scanned(book_id) else "the text layer")
+        evidence["labels"] = asdict(labels)
+        if not labels.failed:
+            return "labels", labels.entries, evidence
+    # nothing else holds the book's contents (an ebook's outline was all it had): its labelled chapters in the text are
+    if "numbering" not in off and _labelled(counted.entries) >= conf()["numbering_base_min"]:
+        dropped = _out_of_turn(counted.entries)
+        evidence["numbering_out_of_turn"] = [e.title for e in dropped]
+        return "numbering", [e for e in counted.entries if not any(e is d for d in dropped)], evidence
+    # a word the text repeats before its chapters' numbers ("Глава осма") gives them, however the layer runs lines
+    if not scanned(book_id) and "labels" not in off and (seen := labelled.found_in(book_files, lines)) is not None:
+        evidence["labels"] = asdict(seen)
+        return "labels", seen.entries, evidence
+    if total <= conf()["whole_book_max_pages"]:
+        return "whole_book", [_whole_book(book_files)], evidence
+    raise Final(f"structure not recognised: no table of contents found in a book of {total} pages: "
+                f"bookmarks {marks.failed or 'too few'}, "
+                f"printed contents {printed.failed or 'too few placed'}")
+
+
+# chapters opening on neighbouring pages are a list of them (a contents page, a series page), not the book's chapters
+NEIGHBOURS = 0.3
+# a chapter number met again out of turn is a cross-reference set like a heading; a few of them are tolerated
+BACKWARDS = 0.1
+
+
+def _number(entry: Entry, kind: str) -> int | None:
+    m = numbering.label_pattern(kind).match(entry.title.strip())
+    return numerals.value(m.group("num")) if m else None
+
+
+# labelled entries outside the longest rising run of their kind's numbers are cross-references set like headings
+def _out_of_turn(entries: list[Entry]) -> list[Entry]:
+    out = []
+    for kind in ("part", "chapter"):
+        numbered = [(e, n) for e in entries if (n := _number(e, kind)) is not None]
+        best = [1] * len(numbered)
+        for i in range(len(numbered)):
+            for j in range(i):
+                if numbered[j][1] < numbered[i][1]:
+                    best[i] = max(best[i], best[j] + 1)
+        keep, length, last = set(), max(best, default=0), None
+        for i in range(len(numbered) - 1, -1, -1):
+            if best[i] == length and (last is None or numbered[i][1] < last):
+                keep.add(i)
+                length, last = length - 1, numbered[i][1]
+        out += [e for i, (e, _) in enumerate(numbered) if i not in keep]
+    return out
+
+
+# labelled chapters that can stand as a toc: their numbers rise and they open pages apart
+def _labelled(entries: list[Entry]) -> int:
+    found = [e for e in entries if title_depth(e.title) in (-1, 0)]
+    if len(_out_of_turn(found)) > BACKWARDS * max(1, len(found) - 1):
+        return 0
+    # a part's page and its first chapter's page are neighbours by design, so each kind is measured among itself
+    close = steps = 0
+    for depth in (-1, 0):
+        pages = [e.page for e in found if e.page is not None and title_depth(e.title) == depth]
+        close += sum(b - a <= 1 for a, b in zip(pages, pages[1:], strict=False))
+        steps += max(0, len(pages) - 1)
+    return 0 if close > NEIGHBOURS * max(1, steps) else len(found)
+
+
+# the pages before the first entry are a section of their own, so no page of the book is left out of the toc
+def with_front_matter(entries: list[Entry], files) -> list[Entry]:
+    first = min((e.page for e in entries if e.page is not None), default=1)
+    if first <= 1:
+        return entries
+    top = min((e.level or 1 for e in entries), default=1)
+    front = Entry(Path(files[0].file_name).stem, top, 1, evidence=f"the pages before the first entry, 1-{first - 1}",
+                  source="front_matter")
+    return [front, *entries]
+
+
+# a chapter is a top entry that is not a part, or an entry one level below the part it sits in
+def _kind(entry: Entry, top: int, part_level: int | None) -> str:
+    if entry.source == "front_matter":
+        return "front_matter"
+    if title_depth(entry.title) == -1:
+        return "part"
+    level = entry.level or top
+    if level == top or (part_level is not None and level == part_level + 1):
+        return "chapter"
+    return "section"
+
+
+# the rows a toc version stores, the front matter included
+def toc_rows(entries: list[Entry], source: str, total: int, files) -> list[dict]:
+    return rows(with_front_matter(entries, files), source, total)
+
+
+# an entry ends where the next one at its level or above starts; one starting on the same page ends there
+def rows(entries: list[Entry], source: str, total: int) -> list[dict]:
+    top = min(e.level or 1 for e in entries)
+    out = []
+    part_level = None
+    for i, e in enumerate(entries):
+        level_here = e.level or top
+        if title_depth(e.title) == -1 and e.source != "front_matter":
+            part_level = level_here
+        elif part_level is not None and level_here <= part_level:
+            part_level = None
+        level = (e.level or top) - top + 1
+        nxt = next((x.page for x in entries[i + 1:] if (x.level or top) <= (e.level or top)), None)
+        last = total if nxt is None else max(e.page, nxt - 1)
+        out.append({"ord": i + 1, "title": e.title, "level": min(level, 6), "level_source": e.source or source,
+                    "first_page": e.page, "last_page": last, "kind": _kind(e, top, part_level),
+                    "votes": e.votes or {source: {"level": e.level, "printed": e.printed, "evidence": e.evidence}}})
+    return out
+
+
+# the offset of the printed contents when the text confirms most entries, or of a scan's page numbers
+def measured_offset(placement: dict) -> int | None:
+    if placement.get("offset_from") == "page numbers":
+        return placement.get("offset")
+    tried = placement.get("verified", 0) + placement.get("unverified", 0)
+    return placement.get("offset") if tried and placement["verified"] * 2 > tried else None
+
+
+def write_version(book_id: int, made_from: artifacts.Inputs, entries: list[dict], job_id: int | None,
+                  evidence: dict) -> int:
+    with Session() as session:
+        versions.lock_book(session, book_id)
+        version = versions.new(session, TocVersion, book_id, made_from.key, job_id)
+        number = version.version
+        for row in entries:
+            session.add(TocEntry(toc_version_id=version.id, **row))
+        session.flush()
+        book_stage.settle(session, book_id)
+        book = session.get(Book, book_id)
+        book.page_offset = measured_offset(evidence.get("placement") or {})
+        # the result is a run on the current toc, and no run is on a version made just now
+        book.result_run_id = None
+        session.commit()
+        version_id = version.id
+    owner = artifacts.Owner(toc_version_id=version_id)
+    base = artifacts.version_dir(book_id, "toc", number)
+    artifacts.write(owner, base, STAGE, "sources.json", json.loads(json.dumps(evidence, default=str)), made_from)
+    artifacts.write(owner, base, STAGE, "toc.json", entries, made_from)
+    return version_id
+
+
+def collect(book_id: int, job_id: int | None = None, force: bool = False, raster: bool = False) -> int:
+    previous = current_version(book_id)
+    made_from = inputs(book_id)
+    # a version whose evidence never got written is not fresh: its artifacts follow the commit
+    kept = previous is not None and artifacts.find_done(artifacts.Owner(toc_version_id=previous.id), STAGE,
+                                                       "toc.json", made_from.key) is not None
+    if kept and previous.input_hash == made_from.key and not force:
+        return previous.id
+    source, entries, evidence = choose(book_id, raster=raster)
+    found = toc_rows(entries, source, evidence["pages"], intake.files_of(book_id))
+    # keyed after the work: a raster read just kept names MinerU's build, so the version is not stale at once
+    return write_version(book_id, inputs(book_id), found, job_id, {"chosen": source, **evidence})
+
+
+def stale(book_id: int) -> bool:
+    previous = current_version(book_id)
+    return previous is not None and previous.input_hash != inputs(book_id).key
