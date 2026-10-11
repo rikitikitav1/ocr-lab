@@ -1,0 +1,51 @@
+# the knob registry: knobs grouped by the question they answer; defaults live in assembly.yaml and book_knobs
+groups:
+  tables:
+    question: whose grid a table takes
+    knobs:
+      tables_from:
+        options: [mineru, docling, null]
+        help: each table takes this engine's grid at the same place, unless it split the place into several tables
+        probe: element_eval table cells F1 against the layer words
+        cost: cpu
+      tables_by:
+        options: [layer, prefer]
+        help: '"layer" takes the grid agreeing better with the layer words, "prefer" the engine above'
+        probe: element_eval table cells F1
+        cost: cpu
+      table_union:
+        options: [false, true]
+        help: a table only the preferred engine drew joins when its cells agree with the layer words in its box
+        probe: element_eval tables found and phantom
+        cost: cpu
+  code:
+    question: what is code and how its text is read
+    knobs:
+      code_from_layer:
+        options: [true, false]
+        help: code text from the text layer inside each code block's box, when the face there is monospace
+        probe: element_eval code text similarity
+        cost: cpu
+      mono_paragraphs:
+        options: [true, false]
+        help: a paragraph whose glyphs all keep one advance is code an engine read as prose
+        probe: element_eval code found and phantom
+        cost: cpu
+      code_union:
+        options: [false, true]
+        help: every code box either engine drew is kept where the layer is monospace and only prose sits
+        probe: element_eval code found and phantom
+        cost: cpu
+      join_code_across_pages:
+        options: [true, false]
+        help: a code block ending low on a page and one starting high on the next, with only the page between, are one
+        probe: element_eval code blocks per listing
+        cost: cpu
+  recognition:
+    question: whose text a scanned page takes
+    knobs:
+      scan_engine:
+        options: [mineru, docling]
+        help: on a recognised range the text is this engine's; the other engine's words measure the agreement
+        probe: the engines' word agreement on recognised pages, read by eye on a sample
+        cost: gpu
