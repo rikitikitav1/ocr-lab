@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -19,6 +20,7 @@ class Book(Base):
     stage: Mapped[str] = mapped_column(Text, default="uploaded")
     result_run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("runs.id"))
     knobs: Mapped[dict] = mapped_column(JSONB, default=dict)
+    page_offset: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -94,6 +96,23 @@ class Profile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# a run's life: queued, then running through its stages, then done, waiting for attention or cancelled
+class RunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    ATTENTION = "needs_attention"
+    CANCELLED = "cancelled"
+
+
+class RunStage(StrEnum):
+    ASSEMBLE = "assemble"
+    METRICS = "metrics"
+    ATTENTION = "attention"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
+
 class Run(Base):
     __tablename__ = "runs"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -107,7 +126,6 @@ class Run(Base):
     stage: Mapped[str | None] = mapped_column(Text)
     code_hash: Mapped[str | None] = mapped_column(Text)
     engine_builds: Mapped[dict] = mapped_column(JSONB, default=dict)
-    verdict: Mapped[str | None] = mapped_column(Text)
     bundle_dir: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -120,8 +138,7 @@ class Chapter(Base):
     status: Mapped[str] = mapped_column(Text, default="pending")
     engine: Mapped[str | None] = mapped_column(Text)
     checks: Mapped[dict] = mapped_column(JSONB, default=dict)
-    verdict: Mapped[str | None] = mapped_column(Text)
-    reasons: Mapped[list] = mapped_column(JSONB, default=list)
+    errors: Mapped[list] = mapped_column(JSONB, default=list)
     seconds: Mapped[float | None] = mapped_column(Float)
     gpu_seconds: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

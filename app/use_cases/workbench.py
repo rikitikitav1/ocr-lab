@@ -1,0 +1,74 @@
+import artifacts
+import code_version
+import job_queue
+import job_specs
+from knobs import registry
+from mcp_tools import tool
+from orm.catalogue import Artifact, Book, Run
+from orm.db import Session
+from sqlalchemy import text
+
+
+# the reading lands in the job's result by range key and artifact id, which the artifact door reads
+@tool("read_range", "POST /v1/books/{id}/read_range",
+      "Queue a GPU job that reads a book's page range with one engine and keeps the reading; returns the job id,"
+      " whose result names the reading artifact.")
+def read_range(id: int, engine: str, first_page: int, last_page: int) -> dict:
+    options = job_specs.check("read_range", {"book_id": id, "engine": engine, "first_page": first_page,
+                                             "last_page": last_page})
+    with Session() as session:
+        book = session.get(Book, id)
+        if book is None:
+            raise LookupError(f"no book {id}")
+        pages = book.pages or 0
+    if not 1 <= first_page <= last_page <= pages:
+        raise job_specs.Refused(f"pages {first_page}-{last_page} are not within book {id}'s 1-{pages}")
+    return {"job_id": job_queue.enqueue("read_range", options, book_id=id)}
+
+
+# before and after per chapter land in the job's result and in data/scratch/reassemble; the run stays as it was
+@tool("reassemble", "POST /v1/runs/{id}/reassemble",
+      "Queue a CPU job that reassembles a finished run's chapters from their kept readings with the given knobs into a"
+      " scratch result, leaving the run untouched; its result gives the chapter numbers before and after.")
+def reassemble(id: int, knobs: dict, ords: list[int] | None = None) -> dict:
+    if not knobs:
+        raise job_specs.Refused("reassemble needs at least one run knob to set")
+    registry.check(knobs)
+    options = job_specs.check("reassemble", {"run_id": id, "knobs": knobs, "ords": ords})
+    with Session() as session:
+        run = session.get(Run, id)
+        if run is None:
+            raise LookupError(f"no run {id}")
+        book_id = run.book_id
+    return {"job_id": job_queue.enqueue("reassemble", options, book_id=book_id)}
+
+
+# any kept artifact by id, a book's readings included; a tool cannot carry bytes, so it gets the file as text
+@tool("artifact", "GET /v1/artifacts/{id}",
+      "Any artifact by id: its stage, name, path, owner and inputs, for a reading, a chapter file or a pages.json.")
+def get_artifact(id: int) -> dict:
+    with Session() as session:
+        row = session.get(Artifact, id)
+        if row is None or row.removed_at is not None:
+            raise LookupError(f"no artifact {id}")
+    return {"id": row.id, "stage": row.stage, "name": row.name, "path": row.path, "book_id": row.book_id,
+            "run_id": row.run_id, "chapter": row.chapter_ord, "meta": row.meta,
+            "text": artifacts.read(row).decode(errors="replace")}
+
+
+def _worker_code() -> str | None:
+    with Session() as session:
+        return session.scalar(text("SELECT code FROM workers ORDER BY seen_at DESC LIMIT 1"))
+
+
+# the worker stops claiming and restarts on newer code once its jobs in hand end; a run in flight then mixes code
+@tool("reload_worker", "POST /v1/stand/worker/reload",
+      "Ask the worker to take the code on disk once its jobs in hand end, instead of waiting for an empty queue;"
+      " a run in flight then mixes code across its chapters.")
+def reload_worker() -> dict:
+    worker, disk = _worker_code(), code_version.tree_hash()
+    if worker in (None, disk):
+        return {"requested": False, "worker_code": worker, "on_disk": disk,
+                "because": "no worker seen" if worker is None else "the worker already runs the code on disk"}
+    code_version.request_reload()
+    return {"requested": True, "worker_code": worker, "on_disk": disk}

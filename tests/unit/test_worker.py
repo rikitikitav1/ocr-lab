@@ -34,3 +34,99 @@ def test_deferred_does_not_spend_an_attempt(stand, monkeypatch):
     assert worker.run_once("cpu")
     job = job_queue.get(id)
     assert job.status == "new" and job.attempts == 0 and job.waiting_because["kind"] == "deferred"
+
+
+@needs_db
+def test_a_deferred_job_runs_on_its_next_claim(stand, monkeypatch):
+    calls = []
+
+    def handler(options):
+        calls.append(1)
+        if len(calls) == 1:
+            raise job_handlers.Deferred("model away", delay_seconds=1)
+        return {"ok": True}
+
+    monkeypatch.setitem(job_handlers.HANDLERS, "noop", handler)
+    id = job_queue.enqueue("noop")
+    assert worker.run_once("cpu")
+    with Session() as session:
+        session.get(Job, id).apply_since = session.get(Job, id).created_at
+        session.commit()
+    assert worker.run_once("cpu")
+    job = job_queue.get(id)
+    assert job.status == "done" and job.deferred_seconds == 1 and "_deferred_seconds" not in job.options
+
+
+def test_the_worker_moves_to_newer_code_only_when_nothing_is_running_or_due(monkeypatch):
+    exits = []
+    monkeypatch.setitem(worker._held, "stopping", False)
+    monkeypatch.setattr(worker.os, "_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(worker.code_version, "differs_from_disk", lambda: True)
+    monkeypatch.setattr(worker.code_version, "reload_requested", lambda: False)
+    monkeypatch.setattr(job_queue, "has_due", lambda: True)
+    worker._restart_if_behind()
+    assert exits == []
+    monkeypatch.setattr(job_queue, "has_due", lambda: False)
+    monkeypatch.setitem(worker._held, "running", 1)
+    worker._restart_if_behind()
+    assert exits == []
+    monkeypatch.setitem(worker._held, "running", 0)
+    worker._restart_if_behind()
+    assert exits == [0]
+
+
+def test_an_asked_reload_stops_claiming_at_once_and_restarts_when_the_jobs_in_hand_end(monkeypatch, tmp_path):
+    import settings
+
+    exits, claims = [], []
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    monkeypatch.setitem(worker._held, "stopping", False)
+    monkeypatch.setitem(worker._held, "running", 1)
+    monkeypatch.setattr(worker.os, "_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(worker.code_version, "differs_from_disk", lambda: True)
+    monkeypatch.setattr(job_queue, "has_due", lambda: True)
+    monkeypatch.setattr(job_queue, "claim_next", lambda lane, code: claims.append(lane))
+    worker.code_version.request_reload()
+    assert worker.run_once("cpu") is False
+    assert exits == [] and claims == [] and worker._held["stopping"]
+    monkeypatch.setitem(worker._held, "running", 0)
+    assert worker.run_once("gpu") is False
+    assert exits == [0] and claims == [] and not worker.code_version.reload_requested()
+
+
+def test_a_reload_asked_with_nothing_newer_on_disk_is_dropped(monkeypatch, tmp_path):
+    import settings
+
+    exits = []
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    monkeypatch.setitem(worker._held, "stopping", False)
+    monkeypatch.setattr(worker.os, "_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(worker.code_version, "differs_from_disk", lambda: False)
+    worker.code_version.request_reload()
+    worker._restart_if_behind()
+    assert exits == [] and not worker._held["stopping"] and not worker.code_version.reload_requested()
+
+
+def test_a_job_s_log_lines_name_its_run_and_book(monkeypatch):
+    import structlog
+
+    seen = []
+    monkeypatch.setattr(worker, "_run", lambda claimed: seen.append(structlog.contextvars.get_contextvars()))
+    worker._claimed(job_queue.ClaimedJob(7, "noop", {}, 0, 0, 11, 13), "cpu")
+    assert seen == [{"job_id": 7, "job_type": "noop", "run_id": 11, "book_id": 13}]
+    assert structlog.contextvars.get_contextvars() == {}
+
+
+def test_the_worker_beats_while_its_lanes_are_busy(monkeypatch):
+    beats = []
+
+    def sleep(seconds):
+        raise StopIteration
+
+    monkeypatch.setattr(job_queue, "heartbeat", lambda host, code: beats.append(code))
+    monkeypatch.setattr(worker.time, "sleep", sleep)
+    try:
+        worker._beat()
+    except StopIteration:
+        pass
+    assert beats == [worker.code_version.LOADED]

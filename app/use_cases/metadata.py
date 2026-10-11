@@ -6,22 +6,26 @@ from orm.db import Session
 from sqlalchemy import select
 from stages.metadata import resolve
 from stages.metadata.candidates import FIELDS, OPTIONAL, REQUIRED, SOUGHT
+from stages.metadata.fields import view as field_view
 
 
-@tool("metadata", "GET /v1/books/{id}/metadata")
+@tool("metadata", "GET /v1/books/{id}/metadata",
+      "The current metadata fields of a book: value, source, confidence, the attempts that found it, and "
+      "whether the field is required or optional.")
 def get_metadata(id: int) -> list[dict]:
     version = resolve.current_version(id)
     if version is None:
         raise LookupError(f"book {id} has no metadata yet")
     with Session() as session:
         rows = session.scalars(select(MetadataField).where(MetadataField.metadata_version_id == version.id))
-        return [{"name": f.name, "optional": f.name in OPTIONAL, "required": f.name in REQUIRED,
-                 "value": f.value, "source": f.source,
-                 "confidence": f.confidence, "attempts": f.attempts, "version": version.version} for f in rows]
+        return [{"name": f.name, "optional": f.name in OPTIONAL, "required": f.name in REQUIRED, **field_view(f),
+                 "attempts": f.attempts, "version": version.version} for f in rows]
 
 
 # the one hand edit the stand accepts; the found values stay in the field's evidence
-@tool("set_metadata", "PATCH /v1/books/{id}/metadata/{name}")
+@tool("set_metadata", "PATCH /v1/books/{id}/metadata/{name}",
+      "Sets one metadata field by hand (source manual) and returns the field; the values found before stay in "
+      "its evidence.")
 def set_metadata(id: int, name: str, value: object) -> dict:
     if name not in FIELDS:
         raise job_specs.Refused(f"unknown metadata field {name!r}; known: {', '.join(FIELDS)}")
@@ -33,7 +37,9 @@ LOW_CONFIDENCE = 0.6
 
 
 # how complete the catalogue is: per field, and the books still missing a required one
-@tool("metadata_coverage", "GET /v1/metadata/coverage")
+@tool("metadata_coverage", "GET /v1/metadata/coverage",
+      "How complete the catalogue is: per field filled, empty, conflicting and low-confidence counts by source,"
+      " and the books still missing a required or sought field.")
 def coverage() -> dict:
     from orm.catalogue import Book, MetadataVersion
 

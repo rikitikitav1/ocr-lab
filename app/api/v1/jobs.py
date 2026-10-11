@@ -11,8 +11,8 @@ class Ids(BaseModel):
 
 @router.get("/jobs")
 def list_jobs(status: str | None = None, type: str | None = None, run_id: int | None = None, lane: str | None = None,
-              limit: int = 100):
-    return jobs.list_jobs(status, type, run_id, lane, limit)
+              book_id: int | None = None, limit: int = 100):
+    return jobs.list_jobs(status, type, run_id, lane, book_id, limit)
 
 
 @router.get("/jobs/{id}")
@@ -21,8 +21,8 @@ def get_job(id: int):
 
 
 @router.get("/jobs/{id}/wait")
-def wait_job(id: int, timeout: float = 600):
-    return jobs.wait_job(id, timeout)
+def wait_job(id: int, timeout: float = 600, tree: bool = False):
+    return jobs.wait_job(id, timeout, tree)
 
 
 @router.post("/jobs/pause")
@@ -48,3 +48,8 @@ def retry_jobs(body: Ids):
 @router.get("/queue")
 def queue():
     return jobs.queue()
+
+
+@router.get("/job_types")
+def job_types():
+    return jobs.job_types()

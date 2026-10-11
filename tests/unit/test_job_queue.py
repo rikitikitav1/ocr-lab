@@ -103,3 +103,32 @@ def test_retry_gives_a_failed_job_a_fresh_budget(stand):
     assert job_queue.retry([id]) == [id]
     job = job_queue.get(id)
     assert job.status == "new" and job.attempts == 0 and job.waiting_because["previous_error"]["error"] == "boom"
+
+
+@needs_db
+def test_a_cancel_reaches_queued_children(stand):
+    parent = job_queue.enqueue("noop")
+    child = job_queue.enqueue("noop", parent_id=parent)
+    assert set(job_queue.cancel([parent])) == {parent, child}
+
+
+@needs_db
+def test_a_child_enqueued_after_its_parent_was_cancelled_never_runs(stand):
+    parent = job_queue.enqueue("noop")
+    job_queue.cancel([parent])
+    child = job_queue.enqueue("noop", parent_id=parent)
+    assert job_queue.get(child).status == "cancelled"
+
+
+def test_the_code_hash_covers_config_and_reads_the_source_tree(tmp_path, monkeypatch):
+    import code_version
+
+    for root in (tmp_path / "copy", tmp_path / "source"):
+        (root / "app").mkdir(parents=True)
+        (root / "config").mkdir()
+        (root / "app" / "a.py").write_text("x = 1\n")
+        (root / "config" / "c.yaml").write_text("k: 1\n")
+    same = code_version.tree_hash(tmp_path / "copy")
+    assert code_version.tree_hash(tmp_path / "source") == same
+    (tmp_path / "source" / "config" / "c.yaml").write_text("k: 2\n")
+    assert code_version.tree_hash(tmp_path / "source") != same

@@ -1,6 +1,8 @@
+import io
 import threading
 
 import pdf
+from PIL import Image
 
 from tests.fixtures import build, text_page
 
@@ -27,3 +29,10 @@ def test_parallel_reads_do_not_corrupt_each_other(tmp_path):
 def test_cp1251_read_as_latin1_is_repaired():
     assert pdf.repair("Áîãäàí Êîâàëü÷óê\nЁжик") == "Богдан Ковальчук\nЁжик"
     assert pdf.repair("Café déjà vu") == "Café déjà vu"
+
+
+def test_a_box_of_a_page_is_cut_out_as_a_png_of_that_share_of_the_page(tmp_path):
+    path = build(tmp_path / "crop.pdf", [text_page("Picture page")])
+    png = pdf.page_crop(path, 0, (0.25, 0.5, 0.75, 1.0), dpi=72)
+    width, height = pdf.page_sizes(path)[0]
+    assert Image.open(io.BytesIO(png)).size == (round(width * 0.5), round(height * 0.5))

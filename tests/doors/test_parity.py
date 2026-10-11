@@ -14,3 +14,13 @@ def test_every_route_has_a_tool_and_every_tool_a_route():
     tools = set(TOOLS.values())
     assert _routes() - tools - REST_ONLY == set(), "routes without an MCP tool"
     assert tools - _routes() == set(), "MCP tools without a route"
+
+
+def test_every_tool_tells_a_client_what_it_does():
+    import asyncio
+
+    from mcp_tools import mcp
+
+    listed = asyncio.run(mcp.list_tools())
+    assert {t.name for t in listed} == set(TOOLS)
+    assert [t.name for t in listed if len(t.description or "") < 30] == []
