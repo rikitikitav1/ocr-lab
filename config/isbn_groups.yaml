@@ -1,5 +1,4 @@
-# ISBN registration group prefixes (978/979 included) by the language most books there are published in;
-# a translation's own ISBN is the one in its language's group, a foreign one beside it is the original's
+# ISBN group prefixes by language; a translation's own ISBN is the one in its language's group
 groups:
   en: ["9780", "9781", "97980", "97981"]
   fr: ["9782", "97910", "97912"]

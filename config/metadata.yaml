@@ -1,6 +1,8 @@
 # defaults for book-level knobs; a book overrides any of them at submission or later (PATCH /v1/books/{id}/knobs)
 title_pages:
-  # pages read as the title and copyright pages; on the rag-lab shelf every own ISBN sat on pages 1-6,
-  # and pages 12-18 carried other books' ISBNs, which therefore never become the book's own or original ISBN
+  # pages read as title pages; on the shelf every own ISBN sat on pages 1-6
   head: 20
   tail: 20
+# the PDF's own info: values that name the tool or a shop copy, not the book
+pdf_info:
+  pdf_info_junk: [microsoft word, untitled, myebook, myebooks]

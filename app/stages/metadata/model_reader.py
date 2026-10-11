@@ -1,16 +1,13 @@
 # the stand's model reads the title and copyright pages; it never searches, it only reads what it is given
-import json
 import re
-from functools import cache
 
-import models_client
-import settings
-import yaml
+import model_steps
+import numerals
 
 from stages.metadata.candidates import SourceResult
 
-READ_FIELDS = ("title", "authors", "translators", "illustrators", "edition", "year", "publisher", "series", "volume",
-               "original_title", "original_year")
+READ_FIELDS = ("title", "authors", "edition", "year", "publisher", "series", "volume", "original_title")
+# the prompt still asks for credits the stand no longer keeps: trimming it changed the model's other answers
 PROMPT = (
     "You read the title and copyright pages of a book and return JSON only, no prose. Keys: title (string), "
     "authors (list of strings), translators (list of strings, empty if not a translation), illustrators (list of "
@@ -29,27 +26,6 @@ SUBJECT_PROMPT = (
 )
 
 
-@cache
-def steps() -> dict:
-    return yaml.safe_load((settings.CONFIG_DIR / "models.yaml").read_text())["steps"]
-
-
-def _call(step: str, system: str, user: str) -> str:
-    conf = dict(steps()[step])
-    provider, model = conf.pop("provider"), conf.pop("model")
-    if provider == "ollama":
-        from engines import card
-
-        card.hand_to(card.OLLAMA)
-    return models_client.chat(provider, model, [{"role": "system", "content": system},
-                                                {"role": "user", "content": user}], **conf)
-
-
-def _json(answer: str) -> dict:
-    m = re.search(r"\{.*\}", answer, re.S)
-    return json.loads(m.group(0)) if m else {}
-
-
 # the imprint often sits on the last pages, so the model gets both ends rather than the first stretch only
 HEAD_CHARS, TAIL_CHARS = 7000, 5000
 
@@ -60,31 +36,47 @@ def excerpt(text: str) -> str:
     return text[:HEAD_CHARS] + "\n\n[... middle pages left out ...]\n\n" + text[-TAIL_CHARS:]
 
 
+# a volume is its number, whatever word the book puts before it: "Volume 4", "Band 11", "Том IX"
+VOLUME_NUMBER = re.compile(rf"\d+|\b{numerals.ROMAN}\b")
+
+
+def volume_number(value: str) -> str:
+    found = VOLUME_NUMBER.findall(value)
+    return found[-1] if found else value
+
+
 def read(title_text: str) -> SourceResult:
     out = SourceResult("model", covers=READ_FIELDS)
     if len(title_text.strip()) < 50:
         out.failed = "no title page text to read"
         return out
     try:
-        parsed = _json(_call("metadata_reader", PROMPT, excerpt(title_text)))
+        parsed = model_steps.parse_json(model_steps.call("metadata_reader", PROMPT, excerpt(title_text)))
     except (ValueError, KeyError) as e:
         out.failed = f"unreadable answer: {e}"
         return out
+    volume = volume_number(str(parsed["volume"])) if parsed.get("volume") is not None else None
     for name in READ_FIELDS:
         value = parsed.get(name)
         if name == "edition" and value is not None:
             value = str(value)
-        if name in ("authors", "translators", "illustrators") and isinstance(value, str):
+            # a series volume read as the edition: "Volume 4" over a book that prints "1st Edition"
+            if value == volume:
+                continue
+        if name == "volume" and value is not None:
+            value = volume_number(str(value))
+        if name == "authors" and isinstance(value, str):
             value = [value]
-        out.add(name, value, 0.5, f"model {steps()['metadata_reader']['model']} over title pages")
+        out.add(name, value, 0.5, f"model {model_steps.steps()['metadata_reader']['model']} over title pages")
     return out
 
 
 def subject(title: str | None, contents: str, blurb: str) -> SourceResult:
     out = SourceResult("model", covers=("subject",))
     text = f"Title: {title or 'unknown'}\n\nContents and first pages:\n{contents[:4000]}\n\nBack cover:\n{blurb[:2000]}"
-    parsed = _json(_call("subject", SUBJECT_PROMPT, text))
+    parsed = model_steps.parse_json(model_steps.call("subject", SUBJECT_PROMPT, text))
     field, kind = str(parsed.get("field") or "").strip().lower(), str(parsed.get("kind") or "").strip().lower()
     if field and field not in ("field", "what the book is about"):
-        out.add("subject", f"{field}, {kind}" if kind else field, 0.5, f"model {steps()['subject']['model']}")
+        model = model_steps.steps()["subject"]["model"]
+        out.add("subject", f"{field}, {kind}" if kind else field, 0.5, f"model {model}")
     return out

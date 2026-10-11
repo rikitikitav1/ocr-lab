@@ -1,21 +1,19 @@
 # what the book is made of: files, pages, text layer per page, bookmarks, printed contents pages
-import re
 import shutil
 from pathlib import Path
 
 import artifacts
 import book_knobs
+import code_version
 import pdf
 import settings
 from orm.catalogue import Book, BookFile
 from orm.db import Session
 from sqlalchemy import select
 
+from stages.toc.sources import printed_contents
+
 STAGE = "intake"
-# a printed contents line: a title, a run of dots or spaces, a page number
-DOT_LEADER = re.compile(r"^\s*\S.{2,}?(?:\.\s?){3,}\s*\d{1,4}\s*$", re.MULTILINE)
-CONTENTS_SCAN_PAGES = 30
-CONTENTS_MIN_LINES = 5
 
 
 def file_store_path(sha: str) -> Path:
@@ -66,13 +64,20 @@ def files_of(book_id: int) -> list[BookFile]:
         return list(session.scalars(select(BookFile).where(BookFile.book_id == book_id).order_by(BookFile.ord)))
 
 
+def code_hash() -> str:
+    sources = settings.APP_DIR / "stages" / "toc" / "sources"
+    own = [settings.APP_DIR / "stages" / "intake.py", sources / "__init__.py", sources / "printed_contents.py",
+           sources / "numbering.py"]
+    return code_version.files_hash(own, ("toc.yaml",)).hexdigest()[:16]
+
+
 def probe(book_id: int) -> dict:
     files = files_of(book_id)
     given = book_knobs.of(book_id)["toc.contents_pages"]
-    key = artifacts.input_hash(stage=STAGE, files=[f.sha256 for f in files], layer_rule=pdf.LAYER_RULE,
-                               contents_pages=given)
+    inputs = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], "layer_rule": pdf.LAYER_RULE,
+                               "knobs": {"toc.contents_pages": given}, "code": code_hash()})
     owner = artifacts.Owner(book_id=book_id)
-    done = artifacts.find_done(owner, STAGE, "probe.json", key)
+    done = artifacts.find_done(owner, STAGE, "probe.json", inputs.key)
     if done is not None:
         import json
 
@@ -82,7 +87,7 @@ def probe(book_id: int) -> dict:
         if given:
             result["has_printed_contents"] = True
             result["toc_sources"]["contents_pages_given"] = given
-        artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "probe.json", result, key)
+        artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "probe.json", result, inputs)
     with Session() as session:
         book = session.get(Book, book_id)
         book.text_layer = result["text_layer"]
@@ -93,8 +98,18 @@ def probe(book_id: int) -> dict:
     return result
 
 
+# a book page as (file ord, page in that file), so a page named in a report can be opened in its own file
+def located(files: list[BookFile], pages: list[int]) -> dict[int, list[int]]:
+    out = {}
+    for page in sorted(set(pages)):
+        f = next((f for f in files if f.first_page <= page < f.first_page + f.pages), None)
+        if f is not None:
+            out[page] = [f.ord, page - f.first_page + 1]
+    return out
+
+
 def _probe(files: list[BookFile]) -> dict:
-    without_layer, garbled, bookmarks, contents_lines = [], [], 0, 0
+    without_layer, garbled, bookmarks = [], [], 0
     per_file = []
     for f in files:
         path = settings.DATA_DIR / f.file_path
@@ -104,17 +119,17 @@ def _probe(files: list[BookFile]) -> dict:
         garbled += [f.first_page + i for i, t in texts.items() if pdf.garbled(t)]
         marks = pdf.outline(path)
         bookmarks += len(marks)
-        head = "\n".join(texts[i] for i in sorted(texts)[:CONTENTS_SCAN_PAGES])
-        lines = len(DOT_LEADER.findall(head))
-        contents_lines += lines
         per_file.append({"ord": f.ord, "pages": f.pages, "pages_without_layer": len(missing),
-                         "bookmarks": len(marks), "contents_lines": lines})
+                         "bookmarks": len(marks)})
     total = sum(f.pages for f in files)
+    # the toc stage's own finder, so the catalogue and the toc never disagree on whether contents exist
+    contents_pages, _ = printed_contents.find_pages(files, None)
     return {
         "text_layer": {"pages": total, "without_layer": without_layer, "with_layer": total - len(without_layer),
                        "garbled": garbled},
+        "where": located(files, [*without_layer, *garbled, *contents_pages]),
         "has_bookmarks": bookmarks > 0,
-        "has_printed_contents": contents_lines >= CONTENTS_MIN_LINES,
-        "toc_sources": {"bookmarks": bookmarks, "printed_contents_lines": contents_lines},
+        "has_printed_contents": bool(contents_pages),
+        "toc_sources": {"bookmarks": bookmarks, "printed_contents_pages": contents_pages},
         "files": per_file,
     }

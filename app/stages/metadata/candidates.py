@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
-FIELDS = ("title", "authors", "translators", "illustrators", "edition", "year", "languages", "publisher", "series",
-          "volume", "isbn", "original_title", "original_year", "original_isbn", "subject", "pages", "editions")
+FIELDS = ("title", "authors", "edition", "year", "languages", "publisher", "series", "volume", "isbn",
+          "original_title", "subject", "pages", "made_with")
 # owner's rule: these must be found for every book
 REQUIRED = ("title", "authors", "languages", "subject", "pages")
 # looked for everywhere, by title too when there is no ISBN; empty only when no source has them
