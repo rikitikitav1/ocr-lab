@@ -24,8 +24,12 @@ audit() {
 }
 
 # the same gitleaks image CI runs, over the whole history
+# a worktree's .git points at the main repository's git dir, so that dir is mounted at its own path too
 secrets() {
-  docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.24.3 detect --source /repo --no-banner --redact
+  local common
+  common=$(cd "$(git rev-parse --git-common-dir)" && pwd)
+  docker run --rm -v "$PWD":/repo -v "$common":"$common" zricethezav/gitleaks:v8.24.3 detect --source /repo \
+    --no-banner --redact
 }
 
 step ruff uv run ruff check app tests scripts

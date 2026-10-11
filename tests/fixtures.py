@@ -26,10 +26,13 @@ def build(path: Path, pages: list[dict]) -> Path:
         if page.get("raster"):
             c.setFillGray(0.3)
             c.rect(40, 200, 300, 300, fill=1)
+        # a line is its text, or a dict with its indent and font size
         for line in page.get("lines", []):
-            c.setFont(FONT, 10)
-            c.drawString(30, y, line)
-            y -= 14
+            spec = line if isinstance(line, dict) else {"text": line}
+            y -= max(0, spec.get("size", 10) - 10)
+            c.setFont(FONT, spec.get("size", 10))
+            c.drawString(spec.get("x", 30), y, spec["text"])
+            y -= max(14, spec.get("size", 10) + 4)
         c.showPage()
     c.save()
     return path

@@ -9,6 +9,10 @@ CREATE TABLE books (
     toc_sources jsonb,
     stage text NOT NULL DEFAULT 'uploaded',
     result_run_id bigint,
+    -- book-level knob overrides, given at submission or later; run-level knobs live in profiles
+    knobs jsonb NOT NULL DEFAULT '{}',
+    -- book page minus printed page number, measured by the toc stage; null when not measured
+    page_offset integer,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -100,7 +104,6 @@ CREATE TABLE runs (
     stage text,
     code_hash text,
     engine_builds jsonb NOT NULL DEFAULT '{}',
-    verdict text CHECK (verdict IN ('ok', 'dirty', 'bad')),
     bundle_dir text,
     created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -113,8 +116,7 @@ CREATE TABLE chapters (
     status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'failed')),
     engine text,
     checks jsonb NOT NULL DEFAULT '{}',
-    verdict text CHECK (verdict IN ('ok', 'dirty', 'bad')),
-    reasons jsonb NOT NULL DEFAULT '[]',
+    errors jsonb NOT NULL DEFAULT '[]',
     seconds real,
     gpu_seconds real,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -154,7 +156,49 @@ CREATE TABLE model_calls (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE jobs (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    type text NOT NULL,
+    lane text NOT NULL CHECK (lane IN ('gpu', 'cpu')),
+    parent_id bigint REFERENCES jobs(id) ON DELETE SET NULL,
+    run_id bigint REFERENCES runs(id) ON DELETE SET NULL,
+    book_id bigint REFERENCES books(id) ON DELETE SET NULL,
+    options jsonb NOT NULL DEFAULT '{}',
+    status text NOT NULL DEFAULT 'new'
+        CHECK (status IN ('new', 'running', 'done', 'error', 'paused', 'cancelled')),
+    attempts int NOT NULL DEFAULT 0,
+    reclaims int NOT NULL DEFAULT 0,
+    apply_since timestamptz NOT NULL DEFAULT now(),
+    waiting_because jsonb,
+    code_hash text,
+    result jsonb,
+    error jsonb,
+    elapsed real,
+    -- how long a job has waited on Deferred, kept apart from its options so they stay valid
+    deferred_seconds int NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX jobs_claim ON jobs (lane, apply_since) WHERE status = 'new';
+CREATE INDEX jobs_parent ON jobs (parent_id);
+CREATE INDEX jobs_run ON jobs (run_id);
+
+-- outside hosts set aside after failing every retry; shared by the api and the worker processes
+CREATE TABLE workers (
+    host text PRIMARY KEY,
+    code text NOT NULL,
+    started_at timestamptz NOT NULL DEFAULT now(),
+    seen_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE outside_hosts (
+    host text PRIMARY KEY,
+    until timestamptz NOT NULL,
+    reason text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- migrate:down
-DROP TABLE model_calls, artifacts, chapters;
+DROP TABLE outside_hosts, jobs, model_calls, artifacts, chapters;
 ALTER TABLE books DROP CONSTRAINT books_result_run;
 DROP TABLE runs, profiles, toc_entries, toc_versions, metadata_fields, metadata_versions, book_files, books;
