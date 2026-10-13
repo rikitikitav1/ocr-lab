@@ -77,9 +77,10 @@ publisher), maybe the clean table of contents too, as it turns out." Scanned PDF
   recognised on a scan, once the text confirms its pages; bookmarks are written by whoever made the
   PDF and may be wrong. Bookmarks then vote and add what the printed contents lack, and give the levels
   where an entry has one. Numbering in the text only votes.
-- Q: What if no source gives a contents? → A: A book of at most 100 pages is one chapter; a longer one
+- Q: What if no source gives a contents? → A: The headings of every page read as pictures are tried
+  last; when they give no chapter level, a book of at most 100 pages is one chapter and a longer one
   fails with "structure not recognised" and the sources' reasons, and is not split by pages (owner's
-  decision, 2026-10-10).
+  decisions, 2026-10-10 and 2026-10-13).
 - Q: A book split into chapter files whose order nobody wrote down? → A: Each file is a chapter; the
   files can be ordered by the chapter number each prints on its opening pages, chosen at submission.
 - Q: Does the stand go to the internet for metadata or the contents? → A: Not at this stage. The
@@ -489,7 +490,9 @@ in the group it belongs to.
 - **FR-042**: Chapters MUST be the unit of assembly: each chapter is assembled on its own, with
   its own checks and its own artifacts.
 - **FR-043**: Chapter boundaries and chapter levels MUST come from the table-of-contents stage;
-  levels inside a chapter are set relative to the chapter's level, so FR-010 holds.
+  levels inside a chapter are set relative to the chapter's level, so FR-010 holds. An entry heading
+  parts (a labelled part, or a bookmark named as a contents with the chapters under it) holds the
+  chapters one level below it; the source's levels are kept as they are.
 - **FR-044**: A single chapter MUST be re-assemblable on its own, with knobs overridden for that
   chapter only, without redoing the other chapters.
 - **FR-045**: Book metrics MUST be computed from the chapter results plus whole-book checks
@@ -520,10 +523,14 @@ in the group it belongs to.
   per book. Tree similarity (TEDS) is not computed.
 - **FR-059**: Book-level knobs MUST be settable at submission and changed later, each with a default
   in configuration: the title-page window for metadata (default the first 20 and the last 20
-  pages), the printed contents pages given by hand as page ranges, and whether the first top bookmark
-  is the book itself and its children are the top level (default off). A change takes effect at the
-  next collection of metadata or the table of contents.
-- **FR-061**: When no source gives a table of contents, a book of at most a configured number of pages
+  pages), the printed contents pages given by hand as page ranges, whether the first top bookmark
+  is the book itself and its children are the top level (default off), whether the bookmarks are not
+  the contents at all (default off), the word a book's chapters open with (none), and whether a book
+  no source holds tries its headings read as pictures before it fails (default on). A change takes
+  effect at the next collection of metadata or the table of contents.
+- **FR-061**: When no source gives a table of contents, the chapters MUST be tried from the headings of
+  every page read as pictures, grouped by look, unless a book knob turns this off; when that gives no
+  chapter level, or more chapters than half the pages, a book of at most a configured number of pages
   (100) MUST become one chapter, and a longer book MUST fail as "structure not recognised" with the
   reason visible through the doors.
 - **FR-062**: The offset between printed page numbers and book pages MUST be kept with the book when
@@ -634,8 +641,9 @@ in the group it belongs to.
 - The single user is the project owner; there are no accounts, roles or sharing in this feature.
 - Submitted PDFs are lawfully obtained by the owner; licensing checks are out of scope.
 - Books are of any genre (technical, fiction, children's, textbooks, poetry) and any language; no
-  stage assumes a language, and language-specific rules (ISBN registration groups, title-page
-  patterns) are tables that grow with the books, not code paths for two languages.
+  stage assumes a language, and language-specific rules (title-page patterns) are tables that grow
+  with the books, not code paths for two languages; an ISBN's languages come from the ISBN agency's
+  own ranges and the languages of countries (CLDR), with a table only for agency names CLDR lacks.
 - Input in this feature is PDF only; EPUB, HTML and other formats are later features.
 - Output in this feature is Markdown only; the Docling format for RAG and others are later
   features.

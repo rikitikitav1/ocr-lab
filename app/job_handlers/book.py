@@ -28,7 +28,7 @@ def run_intake(options: dict) -> dict:
     book_id = options["book_id"]
     probed = intake.probe(book_id)
     then = options["then"]
-    run = "run" in then and "toc" in then
+    run = "run" in then
     # a cancel arriving while the files were read stops the chain here
     if not job_queue.is_cancelled(options["_job_id"]):
         if "metadata" in then:

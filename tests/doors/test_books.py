@@ -147,6 +147,10 @@ def test_bad_knobs_are_refused(client, inbox):
     assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": {"nope": 1}}).status_code == 400
     out_of_range = {"toc.contents_pages": [[1, 50]]}
     assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": out_of_range}).status_code == 400
+    not_a_switch = {"toc.from_headings": "yes"}
+    assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": not_a_switch}).status_code == 400
+    run_without_toc = client.post("/v1/books", json={"file_paths": [str(pdf)], "then": ["metadata", "run"]})
+    assert run_without_toc.status_code == 400 and "add toc" in run_without_toc.json()["error"]["message"]
 
 
 def test_given_contents_pages_mark_printed_contents(stand, inbox):
@@ -182,6 +186,23 @@ def test_recollect_defaults_and_refusals(client, inbox, monkeypatch):
     before = len(job_queue.live_ids())
     assert client.post("/v1/books/recollect", json={"ids": [book["id"], 999999]}).status_code == 404
     assert len(job_queue.live_ids()) == before
+
+
+def test_recollect_with_run_passes_it_down_the_chain_and_needs_the_toc(client, inbox):
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "r.pdf", [text_page("x")]))],
+                                          "then": []}).json()
+    url = f"/v1/books/{book['id']}/recollect"
+    assert client.post(url, json={"what": ["metadata"], "run": True}).status_code == 400
+
+    def options(answer):
+        return client.get(f"/v1/jobs/{answer.json()['job_id']}").json()["options"]
+
+    assert options(client.post(url, json={"what": ["toc"], "run": True}))["run"] is True
+    assert options(client.post(url, json={"what": ["metadata", "toc"], "run": True}))["run"] is True
+    assert "run" in options(client.post(url, json={"what": ["intake"], "run": True}))["then"]
+    assert options(client.post(url, json={"what": ["toc"]}))["run"] is False
+    many = client.post("/v1/books/recollect", json={"ids": [book["id"]], "what": ["toc"], "run": True}).json()
+    assert client.get(f"/v1/jobs/{many['jobs'][str(book['id'])]}").json()["options"]["run"] is True
 
 
 def test_a_manual_edit_never_passes_for_a_collection(client, inbox, monkeypatch):

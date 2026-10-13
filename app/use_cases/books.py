@@ -214,28 +214,36 @@ def _checked_what(what: list[str] | None) -> list[str]:
     return what
 
 
-def _enqueue_recollect(session, book_id: int, what: list[str]) -> int:
+def _checked_run(what: list[str], run: bool) -> None:
+    collects_toc = "toc" in what or what == ["intake"]
+    if run and not collects_toc:
+        raise job_specs.Refused("run starts once the toc is collected; add toc to what")
+
+
+def _enqueue_recollect(session, book_id: int, what: list[str], run: bool = False) -> int:
     # intake again re-reads the files, then chains the stages asked for, or both as on submission
     if "intake" in what:
         then = [w for w in what if w != "intake"] or ["metadata", "toc"]
-        return job_queue.enqueue("intake", {"book_id": book_id, "then": then, "force": True}, book_id=book_id,
-                                 session=session)
+        return job_queue.enqueue("intake", {"book_id": book_id, "then": then + ["run"] * run, "force": True},
+                                 book_id=book_id, session=session)
     if "metadata" not in what:
-        return job_queue.enqueue("toc", {"book_id": book_id, "what": ["toc"], "force": True}, book_id=book_id,
-                                 session=session)
-    return job_queue.enqueue("metadata", {"book_id": book_id, "what": what, "force": True}, book_id=book_id,
-                             session=session)
+        return job_queue.enqueue("toc", {"book_id": book_id, "what": ["toc"], "force": True, "run": run},
+                                 book_id=book_id, session=session)
+    return job_queue.enqueue("metadata", {"book_id": book_id, "what": what, "force": True, "run": run},
+                             book_id=book_id, session=session)
 
 
 @tool("recollect", "POST /v1/books/{id}/recollect",
       "Queues one job that collects a book's stages again (`what` from intake, metadata, toc; default "
-      "metadata), forced even when nothing is stale. Returns {job_id}; follow it with wait_job.")
-def recollect(id: int, what: list[str] | None = None) -> dict:
+      "metadata), forced even when nothing is stale; `run` starts a run once the toc is collected. Returns {job_id}; "
+      "follow it with wait_job.")
+def recollect(id: int, what: list[str] | None = None, run: bool = False) -> dict:
     what = _checked_what(what)
+    _checked_run(what, run)
     with Session() as session:
         if session.get(Book, id) is None:
             raise LookupError(f"no book {id}")
-        job_id = _enqueue_recollect(session, id, what)
+        job_id = _enqueue_recollect(session, id, what, run)
         session.commit()
     return {"job_id": job_id}
 
@@ -243,15 +251,17 @@ def recollect(id: int, what: list[str] | None = None) -> dict:
 # one all-or-nothing call for many books: every id and stage is checked before a job is queued
 @tool("recollect_books", "POST /v1/books/recollect",
       "Like recollect for many books at once (all books when `ids` is empty); every id and stage is checked "
-      "before any job is queued. Returns {jobs: {book_id: job_id}}.")
-def recollect_books(ids: list[int] | None = None, what: list[str] | None = None) -> dict:
+      "before any job is queued. `run` starts a run for every book once its toc is collected, so with empty `ids` "
+      "it runs the whole shelf on the GPU. Returns {jobs: {book_id: job_id}}.")
+def recollect_books(ids: list[int] | None = None, what: list[str] | None = None, run: bool = False) -> dict:
     what = _checked_what(what)
+    _checked_run(what, run)
     with Session() as session:
         known = set(session.scalars(select(Book.id)))
         ids = ids or sorted(known)
         unknown = [i for i in ids if i not in known]
         if unknown:
             raise LookupError(f"no books {unknown}")
-        jobs = {book_id: _enqueue_recollect(session, book_id, what) for book_id in ids}
+        jobs = {book_id: _enqueue_recollect(session, book_id, what, run) for book_id in ids}
         session.commit()
     return {"jobs": jobs}

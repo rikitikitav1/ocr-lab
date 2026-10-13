@@ -15,7 +15,7 @@ def _words(lines: list) -> list:
 
 
 def _labels(kind: str) -> set[str]:
-    return {w.lower() for w in conf()["numbering"][kind]}
+    return {w.lower() for w in conf()["text_layer"]["numbering"][kind]}
 
 
 def _title(lines: list, skip: set[str]) -> str | None:

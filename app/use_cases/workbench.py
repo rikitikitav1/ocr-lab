@@ -12,10 +12,12 @@ from sqlalchemy import text
 # the reading lands in the job's result by range key and artifact id, which the artifact door reads
 @tool("read_range", "POST /v1/books/{id}/read_range",
       "Queue a GPU job that reads a book's page range with one engine and keeps the reading; returns the job id,"
-      " whose result names the reading artifact.")
-def read_range(id: int, engine: str, first_page: int, last_page: int) -> dict:
+      " whose result names the reading artifact. `force_raster_only` reads every page as a picture, as a scan is read"
+      " (MinerU only); the result names the kept readings, contents_ocr.<file>.<a>-<b>.json beside a scan's"
+      " contents readings.")
+def read_range(id: int, engine: str, first_page: int, last_page: int, force_raster_only: bool = False) -> dict:
     options = job_specs.check("read_range", {"book_id": id, "engine": engine, "first_page": first_page,
-                                             "last_page": last_page})
+                                             "last_page": last_page, "force_raster_only": force_raster_only})
     with Session() as session:
         book = session.get(Book, id)
         if book is None:

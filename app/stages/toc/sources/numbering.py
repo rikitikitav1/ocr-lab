@@ -16,7 +16,7 @@ MAX_TITLE_WORDS = 15
 
 @cache
 def label_pattern(kind: str) -> re.Pattern:
-    words = "|".join(re.escape(w) for w in conf()["numbering"][kind])
+    words = "|".join(re.escape(w) for w in conf()["text_layer"]["numbering"][kind])
     # a number in words is any word ("Part One", "part one"), so "Part of Speech" reads as a part too
     number = rf"\d{{1,3}}|{numerals.ROMAN_LABEL}|\w+"
     return re.compile(rf"^(?P<label>{words})\s+(?P<num>{number})\b[.:]?\s*(?P<title>.*)$", re.I)
@@ -73,11 +73,11 @@ def _set_apart(line, body: tuple[float, bool]) -> bool:
 
 
 def _plausible(text: str) -> bool:
-    return len(text) <= conf()["numbering"]["max_chars"] and len(text.split()) <= MAX_TITLE_WORDS + 3
+    return len(text) <= conf()["text_layer"]["numbering"]["max_chars"] and len(text.split()) <= MAX_TITLE_WORDS + 3
 
 
 def _candidates(lines: dict, skip_pages: set[int]) -> list[tuple[str, tuple, str, int]]:
-    head_lines = conf()["numbering"]["head_lines"]
+    head_lines = conf()["text_layer"]["numbering"]["head_lines"]
     body = _body_style(lines)
     out = []
     for page in sorted(lines):

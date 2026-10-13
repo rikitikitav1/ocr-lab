@@ -19,7 +19,7 @@ The catalogue record (spec: Source book, Catalogue record).
 | toc_sources | jsonb | sources found at intake, with entry counts |
 | stage | text | current stage, see state machine |
 | result_run_id | fk runs | best finished run (FR-053), recomputed when a run finishes |
-| knobs | jsonb | book-level knob overrides (FR-059): `metadata.title_pages.head`, `metadata.title_pages.tail`, `toc.contents_pages`, `toc.skip_root_bookmark` |
+| knobs | jsonb | book-level knob overrides (FR-059): `metadata.title_pages.head`, `metadata.title_pages.tail`, `toc.contents_pages`, `toc.skip_root_bookmark`, `toc.ignore_bookmarks`, `toc.chapter_label`, `toc.from_headings` |
 | page_offset | int | book page minus printed page number, measured on the printed contents when the text confirms most entries, whichever toc source won; null otherwise |
 
 ## metadata_fields
@@ -47,7 +47,7 @@ Files of a book in order (FR-054); a one-file book has one row.
 | book_id | fk books | |
 | ord | int | position in the book |
 | sha256 | text | file content hash |
-| file_path | text | stored original under `data/files/<sha[:2]>/<sha>.pdf` |
+| file_path | text | stored original under `data/files/<sha[:2]>/<sha>.pdf`, stored once by content and linked from the book's folder as `data/books/<id>/source/<ord>-<file name>` |
 | file_name | text | name as submitted |
 | pages | int | |
 | first_page | int | book page number of the file's first page |

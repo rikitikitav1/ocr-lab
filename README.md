@@ -57,11 +57,19 @@ Where each step stands: [docs/status.md](docs/status.md).
 
 </details>
 
+<details>
+<summary>Diagram: chapters from the headings, the last try, with each threshold and where it comes from</summary>
+
+![Chapters from the headings](docs/diagrams/headings.drawio.svg)
+
+</details>
+
 1. **Submit.** `POST /v1/books` (or the MCP tool `add_book`) takes paths on the shelf or under
    `data/inbox`, in order; `POST /v1/books/upload` takes the bytes. A book is identified by the hashes
    of its files in order, so the same files submitted again return the same book and nothing is queued.
    Two editions are two books. A book split into several files is one submission; volumes of a series
-   are separate books linked by the `series` and `volume` fields.
+   are separate books linked by the `series` and `volume` fields. A file is stored once by its content
+   (`data/files/`); the book's folder links each of its files by order and name in `data/books/<id>/source/`.
 2. **Intake** (CPU lane). Per page: is there a text layer. Per file: bookmarks. In the first pages:
    printed contents lines with dot leaders. The result is kept as `probe.json` and reused while the
    files are unchanged.
@@ -69,7 +77,7 @@ Where each step stands: [docs/status.md](docs/status.md).
    The title and copyright pages (the first 20 and the last 20 by default; a book knob, see below) are
    read from the text layer, or recognised by MinerU when there is none or it is garbled. Scripts come
    first and use no language word lists: the PDF's info and XMP of every file (a value shaped like a file
-   name or a stamp is ignored; Producer and Creator are kept as `made_with`), ISBN with its checksum, year, the catalogue card's series, the language
+   name or a stamp is ignored; Producer and Creator are kept as `made_with`), ISBN by the ISBN agency's rules (of two printed, a translation keeps the one registered in its language's group, told by the agency's ranges and CLDR), year, the catalogue card's series, the language
    of the body text. Then a local model (ollama) reads the title pages for the title, authors, edition,
    volume and publisher and names the book's subject. Everything comes from the book itself: no
    catalogue or web lookups at this stage.
@@ -80,15 +88,17 @@ Where each step stands: [docs/status.md](docs/status.md).
 5. **What you get.** `GET /v1/books/{id}` shows files, pages, text layer, bookmarks, printed contents
    and metadata; `GET /v1/books/{id}/metadata` shows every field with its value, source, confidence
    and attempts. A field can be set by hand (`PATCH /v1/books/{id}/metadata/{name}`, a new version);
-   the book content itself is never edited by hand. `POST /v1/books/{id}/recollect` collects again.
+   the book content itself is never edited by hand. `POST /v1/books/{id}/recollect` collects again; with `"run": true` it starts a run once the toc is collected, so `what` must hold `toc`.
 6. **Table of contents** (CPU lane; GPU only to recognise a raster). The contents printed in the book
    are found in the text layer, or on the raster when neither the text, the bookmarks nor chapter
    files give one; contents spread over several pages are read as one, and their printed pages are put
    on PDF pages. Reconciled with the bookmarks, chapter files and numbering, the result is a toc
    version with every entry's first and last page (`GET /v1/books/{id}/toc`). When nothing else holds
    the contents, the labelled chapters in the text ("Chapter N", three or more, numbers rising) are the
-   toc. With none of these, a book of at most 100 pages is one chapter and a longer one fails with "no
-   table of contents found". `POST /v1/eval/toc` with `bookmarks_off` scores it against the bookmarks.
+   toc. With none of these, every page is read as a picture and the headings grouped by look give the
+   chapters (book knob `toc.from_headings`, on by default); when they give none, or more than one chapter
+   to two pages, a book of at most 100 pages is one chapter and a longer one fails with "structure not
+   recognised". `POST /v1/eval/toc` with `bookmarks_off` scores it against the bookmarks.
 7. **Run** (`POST /v1/books/{id}/runs`, MCP `start_run`). Every chapter is read by Docling and by
    MinerU on the GPU lane, then assembled on the CPU lane page by page; pages without a usable layer
    are read by both engines in OCR mode. A run assembles with a profile: the value of every run knob
@@ -129,9 +139,12 @@ Book-level knobs can be given at submission (`"knobs": {...}` in `POST /v1/books
 (`PATCH /v1/books/{id}/knobs`): `metadata.title_pages.head` and `.tail` (20 and 20 by default, in
 `config/metadata.yaml`), `toc.contents_pages`, the printed contents pages as `[[first, last], ...]`
 when you know where they are, `toc.skip_root_bookmark` when the first bookmark is the book itself,
-`toc.ignore_bookmarks` when the bookmarks are not the contents (one per page, image file names), and
+`toc.ignore_bookmarks` when the bookmarks are not the contents (one per page, image file names),
 `toc.chapter_label`, a word chapters open with: a line of it and one more word at a page's top opens a
-chapter ("درس" for the lessons "درس اول", "درس دوم" of a Farsi reader; a scan is then recognised whole).
+chapter ("درس" for the lessons "درس اول", "درس دوم" of a Farsi reader; a scan is then recognised whole), and
+`toc.from_headings` (on by default), the last try before a book with no contents fails: every page is read as
+a picture and the chapters come from its headings grouped by look (`config/toc.yaml`, `scan_layer.headings`);
+false lets the book fail at once.
 A change takes effect at the next collection. A submission may also say `"then": ["toc"]` to skip
 metadata, and `"order": "by_number"` to order chapter files by the number each prints.
 
@@ -166,12 +179,12 @@ Time per page and per phase, text-layer books and scans apart: [docs/timing.md](
 
 ## Languages tried
 
-The shelf holds 117 books. A book with two languages counts under both. Full runs are the raw run of 40 books
+The shelf holds 117 books. A book with two languages counts under both. Full runs are the raw run of 43 books and the books run since, 45 in all
 ([experiment](docs/experiments/2026-10-11_raw-run.md)).
 
 | language | books | of them scans | what was checked |
 |---|---|---|---|
-| English | 93 | 2 | toc (bookmarks off, HiPS), metadata, elements, full runs of 18 books (one of them the English and Chinese scan) |
+| English | 93 | 2 | toc (bookmarks off, HiPS), metadata, elements, full runs of 23 books (one of them the English and Chinese scan) |
 | Russian | 14 | 4 | toc, metadata, elements (rag-lab's Russian gold sections), full runs of 13 books, 4 of them scans |
 | Bulgarian | 4 | 0 | toc, full runs of all 4 |
 | Romanian | 2 | 0 (an old text layer) | toc, full runs of both (a village monograph of 1905, a book on a village of 1998) |
@@ -196,7 +209,7 @@ curl -s localhost:8100/v1/stand | jq      # health, engine builds, who holds the
 ```
 
 Submit a book, wait for it and take the result: `then` with `"run"` starts a run once the toc is ready, and
-waiting on the intake job waits for the whole chain (leave `"run"` out to stop at the toc and look first):
+`"run"` needs `"toc"` in `then` too, and waiting on the intake job waits for the whole chain (leave `"run"` out to stop at the toc and look first):
 
 ```bash
 curl -s -F files=@book.pdf -F 'then=["metadata","toc","run"]' localhost:8100/v1/books/upload | jq '{id, job_id}'
@@ -206,10 +219,11 @@ curl -s localhost:8100/v1/books/<id>/bundle -o book.tar       # the book's resul
 
 A book on the shelf is submitted by path instead: `POST /v1/books` with `{"shelf_paths": [...], "then": [...]}`.
 
-The workbench doors leave runs as they are: `read_range` reads a book's page range through one engine and keeps
-the reading, `reassemble` puts a run's chapters together again from their kept readings with run knobs set and
-reports each chapter's numbers before and after, `artifact` reads any kept artifact by id, and `reload_worker`
-has the worker take newer code once its jobs in hand end, so a run in flight then mixes code.
+The workbench doors leave runs as they are: `read_range` reads a book's page range through one engine and keeps the
+reading (with `force_raster_only`, MinerU reads every page as a picture, the way a scan is read), `reassemble` puts
+a run's chapters together again from their kept readings with run knobs set and reports each chapter's numbers
+before and after, `artifact` reads any kept artifact by id, and `reload_worker` has the worker take newer code once
+its jobs in hand end, so a run in flight then mixes code.
 
 ## For agents
 

@@ -23,6 +23,18 @@ def test_same_files_in_same_order_are_one_book(stand, files):
     assert created and not created_again and first == again
 
 
+def test_a_book_folder_links_its_files_by_order_and_name(stand, files):
+    a, b = files
+    book, _ = intake.register([(a, "dir/a.pdf"), (b, "b.pdf")])
+    folder = settings.DATA_DIR / "books" / str(book) / "source"
+    assert sorted(p.name for p in folder.iterdir()) == ["0-a.pdf", "1-b.pdf"]
+    assert (folder / "0-a.pdf").read_bytes() == a.read_bytes() and not (folder / "1-b.pdf").readlink().is_absolute()
+    long, _ = intake.register([(b, "ж" * 200 + ".pdf")])
+    (name,) = [p.name for p in (settings.DATA_DIR / "books" / str(long) / "source").iterdir()]
+    assert len(name.encode()) <= 255 and name.endswith(".pdf")
+    intake.link_sources(long)
+
+
 def test_order_and_extra_files_make_another_book(stand, files):
     a, b = files
     one, _ = intake.register([(a, "a.pdf"), (b, "b.pdf")])

@@ -21,6 +21,34 @@ def test_junk_pdf_metadata_is_ignored(value):
     assert file_metadata.is_junk(value, ["book-file.pdf"])
 
 
+def _isbn(prefix: str) -> str:
+    body = prefix.ljust(12, "0")
+    return body + str(-sum((1, 3)[i % 2] * int(d) for i, d in enumerate(body)) % 10)
+
+
+@pytest.mark.parametrize("prefix, language", [("978954", "bg"), ("978619", "bg"), ("978600", "fa"), ("978973", "ro"),
+                                              ("9785", "ru"), ("9780", "en"), ("978953", "hr"), ("97912", "it")])
+def test_an_isbn_names_its_languages_by_its_registration_group(prefix, language):
+    assert language in resolve.isbn_languages(_isbn(prefix))
+
+
+def test_every_registration_agency_gives_a_language_but_the_international_ones():
+    import os
+    import re
+
+    import stdnum
+
+    groups, ean = {}, None
+    for line in open(os.path.join(os.path.dirname(stdnum.__file__), "isbn.dat")):
+        if re.match(r"^\d", line):
+            ean = line.split()[0]
+        elif m := re.match(r'^ (\d+) agency="([^"]+)"', line):
+            groups.setdefault(m.group(2), ean + m.group(1))
+    without = {agency for agency, prefix in groups.items() if not resolve.isbn_languages(_isbn(prefix))}
+    assert without <= {"International NGO Publishers", "International NGO Publishers and EU Organizations",
+                       "Reserved Agency"}
+
+
 def test_russian_translation_keeps_its_own_isbn():
     found = title_pages.read("ISBN 978-1633437210 англ.\nISBN 978-5-4461-4313-9")
     resolve._own_isbn(found, ["ru"])

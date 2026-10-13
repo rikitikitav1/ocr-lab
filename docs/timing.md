@@ -1,19 +1,19 @@
 # Time per page
 
 Time per page on this machine, from the job times of the raw run of the shelf
-([experiment](experiments/2026-10-11_raw-run.md); 40 books, 13315 pages). Each book's time is summed per phase
+([experiment](experiments/2026-10-11_raw-run.md); 43 books, 14069 pages). Each book's time is summed per phase
 and divided by its pages; a chapter's reading is its first, uncached one. Job time only: the card's handovers and the
 wait in the queue are not in it.
 
-Books with a text layer, 34 books, 11981 pages:
+Books with a text layer, 37 books, 12735 pages:
 
 | seconds per page | min / median / mean / max |
 |---|---|
-| MinerU reading | 0.60 / 1.05 / 1.44 / 3.88 |
-| Docling reading | 0.20 / 0.76 / 1.57 / 8.20 |
-| assembly | 0.03 / 0.19 / 0.22 / 0.67 |
+| MinerU reading | 0.60 / 1.08 / 1.43 / 3.88 |
+| Docling reading | 0.20 / 0.77 / 1.58 / 8.20 |
+| assembly | 0.03 / 0.19 / 0.21 / 0.67 |
 | bundle and report | 0.00 / 0.01 / 0.02 / 0.14 |
-| whole book | 0.95 / 2.09 / 3.26 / 11.90 |
+| whole book | 0.95 / 2.16 / 3.25 / 11.90 |
 
 Scans, 6 books, 1334 pages:
 
@@ -25,7 +25,7 @@ Scans, 6 books, 1334 pages:
 | bundle and report | 0.01 / 0.03 / 0.03 / 0.06 |
 | whole book | 3.39 / 7.98 / 8.67 / 16.60 |
 
-A whole text-layer book took 1.6 to 223.5 minutes (median 7.7; the longest is 18, 3087 pages), a scan 7.5 to 46.8
+A whole text-layer book took 1.6 to 223.5 minutes (median 8.2; the longest is 18, 3087 pages), a scan 7.5 to 46.8
 (median 23.3). Text-layer books with garbled pages cost like scans on those pages: Docling recognises them (111: 8.2
 s per page).
 

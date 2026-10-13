@@ -131,13 +131,17 @@ app/
 └── orm/                      # SQLAlchemy tables
 config/
 ├── knobs.yaml
+├── assembly.yaml             # the assembler's passes and their defaults
 ├── presets/*.yaml
 ├── quality.yaml
 ├── budgets.yaml              # attempts per stage
 ├── metadata.yaml             # book knob defaults (title-page window)
+├── toc.yaml                  # toc sources: contents search, then text_layer and scan_layer rules
+├── tesseract_languages.yaml  # book languages to Tesseract data for Docling's OCR
+├── engines.yaml              # the fields each engine is called with
 ├── net.yaml                  # retry pauses, set-aside time
 ├── models.yaml               # model provider per step
-└── isbn_groups.yaml
+└── isbn_agencies.yaml        # ISBN agency names CLDR does not know, to languages
 db/
 ├── migrations/*.sql          # 20261009000001_init (the first five squashed), then profile_candidates and evaluation
 └── schema.sql

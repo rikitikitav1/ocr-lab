@@ -37,6 +37,24 @@ def test_a_page_range_read_through_one_engine_is_kept_and_readable_by_its_artifa
     assert client.get(f"/v1/artifacts/{artifact_id + 10_000}").status_code == 404
 
 
+def test_a_raster_reading_takes_every_page_as_a_picture_and_is_kept_with_the_scans_readings(client, inbox,
+                                                                                           monkeypatch):
+    from engines import reading
+
+    book = _book(client, inbox, "raster.pdf")
+    engines(monkeypatch)
+    monkeypatch.setattr(reading, "build", lambda engine: "test-build")
+    url = f"/v1/books/{book}/read_range"
+    pages = {"first_page": 1, "last_page": 2, "force_raster_only": True}
+    assert client.post(url, json={"engine": "docling", **pages}).status_code == 400
+    job = client.post(url, json={"engine": "mineru", **pages}).json()
+    _drain()
+    done = client.get(f"/v1/jobs/{job['job_id']}").json()
+    assert done["status"] == "done" and done["result"]["force_raster_only"] and done["result"]["pages_read"] > 0
+    assert done["result"]["readings"] == ["contents_ocr.0.1-2.json"]
+    assert (settings.DATA_DIR / "books" / str(book) / "toc" / "contents_ocr.0.1-2.json").exists()
+
+
 def test_reassembly_with_a_knob_reports_each_chapter_before_and_after_and_leaves_the_run_alone(client, inbox,
                                                                                              monkeypatch):
     book = _book(client, inbox, "reassemble.pdf")

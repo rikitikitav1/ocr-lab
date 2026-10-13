@@ -1,18 +1,37 @@
 # what the table-of-contents sources read; words are matched case-insensitively at the start of a line
 
-# labelled parts and chapters ("Chapter 3", "ГЛАВА 3") numbering must find to be a book's toc when nothing else is
-numbering_base_min: 3
 whole_book_max_pages: 100   # a book this short without any contents is one chapter; a longer one fails as structure not recognised
 contents:
   scan_head: 30          # book pages from the start searched for printed contents
   scan_tail: 30          # and from the end: many Russian books print the contents last
   min_lines: 3           # lines ending in a page number that make a page a contents page
+  bookmark_children: 3   # an entry named as a contents with this many under it holds the chapters, as a part
   headings: [contents, table of contents, brief contents, содержание, оглавление, краткое содержание, зміст,
              inhalt, inhaltsverzeichnis, sommaire, table des matières, índice, indice, sommario, spis treści]
-numbering:
-  head_lines: 8          # a part or chapter label counts only among the first lines of a page (an epigraph may come first)
-  max_chars: 120         # a numbered line longer than this is prose, not a heading
-  part: [part, часть, частина, teil, partie, parte, część]
-  chapter: [chapter, глава, розділ, kapitel, chapitre, capítulo, capitolo, rozdział]
-labels:
-  top_share: 0.2         # a chapter label (book knob toc.chapter_label) starts in this top share of a recognised page
+text_layer:
+  # labelled parts and chapters ("Chapter 3", "ГЛАВА 3") numbering must find to be a toc when nothing else is
+  numbering_base_min: 3
+  numbering:
+    head_lines: 8          # a part or chapter label counts only among the first lines of a page (an epigraph may come first)
+    max_chars: 120         # a numbered line longer than this is prose, not a heading
+    part: [part, часть, частина, teil, partie, parte, część]
+    chapter: [chapter, глава, розділ, kapitel, chapitre, capítulo, capitolo, rozdział]
+scan_layer:
+  labels:
+    top_share: 0.2         # a chapter label (book knob toc.chapter_label) starts in this top share of a recognised page
+  headings:
+    bare_labels: [appendix, приложение, lecture, лекция]  # beside the part and chapter words: a bare one takes its title
+    max_words: 15          # a longer block is prose, not a heading
+    doc_title_max_words: 40  # but a block typed doc_title (an article's title in an edited volume) up to this many
+    text_larger: 1.3       # a plain text block is a heading when this much larger than the body's median size
+    text_max_words: 8      # and no longer than this
+    repeat_share: 0.2      # a line on this share of the pages is page furniture
+    repeat_run: 3          # and so is one on this many pages in a row
+    head_min: 3            # repeated header blocks needed to know the running heads' size
+    head_larger: 1.15      # a header block no larger than the running heads' size times this is one of them
+    style_step: 1.15       # headings of one look split where the size steps up by this
+    min_chapters: 5        # a chapter level holds at least this many headings
+    max_chapters_per_page: 0.5  # and at most this many a page, or the headings are no structure
+    chapter_spread: 0.4    # spread over at least this share of the book
+    numbered_share: 0.6    # a group runs a number when this share of its titles carry one
+    rising_share: 0.7      # and this share of the steps between them rise

@@ -9,7 +9,7 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 
 | method | path | does | returns |
 |---|---|---|---|
-| POST | `/books` | JSON `{"shelf_paths": [...], "file_paths": [...], "knobs": {...}}` (paths on the read-only shelf or under `data/inbox`, in order); one book per submission; identity is the ordered list of file hashes | `201 {book}` new, `200 {book}` known (FR-036, FR-054) |
+| POST | `/books` | JSON `{"shelf_paths": [...], "file_paths": [...], "knobs": {...}, "then": ["metadata", "toc"]}` (paths on the read-only shelf or under `data/inbox`, in order); `then` names the stages chained after intake, `run` among them (with `toc`) starting a run once the toc is collected; one book per submission; identity is the ordered list of file hashes | `201 {book}` new, `200 {book}` known (FR-036, FR-054) |
 | POST | `/books/upload` | multipart `files` in order and an optional `knobs` JSON field, the same submission by upload; REST only, an MCP client submits by path | `201 {book}` |
 | GET | `/books` | list, filters `stage`, `q`, `series` (sorted by volume) | `[book]` |
 | GET | `/books/{id}` | catalogue record with metadata fields, toc sources, stage, runs, result run | `{book}` |
@@ -19,24 +19,34 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 | PATCH | `/books/{id}/metadata/{name}` | manual value, source becomes `manual` | `{field}` |
 | GET | `/books/{id}/toc` | reconciled entries with level source and votes; `?source=` for one source's raw list, `?version=` for an older version | `[entry]` |
 | PATCH | `/books/{id}/knobs` | `{"set": {...}, "unset": [...]}` book-level knobs (FR-059); effective at the next collection | `{knobs, effective}` |
-| POST | `/books/recollect` | `{"ids": [] (all), "what": ["metadata"]}`; all ids and stages checked before any job is queued; one job per book | `202 {jobs}` |
-| POST | `/books/{id}/recollect` | `{"what": [...]}` from `intake`, `metadata`, `toc`, default `["metadata"]`; a stage not built yet is refused; metadata and toc get new versions, old ones kept (FR-052); `intake` is not versioned: it re-reads the stored files, rewrites the intake artifacts and chains metadata as on submission | `202 {job_id}` |
+| POST | `/books/recollect` | `{"ids": [] (all), "run": false, "force": false, "what": ["metadata"]}`; all ids and stages checked before any job is queued; one job per book | `202 {jobs}` |
+| POST | `/books/{id}/recollect` | `{"run": false, "force": false, "what": [...]}` from `intake`, `metadata`, `toc`, default `["metadata"]`; a stage not built yet is refused; `run` starts a run once the toc is collected and needs `toc` in `what`; metadata and toc get new versions, old ones kept (FR-052); `intake` is not versioned: it re-reads the stored files, rewrites the intake artifacts and chains metadata as on submission | `202 {job_id}` |
+| POST | `/books/{id}/read_range` | `{"engine", "first_page", "last_page", "force_raster_only": false}`; reads the range through one engine and keeps the reading, runs untouched; `force_raster_only` (MinerU only) reads every page as a picture, kept with the toc's raster readings | `202 {job_id}` |
+| POST | `/shelf/snapshots` | `{"book_ids": null}`; the toc and metadata of every book now, kept to compare a change against | `{snapshot}` |
+| GET | `/shelf/snapshots/{id}/changes` | books whose toc or metadata moved since the snapshot | `{changes}` |
 
 ## Runs
 
 | method | path | does | returns |
 |---|---|---|---|
 | POST | `/books/{id}/runs` | `{"format": "markdown", "profile_id": null, "search": true}`; null profile means the stand assembles one | `202 {run, job}` |
+| POST | `/runs` | `{"book_ids": [...], "format": "markdown"}`; one run per book, as `/books/{id}/runs`, all checked before any is queued | `202 {runs}` |
+| GET | `/runs` | list, filters `ids`, `book_id`, `status`, `limit` | `[run]` |
+| GET | `/runs/wait?ids=...&timeout=600&until=all` | long-poll until all (or any) of the named runs end | `{settled, timeout, runs, stopped_runs}` |
+| GET | `/runs/compare?a=...&b=...` | two runs of one book side by side, number by number | `{comparison}` |
+| POST | `/runs/cancel` | `{"ids": [...], "dry_run": false}`; cancels runs and their jobs | `{runs, skipped}` |
 | GET | `/runs/{id}` | status, stage, chapters summary, bundle dir | `{run}` |
 | GET | `/runs/{id}/chapters` | per chapter: status, engine, checks (numbers), errors | `[chapter]` |
 | POST | `/runs/{id}/chapters/{ord}/rerun` | `{"overrides": {"knob.path": "option"}}`; reassembles one chapter, recomputes book metrics (FR-044) | `202 {job}` |
 | POST | `/runs/{id}/resume` | resumes a failed, cancelled or `needs_attention` run in place; for `needs_attention` only failed chapters rerun (FR-023, FR-056) | `202 {job}` |
 | POST | `/runs/{id}/cancel` | cooperative cancel | `{run}` |
-| DELETE | `/runs/{id}` | deletes the run and its artifacts; the book's result moves to the next best run (FR-025) | `{deleted, result_run_id}` |
+| DELETE | `/runs/{id}` | (planned, not built) deletes the run and its artifacts; the book's result moves to the next best run (FR-025) | `{deleted, result_run_id}` |
 | GET | `/runs/{id}/report` | quality report (`bundle.md` schema) | `{report}` |
 | GET | `/runs/{id}/artifacts` | manifest, filters `stage`, `chapter` | `[artifact]` |
 | GET | `/runs/{id}/artifacts/{artifact_id}` | file content | raw |
 | GET | `/runs/{id}/bundle` | bundle as a tar stream | `application/x-tar` |
+| POST | `/runs/{id}/reassemble` | `{"knobs": {...}, "ords": [...]}` (CPU lane); assembles the run's chapters again from their kept readings with run knobs set, each chapter's numbers before and after; the run untouched | `202 {job_id}` |
+| GET | `/artifacts/{id}` | any kept artifact by id: stage, name, book, run, chapter, meta and its text | `{artifact}` |
 
 ## Profiles, knobs, presets
 
@@ -46,7 +56,7 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 | GET | `/presets` | presets with help | `[preset]` |
 | GET | `/profiles/{id}` | values with source and evidence, chapter overrides | `{profile}` |
 | POST | `/profiles/{id}/derive` | `{"set": {"knob.path": "option"}, "chapters": {"<ord>": {"knob.path": "option"}}}`; new immutable profile, source `manual`; the same values for the same book give the existing profile (FR-015) | `201 {profile}` |
-| GET | `/runs/{id}/candidates` | profile search candidates with scores and decisions (FR-021) | `[candidate]` |
+| GET | `/runs/{id}/candidates` | (planned, not built) profile search candidates with scores and decisions (FR-021) | `[candidate]` |
 
 ## Jobs
 
@@ -64,17 +74,21 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 
 | method | path | does | returns |
 |---|---|---|---|
-| POST | `/eval/sets` | `{"name", "members": [{"book_id", "mode"}]}` | `201 {set}` |
-| GET | `/eval/sets/{id}` | members with best known profiles | `{set}` |
-| POST | `/eval/gates` | `{"set_id", "columns", "tolerance", "untouchable"}`; registered before the run | `201 {gate}` |
-| POST | `/eval/runs` | `{"set_id", "gate_id", "baseline_id"}` | `202 {job}` |
+| POST | `/eval/sets` | (planned, not built) `{"name", "members": [{"book_id", "mode"}]}` | `201 {set}` |
+| GET | `/eval/sets/{id}` | (planned, not built) members with best known profiles | `{set}` |
+| POST | `/eval/gates` | (planned, not built) `{"set_id", "columns", "tolerance", "untouchable"}`; registered before the run | `201 {gate}` |
+| POST | `/eval/runs` | (planned, not built) `{"set_id", "gate_id", "baseline_id"}` | `202 {job}` |
 | POST | `/eval/toc` | `{"set": "...", "book_ids": [...]}` with set `hips`, `longdocbench` or `bookmarks_off`; intake and toc on each book, scored against the gold or the bookmarks, before chapter assembly exists (FR-058) | `202 {job}` |
 | POST | `/eval/elements` | `{"engines": ["docling", "mineru"], "ids": [...]}`; each engine over rag-lab's converter_gold sections through the stand's adapters, scored per element (code, table cells, headings, text, running heads) against the gold (T147) | `202 {job}` |
-| GET | `/eval/runs/{id}` | rows, worse members with reasons, unexpected changes, gate result (FR-028) | `{evaluation_run}` |
+| GET | `/eval/toc/compare?job_a=...&job_b=...` | two toc evaluations of one set side by side, totals and the books that moved | `{comparison}` |
+| GET | `/eval/runs/{id}` | (planned, not built) rows, worse members with reasons, unexpected changes, gate result (FR-028) | `{evaluation_run}` |
 
 ## Stand
 
 | method | path | does | returns |
 |---|---|---|---|
-| POST | `/cleanup` | `{"dry_run": true}` lists heavy intermediates of non-result runs and dropped candidates with sizes; `false` removes them (FR-025) | `{files, bytes}` |
+| POST | `/cleanup` | (planned, not built) `{"dry_run": true}` lists heavy intermediates of non-result runs and dropped candidates with sizes; `false` removes them (FR-025) | `{files, bytes}` |
 | GET | `/stand` | services health, engine builds, GPU holder, outside hosts set aside (FR-060), worker code hash vs disk, shelf mounts | `{stand}` |
+| POST | `/stand/worker/reload` | the worker takes newer code once its jobs in hand end; asked only when it runs older code | `{requested, because}` |
+| GET | `/engines/ocr_languages` | book languages Docling's Tesseract can read, installed and installable (`config/tesseract_languages.yaml`) | `{installed, installable}` |
+| POST | `/engines/ocr_languages` | `{"language"}`; fetches that language's Tesseract data into `data/tessdata` | `{language, codes, fetched, installed, installable}` |
