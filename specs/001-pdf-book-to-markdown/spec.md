@@ -490,7 +490,9 @@ in the group it belongs to.
 - **FR-042**: Chapters MUST be the unit of assembly: each chapter is assembled on its own, with
   its own checks and its own artifacts.
 - **FR-043**: Chapter boundaries and chapter levels MUST come from the table-of-contents stage;
-  levels inside a chapter are set relative to the chapter's level, so FR-010 holds.
+  levels inside a chapter are set relative to the chapter's level, so FR-010 holds. An entry heading
+  parts (a labelled part, or a bookmark named as a contents with the chapters under it) holds the
+  chapters one level below it; the source's levels are kept as they are.
 - **FR-044**: A single chapter MUST be re-assemblable on its own, with knobs overridden for that
   chapter only, without redoing the other chapters.
 - **FR-045**: Book metrics MUST be computed from the chapter results plus whole-book checks
@@ -521,9 +523,11 @@ in the group it belongs to.
   per book. Tree similarity (TEDS) is not computed.
 - **FR-059**: Book-level knobs MUST be settable at submission and changed later, each with a default
   in configuration: the title-page window for metadata (default the first 20 and the last 20
-  pages), the printed contents pages given by hand as page ranges, and whether the first top bookmark
-  is the book itself and its children are the top level (default off). A change takes effect at the
-  next collection of metadata or the table of contents.
+  pages), the printed contents pages given by hand as page ranges, whether the first top bookmark
+  is the book itself and its children are the top level (default off), whether the bookmarks are not
+  the contents at all (default off), the word a book's chapters open with (none), and whether a book
+  no source holds tries its headings read as pictures before it fails (default on). A change takes
+  effect at the next collection of metadata or the table of contents.
 - **FR-061**: When no source gives a table of contents, the chapters MUST be tried from the headings of
   every page read as pictures, grouped by look, unless a book knob turns this off; when that gives no
   chapter level, or more chapters than half the pages, a book of at most a configured number of pages
@@ -637,8 +641,9 @@ in the group it belongs to.
 - The single user is the project owner; there are no accounts, roles or sharing in this feature.
 - Submitted PDFs are lawfully obtained by the owner; licensing checks are out of scope.
 - Books are of any genre (technical, fiction, children's, textbooks, poetry) and any language; no
-  stage assumes a language, and language-specific rules (ISBN registration groups, title-page
-  patterns) are tables that grow with the books, not code paths for two languages.
+  stage assumes a language, and language-specific rules (title-page patterns) are tables that grow
+  with the books, not code paths for two languages; an ISBN's languages come from the ISBN agency's
+  own ranges and the languages of countries (CLDR), with a table only for agency names CLDR lacks.
 - Input in this feature is PDF only; EPUB, HTML and other formats are later features.
 - Output in this feature is Markdown only; the Docling format for RAG and others are later
   features.

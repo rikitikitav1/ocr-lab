@@ -6,37 +6,48 @@ error text starts with the same kind the route returns: `refused:`, `missing:`, 
 
 | tool | route | notes |
 |---|---|---|
-| `add_book(file_paths?, shelf_paths?, knobs?)` | POST `/books` | ordered lists; paths the API container can read |
+| `add_book(file_paths?, shelf_paths?, knobs?, then?)` | POST `/books` | ordered lists; paths the API container can read; `run` in `then` needs `toc` |
 | `books(stage?, q?, series?)` | GET `/books` | |
 | `book(id)` | GET `/books/{id}` | includes metadata, toc sources and the result run |
 | `book_bundle(id)` | GET `/books/{id}/bundle` | returns the bundle path; the tar stream stays REST-only |
+| `metadata(book_id)` | GET `/books/{id}/metadata` | |
 | `metadata_coverage()` | GET `/metadata/coverage` | |
 | `set_metadata(book_id, name, value)` | PATCH `/books/{id}/metadata/{name}` | |
 | `toc(book_id, source?, version?)` | GET `/books/{id}/toc` | |
 | `set_book_knobs(book_id, set?, unset?)` | PATCH `/books/{id}/knobs` | |
-| `recollect_books(ids?, what?)` | POST `/books/recollect` | |
-| `recollect(book_id, what)` | POST `/books/{id}/recollect` | |
+| `recollect_books(ids?, what?, force?, run?)` | POST `/books/recollect` | empty ids are the whole shelf |
+| `recollect(book_id, what, force?, run?)` | POST `/books/{id}/recollect` | |
+| `read_range(id, engine, first_page, last_page, force_raster_only?)` | POST `/books/{id}/read_range` | |
+| `shelf_snapshot(book_ids?)`, `shelf_changes(id, book_ids?)` | POST `/shelf/snapshots`, GET `/shelf/snapshots/{id}/changes` | |
 | `start_run(book_id, format="markdown", profile_id?, search=true)` | POST `/books/{id}/runs` | |
+| `start_runs(book_ids, format?)`, `runs(ids?, book_id?, status?, limit?)`, `wait_runs(ids, timeout?, until?)`, `cancel_runs(ids, dry_run?)` | POST `/runs`, GET `/runs`, GET `/runs/wait`, POST `/runs/cancel` | bulk |
+| `compare_runs(a, b, keys?)` | GET `/runs/compare` | |
 | `run(id)` | GET `/runs/{id}` | |
 | `chapters(run_id)` | GET `/runs/{id}/chapters` | |
 | `rerun_chapter(run_id, ord, overrides)` | POST `/runs/{id}/chapters/{ord}/rerun` | |
 | `resume_run(run_id)`, `cancel_run(run_id)` | POST resume, cancel | |
-| `delete_run(run_id)` | DELETE `/runs/{id}` | |
-| `cleanup(dry_run=true)` | POST `/cleanup` | |
+| `delete_run(run_id)` | DELETE `/runs/{id}` | planned, not built |
+| `cleanup(dry_run=true)` | POST `/cleanup` | planned, not built |
 | `report(run_id)` | GET `/runs/{id}/report` | |
-| `artifacts(run_id, stage?, chapter?)` | GET `/runs/{id}/artifacts` | |
-| `artifact(run_id, artifact_id, max_bytes=200000)` | GET `/runs/{id}/artifacts/{aid}` | text truncated with a marker |
+| `bundle(run_id)` | GET `/runs/{id}/bundle` | returns the bundle path |
+| `reassemble(run_id, knobs, ords?)` | POST `/runs/{id}/reassemble` | |
+| `run_artifacts(run_id, stage?, chapter?)` | GET `/runs/{id}/artifacts` | |
+| `run_artifact(run_id, artifact_id, max_bytes=200000)` | GET `/runs/{id}/artifacts/{aid}` | text truncated with a marker |
+| `artifact(id)` | GET `/artifacts/{id}` | any kept artifact, a book's too |
 | `knobs()`, `presets()` | GET `/knobs`, `/presets` | |
 | `profile(id)`, `derive_profile(id, set, chapters)` | GET, POST derive | |
-| `candidates(run_id)` | GET `/runs/{id}/candidates` | |
+| `candidates(run_id)` | GET `/runs/{id}/candidates` | planned, not built |
 | `jobs(status?, type?, run_id?, book_id?, lane?)`, `job(id)` | GET `/jobs`, `/jobs/{id}` | |
 | `wait_job(id, timeout=600, tree=false)` | GET `/jobs/{id}/wait` | replaces polling loops; counts and jobs not done, the whole tree on request |
 | `retry_jobs`, `pause_jobs`, `resume_jobs`, `cancel_jobs` | POST `/jobs/*` | bulk |
 | `queue()` | GET `/queue` | |
 | `job_types()` | GET `/job_types` | lane, attempts, options schema, built |
-| `create_eval_set`, `eval_set`, `register_gate`, `start_eval_run`, `eval_run` | `/eval/*` | |
+| `create_eval_set`, `eval_set`, `register_gate`, `start_eval_run`, `eval_run` | `/eval/*` | planned, not built |
 | `toc_eval(set, book_ids?)` | POST `/eval/toc` | |
+| `toc_eval_compare(job_a, job_b)` | GET `/eval/toc/compare` | |
 | `element_eval(engines?, ids?)` | POST `/eval/elements` | |
 | `stand()` | GET `/stand` | |
+| `reload_worker()` | POST `/stand/worker/reload` | |
+| `ocr_languages()`, `install_ocr_language(language)` | GET, POST `/engines/ocr_languages` | Docling's Tesseract data |
 
 A door test asserts that every route has a tool and every tool a route.
