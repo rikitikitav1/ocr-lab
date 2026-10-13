@@ -6,6 +6,7 @@ from orm.catalogue import Chapter
 from orm.db import Session
 from sqlalchemy import select
 from stages import assemble
+from stages.toc import scan
 
 from job_handlers import register
 from job_handlers.run import assembled
@@ -13,6 +14,11 @@ from job_handlers.run import assembled
 
 @register("read_range")
 def read_range(options: dict) -> dict:
+    if options.get("force_raster_only"):
+        book_pages = list(range(options["first_page"], options["last_page"] + 1))
+        pages = scan.recognise(options["book_id"], book_pages)
+        return {"engine": "mineru", "force_raster_only": True, "pages_read": len(pages),
+                "readings": scan.kept_names(options["book_id"], book_pages)}
     readings = assemble.read(options["book_id"], options["engine"], options["first_page"], options["last_page"])
     return {"engine": options["engine"], "readings": readings, "build": assemble.builds()[options["engine"]]}
 

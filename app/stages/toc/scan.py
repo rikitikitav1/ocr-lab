@@ -60,6 +60,14 @@ def _runs(book_pages: list[int], files) -> list[tuple]:
     return out
 
 
+def _kept_name(f, a: int, b: int) -> str:
+    return f"contents_ocr.{f.ord}.{a}-{b}.json"
+
+
+def kept_names(book_id: int, book_pages: list[int]) -> list[str]:
+    return [_kept_name(f, a, b) for f, a, b in _runs(book_pages, intake.files_of(book_id))]
+
+
 # each chunk is read once and kept; `cached_only` lets a CPU job use what the GPU lane recognised
 def recognise(book_id: int, book_pages: list[int], cached_only: bool = False) -> dict[int, dict] | None:
     from engines import converter_tools, reading
@@ -76,7 +84,7 @@ def recognise(book_id: int, book_pages: list[int], cached_only: bool = False) ->
     for f, a, b in _runs(book_pages, files):
         made_from = artifacts.Inputs({"stage": "toc_ocr", "file": f.sha256, "pages": [a, b], "fields": FIELDS,
                                       "build": build})
-        name = f"contents_ocr.{f.ord}.{a}-{b}.json"
+        name = _kept_name(f, a, b)
         done = artifacts.find_done(owner, STAGE, name, made_from.key)
         if done is not None:
             layout = converter_tools.kept_json(done)

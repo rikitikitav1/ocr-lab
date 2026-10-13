@@ -80,7 +80,7 @@ Where each step stands: [docs/status.md](docs/status.md).
 5. **What you get.** `GET /v1/books/{id}` shows files, pages, text layer, bookmarks, printed contents
    and metadata; `GET /v1/books/{id}/metadata` shows every field with its value, source, confidence
    and attempts. A field can be set by hand (`PATCH /v1/books/{id}/metadata/{name}`, a new version);
-   the book content itself is never edited by hand. `POST /v1/books/{id}/recollect` collects again.
+   the book content itself is never edited by hand. `POST /v1/books/{id}/recollect` collects again; with `"run": true` it starts a run once the toc is collected, so `what` must hold `toc`.
 6. **Table of contents** (CPU lane; GPU only to recognise a raster). The contents printed in the book
    are found in the text layer, or on the raster when neither the text, the bookmarks nor chapter
    files give one; contents spread over several pages are read as one, and their printed pages are put
@@ -196,7 +196,7 @@ curl -s localhost:8100/v1/stand | jq      # health, engine builds, who holds the
 ```
 
 Submit a book, wait for it and take the result: `then` with `"run"` starts a run once the toc is ready, and
-waiting on the intake job waits for the whole chain (leave `"run"` out to stop at the toc and look first):
+`"run"` needs `"toc"` in `then` too, and waiting on the intake job waits for the whole chain (leave `"run"` out to stop at the toc and look first):
 
 ```bash
 curl -s -F files=@book.pdf -F 'then=["metadata","toc","run"]' localhost:8100/v1/books/upload | jq '{id, job_id}'
@@ -206,10 +206,11 @@ curl -s localhost:8100/v1/books/<id>/bundle -o book.tar       # the book's resul
 
 A book on the shelf is submitted by path instead: `POST /v1/books` with `{"shelf_paths": [...], "then": [...]}`.
 
-The workbench doors leave runs as they are: `read_range` reads a book's page range through one engine and keeps
-the reading, `reassemble` puts a run's chapters together again from their kept readings with run knobs set and
-reports each chapter's numbers before and after, `artifact` reads any kept artifact by id, and `reload_worker`
-has the worker take newer code once its jobs in hand end, so a run in flight then mixes code.
+The workbench doors leave runs as they are: `read_range` reads a book's page range through one engine and keeps the
+reading (with `force_raster_only`, MinerU reads every page as a picture, the way a scan is read), `reassemble` puts
+a run's chapters together again from their kept readings with run knobs set and reports each chapter's numbers
+before and after, `artifact` reads any kept artifact by id, and `reload_worker` has the worker take newer code once
+its jobs in hand end, so a run in flight then mixes code.
 
 ## For agents
 

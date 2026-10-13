@@ -3,7 +3,7 @@ from typing import Literal
 
 import settings
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 
 class Refused(ValueError):
@@ -23,6 +23,12 @@ class IntakeOptions(BookOptions):
     then: list[Literal["metadata", "toc", "run"]] = ["metadata", "toc"]
     # a recollection collects every stage it chains again, a submission only what is stale
     force: bool = False
+
+    @model_validator(mode="after")
+    def _run_after_toc(self):
+        if "run" in self.then and "toc" not in self.then:
+            raise ValueError("run starts once the toc is collected; add toc to then")
+        return self
 
 
 # the book-level stages a recollection can ask for, and the ones that exist so far; one place for both doors
@@ -72,6 +78,14 @@ class ReadRangeOptions(BookOptions):
     engine: Literal[settings.ENGINES]
     first_page: int
     last_page: int
+    # every page read as a picture, the way a scan is, whatever text layer it has
+    force_raster_only: bool = False
+
+    @model_validator(mode="after")
+    def _raster_is_mineru(self):
+        if self.force_raster_only and self.engine != "mineru":
+            raise ValueError("a raster reading is MinerU's; Docling reads a raster only inside a run")
+        return self
 
 
 # a finished run's chapters assembled again from their kept readings with run knobs set over the profile's

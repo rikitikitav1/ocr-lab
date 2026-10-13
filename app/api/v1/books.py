@@ -32,11 +32,13 @@ class MetadataValue(BaseModel):
 
 class Recollect(BaseModel):
     what: list[str] | None = None
+    run: bool = False
 
 
 class RecollectMany(BaseModel):
     ids: list[int] = []
     what: list[str] | None = None
+    run: bool = False
 
 
 class ShelfSnapshot(BaseModel):
@@ -68,7 +70,7 @@ def upload_book(files: Annotated[list[UploadFile], File()], knobs: Annotated[str
 
 @router.post("/books/recollect", status_code=202)
 def recollect_books(body: RecollectMany):
-    return books.recollect_books(body.ids or None, body.what)
+    return books.recollect_books(body.ids or None, body.what, body.run)
 
 
 @router.get("/books")
@@ -114,4 +116,4 @@ def set_book_knobs(id: int, body: KnobChange):
 
 @router.post("/books/{id}/recollect", status_code=202)
 def recollect(id: int, body: Recollect):
-    return books.recollect(id, body.what)
+    return books.recollect(id, body.what, body.run)
