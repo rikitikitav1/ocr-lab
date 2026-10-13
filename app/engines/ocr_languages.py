@@ -12,7 +12,7 @@ MIN_BYTES = 100_000
 
 @cache
 def conf() -> dict:
-    return yaml.safe_load((settings.CONFIG_DIR / "ocr_languages.yaml").read_text())
+    return yaml.safe_load((settings.CONFIG_DIR / "tesseract_languages.yaml").read_text())
 
 
 def data_dir():
