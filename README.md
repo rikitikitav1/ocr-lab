@@ -77,7 +77,7 @@ Where each step stands: [docs/status.md](docs/status.md).
    The title and copyright pages (the first 20 and the last 20 by default; a book knob, see below) are
    read from the text layer, or recognised by MinerU when there is none or it is garbled. Scripts come
    first and use no language word lists: the PDF's info and XMP of every file (a value shaped like a file
-   name or a stamp is ignored; Producer and Creator are kept as `made_with`), ISBN with its checksum, year, the catalogue card's series, the language
+   name or a stamp is ignored; Producer and Creator are kept as `made_with`), ISBN by the ISBN agency's rules (of two printed, a translation keeps the one registered in its language's group, told by the agency's ranges and CLDR), year, the catalogue card's series, the language
    of the body text. Then a local model (ollama) reads the title pages for the title, authors, edition,
    volume and publisher and names the book's subject. Everything comes from the book itself: no
    catalogue or web lookups at this stage.

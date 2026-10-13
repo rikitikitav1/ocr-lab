@@ -1,6 +1,8 @@
 # patterns over the title and copyright pages, read by signs and shapes rather than words of a language
 import re
 
+from stdnum import isbn as stdisbn
+
 from stages.metadata.candidates import SourceResult
 
 # recognised pages print the hyphens as en or em dashes, often with spaces around them
@@ -24,13 +26,9 @@ EDITION_LINE = re.compile(r"^\s*[^\W\d_]{3,12}\.?\s+((?:19|20)\d{2})\s?:\s+\S[^\
 # a history is two such lines in a row; one alone is as often a law cited by its year
 
 
+# the ISBN agency's own rules: a check digit, and a 13-digit one in the book prefixes 978 or 979
 def isbn_valid(raw: str) -> bool:
-    digits = re.sub(r"[-–—\s]", "", raw).upper()
-    if len(digits) == 13 and digits.isdigit():
-        return sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(digits)) % 10 == 0
-    if len(digits) == 10 and digits[:9].isdigit() and (digits[9].isdigit() or digits[9] == "X"):
-        return sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(digits)) % 11 == 0
-    return False
+    return stdisbn.is_valid(re.sub(r"[-–—\s]", "", raw))
 
 
 # the one way to read an ISBN anywhere: digits and a final X, nothing else

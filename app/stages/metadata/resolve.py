@@ -2,6 +2,8 @@
 import json
 import re
 from dataclasses import asdict
+from functools import cache
+from importlib.metadata import version
 
 import artifacts
 import book_knobs
@@ -10,11 +12,15 @@ import model_steps
 import pdf
 import settings
 import yaml
+from babel import Locale
+from babel import languages as cldr
 from engines import card, reading
 from job_signals import Deferred
 from orm.catalogue import MetadataField, MetadataVersion
 from orm.db import Session
 from sqlalchemy import select
+from stdnum import isbn as stdisbn
+from stdnum import numdb
 
 from stages import book_stage, intake, versions
 from stages.metadata import file_metadata, language, model_reader, title_pages
@@ -59,8 +65,10 @@ def code_hash() -> str:
     # only the metadata's own model steps: a step another stage adds does not make metadata stale
     steps = model_steps.steps()
     digest.update(json.dumps({k: steps[k] for k in ("metadata_reader", "subject")}, sort_keys=True).encode())
-    for name in ("metadata.yaml", "isbn_groups.yaml"):
+    for name in ("metadata.yaml", "isbn_agencies.yaml"):
         digest.update((settings.CONFIG_DIR / name).read_bytes())
+    # the ISBN ranges and the languages of countries come with these packages
+    digest.update(" ".join(version(p) for p in ("python-stdnum", "babel")).encode())
     return digest.hexdigest()[:16]
 
 
@@ -151,16 +159,35 @@ def _recognised_title_pages(book_id: int, first, last) -> str:
     return text
 
 
-def isbn_groups() -> dict[str, tuple[str, ...]]:
-    conf = yaml.safe_load((settings.CONFIG_DIR / "isbn_groups.yaml").read_text())["groups"]
-    return {lang: tuple(prefixes) for lang, prefixes in conf.items()}
+@cache
+def _agency_languages() -> dict[str, set[str]]:
+    en = Locale("en")
+    known = {name.lower(): {code} for code, name in en.languages.items() if "_" not in code}
+    hand = yaml.safe_load((settings.CONFIG_DIR / "isbn_agencies.yaml").read_text())["languages"]
+    return {**known, **{name.lower(): set(langs) for name, langs in hand.items()}}
+
+
+# the registration group's agency, from the ISBN agency's own ranges: a language ("German language") or a country
+def isbn_languages(isbn: str) -> set[str]:
+    if not stdisbn.is_valid(str(isbn)):
+        return set()
+    value = stdisbn.to_isbn13(stdisbn.compact(str(isbn)))
+    agency = next((i["agency"] for _, i in numdb.get("isbn").info(value) if i.get("agency")), None)
+    if agency is None:
+        return set()
+    by_name = _agency_languages()
+    if agency.lower() in by_name:
+        return by_name[agency.lower()]
+    if agency.endswith(" language") and agency[: -len(" language")].lower() in by_name:
+        return by_name[agency[: -len(" language")].lower()]
+    territory = {name.lower(): code for code, name in Locale("en").territories.items()}.get(agency.lower())
+    if territory is None:
+        return set()
+    return {lang.split("_")[0] for lang in cldr.get_official_languages(territory, de_facto=True)}
 
 
 def _in_groups(isbn: str, language: str) -> bool:
-    value = str(isbn)
-    if len(value) == 10:
-        value = "978" + value
-    return value.startswith(isbn_groups().get(language, ()))
+    return language in isbn_languages(isbn)
 
 
 # a translation prints the original's ISBN too; the book's own is the first one in its language's group

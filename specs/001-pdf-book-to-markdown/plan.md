@@ -137,7 +137,7 @@ config/
 ├── metadata.yaml             # book knob defaults (title-page window)
 ├── net.yaml                  # retry pauses, set-aside time
 ├── models.yaml               # model provider per step
-└── isbn_groups.yaml
+└── isbn_agencies.yaml
 db/
 ├── migrations/*.sql          # 20261009000001_init (the first five squashed), then profile_candidates and evaluation
 └── schema.sql

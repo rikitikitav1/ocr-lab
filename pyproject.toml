@@ -19,6 +19,8 @@ dependencies = [
     "rapidfuzz",
     "lingua-language-detector",
     "wordfreq",
+    "python-stdnum>=2.2",
+    "babel>=2.18.0",
 ]
 
 [dependency-groups]
