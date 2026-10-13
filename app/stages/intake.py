@@ -36,6 +36,21 @@ def store(source: Path, sha: str) -> Path:
     return relative
 
 
+# a book's files stay stored by content; its folder links each by order and name, so a person finds them there
+def link_sources(book_id: int) -> None:
+    folder = settings.DATA_DIR / artifacts.book_dir(book_id) / "source"
+    folder.mkdir(parents=True, exist_ok=True)
+    for f in files_of(book_id):
+        name = Path(f.file_name).name
+        # a file name is at most 255 bytes; a long title is cut, keeping its extension
+        stem, suffix = Path(name).stem, Path(name).suffix
+        while len(f"{f.ord}-{stem}{suffix}".encode()) > 255:
+            stem = stem[:-1]
+        link = folder / f"{f.ord}-{stem}{suffix}"
+        if not link.exists() and not link.is_symlink():
+            link.symlink_to(Path("../../..") / f.file_path)
+
+
 def register(sources: list[tuple[Path, str]], knobs: dict | None = None) -> tuple[int, bool]:
     shas = [artifacts.sha256_file(path) for path, _ in sources]
     identity = book_identity(shas)
@@ -56,7 +71,9 @@ def register(sources: list[tuple[Path, str]], knobs: dict | None = None) -> tupl
         book.pages = first - 1
         book.knobs = book_knobs.check(knobs, book.pages)
         session.commit()
-        return book.id, True
+        book_id = book.id
+    link_sources(book_id)
+    return book_id, True
 
 
 def files_of(book_id: int) -> list[BookFile]:
@@ -72,6 +89,7 @@ def code_hash() -> str:
 
 
 def probe(book_id: int) -> dict:
+    link_sources(book_id)
     files = files_of(book_id)
     given = book_knobs.of(book_id)["toc.contents_pages"]
     inputs = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], "layer_rule": pdf.LAYER_RULE,

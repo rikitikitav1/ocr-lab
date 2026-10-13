@@ -68,7 +68,8 @@ Where each step stands: [docs/status.md](docs/status.md).
    `data/inbox`, in order; `POST /v1/books/upload` takes the bytes. A book is identified by the hashes
    of its files in order, so the same files submitted again return the same book and nothing is queued.
    Two editions are two books. A book split into several files is one submission; volumes of a series
-   are separate books linked by the `series` and `volume` fields.
+   are separate books linked by the `series` and `volume` fields. A file is stored once by its content
+   (`data/files/`); the book's folder links each of its files by order and name in `data/books/<id>/source/`.
 2. **Intake** (CPU lane). Per page: is there a text layer. Per file: bookmarks. In the first pages:
    printed contents lines with dot leaders. The result is kept as `probe.json` and reused while the
    files are unchanged.
