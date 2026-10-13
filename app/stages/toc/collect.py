@@ -23,6 +23,7 @@ from stages.toc.sources import (
     bookmarks,
     conf,
     files,
+    headings,
     labelled,
     numbering,
     printed_contents,
@@ -138,7 +139,7 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
         heads = scan.top_blocks(book_id, total) if label else {}
     else:
         lines = book_lines(book_files)
-        first = conf()["numbering"]["head_lines"]
+        first = conf()["text_layer"]["numbering"]["head_lines"]
         heads = {p: [x.text for x in ls[:first]] for p, ls in lines.items()} if label else {}
         printed, placement = _printed(book_files, given, lines)
         if not printed.entries and (seen := scan.raster_contents(book_id, given, run=raster)) and seen.entries:
@@ -159,7 +160,7 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
         if not labels.failed:
             return "labels", labels.entries, evidence
     # nothing else holds the book's contents (an ebook's outline was all it had): its labelled chapters in the text are
-    if "numbering" not in off and _labelled(counted.entries) >= conf()["numbering_base_min"]:
+    if "numbering" not in off and _labelled(counted.entries) >= conf()["text_layer"]["numbering_base_min"]:
         dropped = _out_of_turn(counted.entries)
         evidence["numbering_out_of_turn"] = [e.title for e in dropped]
         return "numbering", [e for e in counted.entries if not any(e is d for d in dropped)], evidence
@@ -167,11 +168,18 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
     if not scanned(book_id) and "labels" not in off and (seen := labelled.found_in(book_files, lines)) is not None:
         evidence["labels"] = asdict(seen)
         return "labels", seen.entries, evidence
+    if knobs["toc.from_headings"] and "headings" not in off:
+        seen = headings.read(scan.recognise(book_id, list(range(1, total + 1))), total, scan._text,
+                             frozenset(printed.notes.get("pages") or []))
+        evidence["headings"] = asdict(seen)
+        if not seen.failed:
+            return "headings", seen.entries, evidence
     if total <= conf()["whole_book_max_pages"]:
         return "whole_book", [_whole_book(book_files)], evidence
+    tried = f", headings {evidence['headings']['failed']}" if "headings" in evidence else ""
     raise Final(f"structure not recognised: no table of contents found in a book of {total} pages: "
                 f"bookmarks {marks.failed or 'too few'}, "
-                f"printed contents {printed.failed or 'too few placed'}")
+                f"printed contents {printed.failed or 'too few placed'}{tried}")
 
 
 # chapters opening on neighbouring pages are a list of them (a contents page, a series page), not the book's chapters
@@ -230,10 +238,10 @@ def with_front_matter(entries: list[Entry], files) -> list[Entry]:
 
 
 # a chapter is a top entry that is not a part, or an entry one level below the part it sits in
-def _kind(entry: Entry, top: int, part_level: int | None) -> str:
+def _kind(entry: Entry, top: int, part_level: int | None, part: bool) -> str:
     if entry.source == "front_matter":
         return "front_matter"
-    if title_depth(entry.title) == -1:
+    if part:
         return "part"
     level = entry.level or top
     if level == top or (part_level is not None and level == part_level + 1):
@@ -246,6 +254,19 @@ def toc_rows(entries: list[Entry], source: str, total: int, files) -> list[dict]
     return rows(with_front_matter(entries, files), source, total)
 
 
+# an entry named as a contents ("Table of contents") with the chapters under it holds them as a part does
+def _holds_contents(entries: list[Entry], i: int) -> bool:
+    if entries[i].title.strip().rstrip(".:").lower() not in {h.lower() for h in conf()["contents"]["headings"]}:
+        return False
+    level = entries[i].level or 1
+    under = []
+    for x in entries[i + 1:]:
+        if (x.level or 1) <= level:
+            break
+        under.append(x)
+    return sum((x.level or 1) == level + 1 for x in under) >= conf()["contents"]["bookmark_children"]
+
+
 # an entry ends where the next one at its level or above starts; one starting on the same page ends there
 def rows(entries: list[Entry], source: str, total: int) -> list[dict]:
     top = min(e.level or 1 for e in entries)
@@ -253,7 +274,8 @@ def rows(entries: list[Entry], source: str, total: int) -> list[dict]:
     part_level = None
     for i, e in enumerate(entries):
         level_here = e.level or top
-        if title_depth(e.title) == -1 and e.source != "front_matter":
+        part = e.source != "front_matter" and (title_depth(e.title) == -1 or _holds_contents(entries, i))
+        if part:
             part_level = level_here
         elif part_level is not None and level_here <= part_level:
             part_level = None
@@ -261,7 +283,7 @@ def rows(entries: list[Entry], source: str, total: int) -> list[dict]:
         nxt = next((x.page for x in entries[i + 1:] if (x.level or top) <= (e.level or top)), None)
         last = total if nxt is None else max(e.page, nxt - 1)
         out.append({"ord": i + 1, "title": e.title, "level": min(level, 6), "level_source": e.source or source,
-                    "first_page": e.page, "last_page": last, "kind": _kind(e, top, part_level),
+                    "first_page": e.page, "last_page": last, "kind": _kind(e, top, part_level, part),
                     "votes": e.votes or {source: {"level": e.level, "printed": e.printed, "evidence": e.evidence}}})
     return out
 

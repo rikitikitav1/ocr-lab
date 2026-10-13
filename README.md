@@ -57,6 +57,13 @@ Where each step stands: [docs/status.md](docs/status.md).
 
 </details>
 
+<details>
+<summary>Diagram: chapters from the headings, the last try, with each threshold and where it comes from</summary>
+
+![Chapters from the headings](docs/diagrams/headings.drawio.svg)
+
+</details>
+
 1. **Submit.** `POST /v1/books` (or the MCP tool `add_book`) takes paths on the shelf or under
    `data/inbox`, in order; `POST /v1/books/upload` takes the bytes. A book is identified by the hashes
    of its files in order, so the same files submitted again return the same book and nothing is queued.
@@ -87,8 +94,10 @@ Where each step stands: [docs/status.md](docs/status.md).
    on PDF pages. Reconciled with the bookmarks, chapter files and numbering, the result is a toc
    version with every entry's first and last page (`GET /v1/books/{id}/toc`). When nothing else holds
    the contents, the labelled chapters in the text ("Chapter N", three or more, numbers rising) are the
-   toc. With none of these, a book of at most 100 pages is one chapter and a longer one fails with "no
-   table of contents found". `POST /v1/eval/toc` with `bookmarks_off` scores it against the bookmarks.
+   toc. With none of these, every page is read as a picture and the headings grouped by look give the
+   chapters (book knob `toc.from_headings`, on by default); when they give none, or more than one chapter
+   to two pages, a book of at most 100 pages is one chapter and a longer one fails with "structure not
+   recognised". `POST /v1/eval/toc` with `bookmarks_off` scores it against the bookmarks.
 7. **Run** (`POST /v1/books/{id}/runs`, MCP `start_run`). Every chapter is read by Docling and by
    MinerU on the GPU lane, then assembled on the CPU lane page by page; pages without a usable layer
    are read by both engines in OCR mode. A run assembles with a profile: the value of every run knob
@@ -129,9 +138,12 @@ Book-level knobs can be given at submission (`"knobs": {...}` in `POST /v1/books
 (`PATCH /v1/books/{id}/knobs`): `metadata.title_pages.head` and `.tail` (20 and 20 by default, in
 `config/metadata.yaml`), `toc.contents_pages`, the printed contents pages as `[[first, last], ...]`
 when you know where they are, `toc.skip_root_bookmark` when the first bookmark is the book itself,
-`toc.ignore_bookmarks` when the bookmarks are not the contents (one per page, image file names), and
+`toc.ignore_bookmarks` when the bookmarks are not the contents (one per page, image file names),
 `toc.chapter_label`, a word chapters open with: a line of it and one more word at a page's top opens a
-chapter ("درس" for the lessons "درس اول", "درس دوم" of a Farsi reader; a scan is then recognised whole).
+chapter ("درس" for the lessons "درس اول", "درس دوم" of a Farsi reader; a scan is then recognised whole), and
+`toc.from_headings` (on by default), the last try before a book with no contents fails: every page is read as
+a picture and the chapters come from its headings grouped by look (`config/toc.yaml`, `scan_layer.headings`);
+false lets the book fail at once.
 A change takes effect at the next collection. A submission may also say `"then": ["toc"]` to skip
 metadata, and `"order": "by_number"` to order chapter files by the number each prints.
 

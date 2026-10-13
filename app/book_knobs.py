@@ -15,6 +15,8 @@ KNOBS = {
     "toc.ignore_bookmarks": "the bookmarks are not the contents (one per page, image file names): leave them out",
     "toc.chapter_label": "the word chapters open with, a line of it and one more word at a page's top (\"درس\" in "
                          "\"درس اول\"); used when no contents source holds the book",
+    "toc.from_headings": "when no contents source holds the book, read every page as a picture and take the chapters "
+                         "from its headings grouped by look; false lets such a book fail at once",
 }
 
 
@@ -26,7 +28,8 @@ def defaults() -> dict:
             "toc.contents_pages": None,
             "toc.skip_root_bookmark": False,
             "toc.ignore_bookmarks": False,
-            "toc.chapter_label": None}
+            "toc.chapter_label": None,
+            "toc.from_headings": True}
 
 
 def check(knobs: dict | None, pages: int | None = None) -> dict:
@@ -37,7 +40,7 @@ def check(knobs: dict | None, pages: int | None = None) -> dict:
     for name in ("metadata.title_pages.head", "metadata.title_pages.tail"):
         if name in knobs and not (isinstance(knobs[name], int) and 0 <= knobs[name] <= 200):
             raise job_specs.Refused(f"{name} must be an integer from 0 to 200")
-    for name in ("toc.skip_root_bookmark", "toc.ignore_bookmarks"):
+    for name in ("toc.skip_root_bookmark", "toc.ignore_bookmarks", "toc.from_headings"):
         if name in knobs and not isinstance(knobs[name], bool):
             raise job_specs.Refused(f"{name} must be true or false")
     label = knobs.get("toc.chapter_label")

@@ -147,6 +147,8 @@ def test_bad_knobs_are_refused(client, inbox):
     assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": {"nope": 1}}).status_code == 400
     out_of_range = {"toc.contents_pages": [[1, 50]]}
     assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": out_of_range}).status_code == 400
+    not_a_switch = {"toc.from_headings": "yes"}
+    assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": not_a_switch}).status_code == 400
     run_without_toc = client.post("/v1/books", json={"file_paths": [str(pdf)], "then": ["metadata", "run"]})
     assert run_without_toc.status_code == 400 and "add toc" in run_without_toc.json()["error"]["message"]
 

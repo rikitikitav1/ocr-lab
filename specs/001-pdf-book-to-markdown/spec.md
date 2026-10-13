@@ -77,9 +77,10 @@ publisher), maybe the clean table of contents too, as it turns out." Scanned PDF
   recognised on a scan, once the text confirms its pages; bookmarks are written by whoever made the
   PDF and may be wrong. Bookmarks then vote and add what the printed contents lack, and give the levels
   where an entry has one. Numbering in the text only votes.
-- Q: What if no source gives a contents? → A: A book of at most 100 pages is one chapter; a longer one
+- Q: What if no source gives a contents? → A: The headings of every page read as pictures are tried
+  last; when they give no chapter level, a book of at most 100 pages is one chapter and a longer one
   fails with "structure not recognised" and the sources' reasons, and is not split by pages (owner's
-  decision, 2026-10-10).
+  decisions, 2026-10-10 and 2026-10-13).
 - Q: A book split into chapter files whose order nobody wrote down? → A: Each file is a chapter; the
   files can be ordered by the chapter number each prints on its opening pages, chosen at submission.
 - Q: Does the stand go to the internet for metadata or the contents? → A: Not at this stage. The
@@ -523,7 +524,9 @@ in the group it belongs to.
   pages), the printed contents pages given by hand as page ranges, and whether the first top bookmark
   is the book itself and its children are the top level (default off). A change takes effect at the
   next collection of metadata or the table of contents.
-- **FR-061**: When no source gives a table of contents, a book of at most a configured number of pages
+- **FR-061**: When no source gives a table of contents, the chapters MUST be tried from the headings of
+  every page read as pictures, grouped by look, unless a book knob turns this off; when that gives no
+  chapter level, or more chapters than half the pages, a book of at most a configured number of pages
   (100) MUST become one chapter, and a longer book MUST fail as "structure not recognised" with the
   reason visible through the doors.
 - **FR-062**: The offset between printed page numbers and book pages MUST be kept with the book when

@@ -102,7 +102,7 @@ def recognise(book_id: int, book_pages: list[int], cached_only: bool = False) ->
 
 # every page of a scan recognised (kept like the contents windows), and the blocks starting in its top part
 def top_blocks(book_id: int, total: int) -> dict[int, list[str]]:
-    top = conf()["labels"]["top_share"]
+    top = conf()["scan_layer"]["labels"]["top_share"]
     return {page: [" ".join(_text(b).split()) for b in layout.get("blocks", []) if b.get("bbox") and b["bbox"][1] < top]
             for page, layout in recognise(book_id, list(range(1, total + 1))).items()}
 

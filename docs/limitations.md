@@ -15,7 +15,7 @@ so a later change can be checked against them; the numbers are the books' ids in
 | A wrapped label leaves a junk row ("Chapter §"); a layer's "III" read as "Ill" leaves another | 71, 87 |
 | A number in words is any word after a part or chapter label, so "Part of Speech" or "Chapter Summary" read as numbered | none seen on the shelf |
 | Service roles are not given when the numbering starts after the first 15% of the pages, which leaves short books with a long foreword without them | 68, 96, 75 |
-| A book with no bookmarks, no printed contents in its first and last 30 pages and no labelled chapters waits for attention | 9, 55, 112, 116 |
+| A book with no bookmarks, no printed contents and no labelled chapters takes its chapters from the headings of its pages read as pictures; not served are chapter titles set as pictures, and a reference manual whose every subhead looks alike, which fails as "structure not recognised" (more than one chapter to two pages) | 8, 9 (pictures), 55 |
 | Chapters labelled by ordinal words ("درس اول", lesson one) need a book knob naming the word; image-file bookmarks need a knob to be ignored | 119 |
 | A dictionary's units are its letters; nothing reads them | 116 |
 | Right-to-left printed contents were never seen on the shelf, so their parsing is untested | none |

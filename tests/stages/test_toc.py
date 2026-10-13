@@ -87,21 +87,29 @@ def test_a_book_without_bookmarks_takes_its_printed_contents_and_stores_the_offs
     assert version is not None and collect.collect(book) == version.id
 
 
-def test_a_short_book_without_contents_is_one_chapter(stand, tmp_path):
+@pytest.fixture
+def no_headings(monkeypatch):
+    from stages.toc import scan
+
+    monkeypatch.setattr(scan, "recognise", lambda book_id, book_pages, cached_only=False: {p: {} for p in book_pages})
+
+
+def test_a_short_book_without_contents_is_one_chapter(stand, tmp_path, no_headings):
     path = build(tmp_path / "s.pdf", [text_page("Once upon a time"), text_page("The end")])
     book_id, _ = intake.register([(path, "a-tale.pdf")])
     source, entries, _ = collect.choose(book_id)
     assert source == "whole_book" and [(e.title, e.page) for e in entries] == [("a-tale", 1)]
 
 
-def test_a_long_book_without_contents_fails_as_structure_not_recognised(stand, tmp_path):
+def test_a_long_book_without_contents_fails_as_structure_not_recognised(stand, tmp_path, no_headings):
     path = build(tmp_path / "l.pdf", [text_page(f"Page {n}") for n in range(101)])
     book_id, _ = intake.register([(path, "long.pdf")])
-    with pytest.raises(Final, match="101 pages"):
+    with pytest.raises(Final, match="101 pages.*headings no group"):
         collect.choose(book_id)
 
 
-def test_a_book_with_no_contents_but_labelled_chapters_takes_them_however_long(stand, tmp_path, monkeypatch):
+def test_a_book_with_no_contents_but_labelled_chapters_takes_them_however_long(stand, tmp_path, monkeypatch,
+                                                                              no_headings):
     path = build(tmp_path / "e.pdf", [text_page(f"Page {n}") for n in range(120)])
     book_id, _ = intake.register([(path, "ebook.pdf")])
     found = [Entry(f"Chapter {n}. Topic", 1, 20 * n, source="numbering") for n in range(1, 4)]
@@ -547,3 +555,113 @@ def test_a_scanned_contents_set_as_text_blocks_with_bracketed_pages_is_read_and_
     assert pages == [7] and [(e.title, e.printed) for e in found] == [
         ("ГЛАВА ПЕРВАЯ, в которой всё начинается", "3"), ("ГЛАВА ВТОРАЯ, в которой лазер", "46"),
         ("ГЛАВА ТРЕТЬЯ, в которой река", "98")]
+
+
+def _block(kind: str, text: str, size: float, y: float) -> dict:
+    # a box whose area gives `size` back through the headings source's size proxy
+    width = 0.6
+    height = (size / 1000) ** 2 * 0.66 * len(text) / width
+    return {"type": kind, "bbox": [0.2, y, 0.2 + width, y + height], "content": text}
+
+
+def _headed_book(pages: int = 100) -> dict[int, dict]:
+    body = " ".join(["word"] * 25)
+    layouts = {p: {"blocks": [_block("header", f"The Book {p}", 12, 0.02), _block("text", body, 15, 0.5)]}
+               for p in range(1, pages + 1)}
+    for n, page in enumerate((5, 22, 39, 56, 73, 90), start=1):
+        # the fifth chapter's title is typed as page furniture, as MinerU types a title at a page's top
+        kind = "header" if n == 5 else "paragraph_title"
+        layouts[page]["blocks"].insert(1, _block(kind, f"Chapter {n} Topic {n}", 30, 0.1))
+        layouts[page + 3]["blocks"].insert(1, _block("paragraph_title", f"{n}.1 First look", 20, 0.3))
+    return layouts
+
+
+def test_headings_give_the_chapters_by_their_look_and_leave_the_running_heads_out():
+    from stages.toc import scan
+    from stages.toc.sources import headings
+
+    got = headings.read(_headed_book(), 100, scan._text)
+    assert got.failed is None and got.source == "headings"
+    assert [(e.title, e.page) for e in got.entries if e.level == 1] == [
+        (f"Chapter {n} Topic {n}", p) for n, p in enumerate((5, 22, 39, 56, 73, 90), start=1)]
+    assert [e.page for e in got.entries if e.level == 2] == [8, 25, 42, 59, 76, 93]
+    assert not any(e.title.startswith("The Book") for e in got.entries)
+
+
+def test_a_title_stays_a_heading_when_its_running_heads_repeat_its_name():
+    from stages.toc.sources import headings
+
+    bl = [{"page": 3, "type": "paragraph_title", "text": "Introduction", "size": 30, "words": 1}]
+    bl += [{"page": p, "type": "header", "text": "Introduction", "size": 12, "words": 1} for p in range(4, 9)]
+    _, cand = headings.candidates(bl, 100)
+    assert [(b["page"], b["type"]) for b in cand] == [(3, "paragraph_title")]
+
+
+def test_title_page_lines_before_a_contents_at_the_start_are_no_chapters():
+    from stages.toc import scan
+    from stages.toc.sources import headings
+
+    layouts = _headed_book()
+    for page, text in ((1, "A Series Of Books"), (2, "The Publisher House"), (3, "Contents")):
+        layouts[page]["blocks"].insert(1, _block("paragraph_title", text, 30, 0.1))
+    kept = headings.read(layouts, 100, scan._text)
+    assert {e.page for e in kept.entries} >= {1, 2, 3}
+    cut = headings.read(layouts, 100, scan._text, frozenset({3, 4}))
+    assert min(e.page for e in cut.entries) == 5
+    assert [e.page for e in cut.entries if e.level == 1] == [5, 22, 39, 56, 73, 90]
+    # a contents printed at the book's end cuts nothing
+    assert headings.read(layouts, 100, scan._text, frozenset({97, 98})).entries == kept.entries
+
+
+def test_a_long_title_counts_as_a_heading_only_when_typed_as_a_document_title():
+    from stages.toc.sources import headings
+
+    long = " ".join(["word"] * 23)
+    bl = [{"page": 3, "type": "doc_title", "text": long, "size": 30, "words": 23},
+          {"page": 9, "type": "paragraph_title", "text": long, "size": 30, "words": 23}]
+    assert [b["page"] for b in headings.candidates(bl, 100)[1]] == [3]
+
+
+def test_too_few_headings_of_one_look_are_no_chapters():
+    from stages.toc import scan
+    from stages.toc.sources import headings
+
+    layouts = {p: {"blocks": [_block("paragraph_title", f"Chapter {p} Topic", 30, 0.1)]} for p in (10, 40, 70)}
+    got = headings.read(layouts, 100, scan._text)
+    assert got.failed and not got.entries
+
+
+def test_a_book_without_contents_takes_its_headings_before_failing_unless_the_knob_says_no(stand, tmp_path,
+                                                                                          monkeypatch):
+    from stages.toc import scan
+
+    monkeypatch.setattr(scan, "recognise", lambda book_id, book_pages, cached_only=False: _headed_book())
+    book_id, _ = intake.register([(build(tmp_path / "h.pdf", [text_page(f"Page {n}") for n in range(100)]),
+                                   "headed.pdf")])
+    source, entries, evidence = collect.choose(book_id)
+    assert source == "headings" and evidence["headings"]["notes"]["chapters"] == 6
+    assert collect.choose(book_id, off=("headings",))[0] == "whole_book"
+    off, _ = intake.register([(build(tmp_path / "o.pdf", [text_page(f"Page {n}") for n in range(101)]), "off.pdf")],
+                             {"toc.from_headings": False})
+    with pytest.raises(Final):
+        collect.choose(off)
+
+
+def test_more_chapters_than_half_the_pages_are_no_structure():
+    from stages.toc import scan
+    from stages.toc.sources import headings
+
+    layouts = {p: {"blocks": [_block("paragraph_title", f"Topic {p}", 30, 0.1)]} for p in range(1, 21)}
+    got = headings.read(layouts, 20, scan._text)
+    assert got.failed and "a page" in got.failed and not got.entries
+
+
+def test_chapters_under_a_contents_bookmark_are_chapters_with_their_levels_kept():
+    marks = [Entry("Cover", 1, 1), Entry("Table of contents", 1, 6),
+             *[Entry(f"{n}. Topic", 2, 10 * n) for n in range(1, 4)], Entry("Index", 1, 90)]
+    got = collect.rows(marks, "bookmarks", 100)
+    assert [(r["title"], r["level"], r["kind"]) for r in got] == [
+        ("Cover", 1, "chapter"), ("Table of contents", 1, "part"), ("1. Topic", 2, "chapter"),
+        ("2. Topic", 2, "chapter"), ("3. Topic", 2, "chapter"), ("Index", 1, "chapter")]
+    two = [Entry("Contents", 1, 3), Entry("One", 2, 5), Entry("Two", 2, 9), Entry("Body", 1, 12)]
+    assert [r["kind"] for r in collect.rows(two, "bookmarks", 20)] == ["chapter", "section", "section", "chapter"]
