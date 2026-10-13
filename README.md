@@ -166,12 +166,12 @@ Time per page and per phase, text-layer books and scans apart: [docs/timing.md](
 
 ## Languages tried
 
-The shelf holds 117 books. A book with two languages counts under both. Full runs are the raw run of 40 books
+The shelf holds 117 books. A book with two languages counts under both. Full runs are the raw run of 43 books
 ([experiment](docs/experiments/2026-10-11_raw-run.md)).
 
 | language | books | of them scans | what was checked |
 |---|---|---|---|
-| English | 93 | 2 | toc (bookmarks off, HiPS), metadata, elements, full runs of 18 books (one of them the English and Chinese scan) |
+| English | 93 | 2 | toc (bookmarks off, HiPS), metadata, elements, full runs of 21 books (one of them the English and Chinese scan) |
 | Russian | 14 | 4 | toc, metadata, elements (rag-lab's Russian gold sections), full runs of 13 books, 4 of them scans |
 | Bulgarian | 4 | 0 | toc, full runs of all 4 |
 | Romanian | 2 | 0 (an old text layer) | toc, full runs of both (a village monograph of 1905, a book on a village of 1998) |

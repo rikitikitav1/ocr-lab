@@ -109,4 +109,4 @@ Each entry also follows these rules:
 | 2026-10-10 | [Assembling a chapter's elements](experiments/2026-10-10_elements.md) | Both engines on defaults, the page referee, code from the text layer, tables by agreement with the layer |
 | 2026-10-10 | [Metadata](experiments/2026-10-10_metadata.md) | Title pages without word lists, a layer in a shifted encoding, an edition equal to the volume |
 | 2026-10-10 | [The run and its report](experiments/2026-10-10_run-and-report.md) | Lost text against the book's own heads, picture pages on recognised ranges, knobs and profiles byte-identical |
-| 2026-10-11 | [A raw run of the shelf](experiments/2026-10-11_raw-run.md) | 40 books on the defaults, defects by mechanism, the layer reader, shared pages, GPU memory, the open defects |
+| 2026-10-11 | [A raw run of the shelf](experiments/2026-10-11_raw-run.md) | 43 books on the defaults, defects by mechanism, the layer reader, shared pages, GPU memory, the open defects |
