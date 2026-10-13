@@ -65,7 +65,7 @@ both engines to a bundle.
 | 49 | Readings in Database Systems |  | 2015 | English | 54 | text | itext-paulo-155 (itextpdf.sf.net-lowagie.com); pdftk 2.02 - www.pdftk.com | printed contents | toc, bookmarks-off gold, full run |
 | 50 | Redis in Action | Josiah L. Carlson | 2013 | English | 322 | text | www.allitebooks.com | printed contents | toc, bookmarks-off gold, full run |
 | 51 | Security Engineering: A Guide to Building Dependable Distributed Sy... | Ross J. Anderson |  | English | 535 | text | Mac OS X 10.2.8 Quartz PDFContext; Word; Mac OS X 10.4.8 Quartz PDFContext; Mac OS X 10.4.9 Quartz PDFContext | chapter files | toc |
-| 52 | Adventures with the Linux Command Line | William Shotts | 2021 | English | 263 | text | LibreOffice 7.2 | printed contents | toc, bookmarks-off gold |
+| 52 | Adventures with the Linux Command Line | William Shotts | 2021 | English | 263 | text | LibreOffice 7.2 | printed contents | toc, bookmarks-off gold, full run |
 | 53 | The Linux Command Line | William Shotts | 2026 | English | 597 | text | LibreOffice 25.2.3.2 (X86_64) / LibreOffice Community; Writer | printed contents | toc, bookmarks-off gold |
 | 54 | Think Python | Allen Downey | 2015 | English | 244 | text | pdfTeX-1.40.20; LaTeX with hyperref | printed contents | toc, bookmarks-off gold, full run |
 | 55 | UNIX Programmer's Reference Manual (PRM) |  |  | English | 510 | scan | - | none (structure not recognised) | toc |
@@ -85,7 +85,7 @@ both engines to a bundle.
 | 69 | 农业和食品安全在中国：WTO入世与区域贸易协定的影响 | 陈春来 et al. | 2008 | English | 440 | text | GPL Ghostscript 9.25; Adobe InDesign CS2 (4.0.4) | printed contents | toc, bookmarks-off gold |
 | 70 | Al-Haq: A Global History of the First Palestinian Human Rights Orga... | Lynn Welchman | 2021 | English | 331 | text | GPL Ghostscript 9.25; Adobe InDesign 14.0 (Windows) | printed contents | toc, bookmarks-off gold |
 | 71 | Amicus Curiae before International Courts and Tribunals | Astrid Wiik | 2018 | English | 734 | text | GPL Ghostscript 9.25; Nomos Verlag | printed contents | toc, bookmarks-off gold, metadata gold |
-| 72 | Analogy and Exemplary Reasoning in Legal Discourse | Hendrik Kaptein et al. | 2018 | English | 197 | text | GPL Ghostscript 9.25; Adobe InDesign CC 13.0 (Windows) | printed contents | toc, bookmarks-off gold |
+| 72 | Analogy and Exemplary Reasoning in Legal Discourse | Hendrik Kaptein et al. | 2018 | English | 197 | text | GPL Ghostscript 9.25; Adobe InDesign CC 13.0 (Windows) | bookmarks | toc, bookmarks-off gold, full run |
 | 73 | Antitrust Enforcement and Standard Essential Patents: Moving beyond... | Haris Tsilikas | 2017 | English | 78 | text | GPL Ghostscript 9.25; Nomos Verlag | bookmarks | toc, bookmarks-off gold, full run |
 | 74 | Applicable Law in Investor–State Arbitration: The Interplay Between... | Hege Elisabeth Kjos | 2013 | English | 343 | text | GPL Ghostscript 9.25; PScript5.dll Version 5.2.2 | printed contents | toc, bookmarks-off gold |
 | 75 | Applying Shari‘a in the West | Maurits S. Berger | 2013 | English | 292 | text | GPL Ghostscript 9.25; Adobe Acrobat Pro 10.1.6 | bookmarks | toc, bookmarks-off gold |
@@ -181,8 +181,10 @@ page images are counted over all pages.
 | 48 | 683 | 60 | 56 | 0 | 0.174 | 0.006 | 0.0 | 0 | 0 | 0 | 0 | 0 | 1 |
 | 49 | 54 | 54 | 54 | 0 | 0.215 | 0.028 | 0.0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | 50 | 322 | 60 | 59 | 0 | 0.209 | 0.002 | 0.02 | 0 | 3 | 0 | 0 | 2 | 0 |
+| 52 | 263 | 60 | 56 | 0 | 0.212 | 0.002 | 0.0 | 0 | 27 | 0 | 0 | 0 | 73 |
 | 54 | 244 | 60 | 57 | 1 | 0.238 | 0.01 | 0.0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | 58 | 299 | 60 | 53 | 0 | 0.329 | 0.058 | 0.05 | 0 | 2 | 0 | 0 | 0 | 97 |
+| 72 | 197 | 60 | 56 | 0 | 0.252 | 0.003 | 0.0 | 0 | 1 | 0 | 0 | 0 | 0 |
 | 73 | 78 | 60 | 56 | 0 | 0.201 | 0.005 | 0.0 | 0 | 0 | 0 | 0 | 3 | 0 |
 | 80 | 242 | 60 | 59 | 0 | 0.191 | 0.001 | 0.0 | 0 | 38 | 0 | 0 | 0 | 0 |
 | 110 | 414 | 60 | 59 | 0 | 0.398 | 0.045 | 0.0 | 125 | 414 | 0 | 0 | 0 | 0 |
