@@ -3,7 +3,7 @@ from pathlib import Path
 
 from orm.catalogue import BookFile
 
-from stages.toc.sources import Entry, SourceToc, book_lines, conf
+from stages.structure.sources import Entry, SourceEntries, book_lines, conf
 
 TITLE_MAX_CHARS = 120
 LOOK_PAGES = 4
@@ -44,8 +44,8 @@ def _opening(pages: list[list]) -> list:
     return pages[0] if pages else []
 
 
-def read(files: list[BookFile]) -> SourceToc:
-    out = SourceToc("files")
+def read(files: list[BookFile]) -> SourceEntries:
+    out = SourceEntries("files")
     if len(files) < 2:
         out.failed = "one file"
         return out

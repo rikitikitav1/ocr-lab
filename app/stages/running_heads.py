@@ -14,7 +14,7 @@ def edge_key(text: str) -> str:
     return norm(re.sub(r"^\s*\d+\s+|\s+\d+\s*$", "", text))
 
 
-# the running heads on each page, by line index; a chapter's opening top line is its title, not a head
+# the running heads on each page, by line index; a piece's opening top line is its title, not a head
 def per_page(lines: dict[int, list]) -> dict[int, list[int]]:
     edges, first = Counter(), {}
     for page in sorted(lines):

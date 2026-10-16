@@ -1,4 +1,4 @@
-# the toc stage measured on its own: with bookmarks switched off against the bookmarks, or against HiPS
+# the structure stage measured on its own: with bookmarks switched off against the bookmarks, or against HiPS
 import artifacts
 import book_knobs
 import code_version
@@ -6,14 +6,14 @@ import job_queue
 import settings
 from engines import card
 from job_signals import Final
-from orm.catalogue import Book, TocEntry
+from orm.catalogue import Book, StructureNode
 from orm.db import Session
 from sqlalchemy import select
-from stages import assemble, intake
-from stages.toc import collect, scan
-from stages.toc.sources import Entry
+from stages import assemble, intake, run_pieces
+from stages.structure import collect, scan
+from stages.structure.sources import Entry
 
-from evaluation import hips, toc_gold
+from evaluation import hips, structure_gold
 
 SETS = ("bookmarks_off", "hips")
 
@@ -40,31 +40,34 @@ def _member(book_id: int) -> dict:
         got, source, contents_pages, evidence = [], f"none: {e}", [], {}
     # a book with no contents of its own is a case for other ways (the web, computed headings), not a miss
     printed = "contents" if contents_pages else "no printed contents"
-    service = _service(got, source, evidence.get("pages", 0), frozenset(contents_pages), intake.files_of(book_id))
+    service = _service(got, source, evidence.get("pages", 0), frozenset(contents_pages), intake.files_of(book_id),
+                       book_knobs.of(book_id)["structure.reading_level"])
     return {"book_id": book_id, "source": source, "printed": printed,
-            **toc_gold.score(gold, got, max(contents_pages) if contents_pages else None, service)}
+            **structure_gold.score(gold, got, max(contents_pages) if contents_pages else None, service)}
 
 
-# the entries the run would make service chapters, from its rows and cut pages built the same way
-def _service(got: list[Entry], source: str, pages: int, contents: frozenset[int], files) -> list[Entry]:
+# the nodes the run's role rule makes service, from the pieces a new run of the book would read
+def _service(got: list[Entry], source: str, pages: int, contents: frozenset[int], files,
+             owners_level: int | None = None) -> list[Entry]:
     if not got:
         return []
     entries = collect.with_front_matter(got, files)
-    rows = collect.toc_rows(got, source, pages, files)
-    chapters = assemble.chapters_of(rows, frozenset().union(*assemble.cut_of(rows, contents).values()))
-    return [entries[c["ord"] - 1] for c in chapters if c["role"] == "service"]
+    rows = collect.with_parents(collect.structure_rows(got, source, pages, files))
+    cut = frozenset().union(*assemble.cut_of(rows, contents).values())
+    pieces = assemble.pieces_of(rows, cut, run_pieces.level_for(owners_level, rows))
+    return [entries[p["ord"] - 1] for p in pieces if p["role"] == "service"]
 
 
-# a HiPS book enters the catalogue like any other and its toc stage runs as usual, then meets the gold
+# a HiPS book enters the catalogue like any other and its structure stage runs as usual, then meets the gold
 def _hips_member(name: str, job_id: int | None) -> dict:
     book_id, _ = intake.register([(hips.pdf_path(name), f"{name}.pdf")])
     intake.probe(book_id)
 
-    # the same lane choice as the toc stage, so the scored toc is the one the stage builds
+    # the same lane choice as the structure stage, so the scored structure is the one the stage builds
     def to_gpu(because: str) -> dict:
-        handed = job_queue.enqueue("toc_scan", {"book_id": book_id, "what": ["toc"]}, book_id=book_id)
+        handed = job_queue.enqueue("structure_scan", {"book_id": book_id, "what": ["structure"]}, book_id=book_id)
         return {"book_id": book_id, "name": name,
-                "skipped": f"its toc waits on the GPU lane in job {handed}: {because}"}
+                "skipped": f"its structure waits on the GPU lane in job {handed}: {because}"}
 
     if collect.wants_raster(book_id):
         return to_gpu("the contents are read from the raster")
@@ -73,15 +76,17 @@ def _hips_member(name: str, job_id: int | None) -> dict:
     except card.WrongLane as e:
         return to_gpu(str(e))
     except Final as e:
-        return {"book_id": book_id, "name": name, "source": f"none: {e}", **toc_gold.score(hips.gold(name), [])}
+        return {"book_id": book_id, "name": name, "source": f"none: {e}", **structure_gold.score(hips.gold(name), [])}
     version = collect.current_version(book_id)
     with Session() as session:
-        query = select(TocEntry).where(TocEntry.toc_version_id == version.id).order_by(TocEntry.ord)
+        query = (select(StructureNode).where(StructureNode.structure_version_id == version.id)
+                 .order_by(StructureNode.ord))
         rows = session.scalars(query).all()
         front_end = next((e.last_page for e in rows if e.kind == "front_matter"), None)
         got = [Entry(e.title, e.level, e.first_page) for e in rows if e.kind != "front_matter"]
     # gold entries inside our front matter keep their pages in the book, so they are listed apart, not missed
-    return {"book_id": book_id, "name": name, "source": "toc", **toc_gold.score(hips.gold(name), got, front_end)}
+    return {"book_id": book_id, "name": name, "source": "structure",
+            **structure_gold.score(hips.gold(name), got, front_end)}
 
 
 # a cancel is read between books, so a long set stops at the next one
@@ -109,30 +114,31 @@ def run(set_name: str, book_ids: list[int] | None, job_id: int | None) -> dict:
     return _summary(set_name, rows, scored)
 
 
-# a score changes with the toc code and with the scoring code, so both stamp the artifact
+# a score changes with the structure code and with the scoring code, so both stamp the artifact
 def _keep(book_id: int, name: str, row: dict) -> None:
-    # service chapters are split off by the assembly's role rule, so its code scores as well
+    # service pieces are split off by the assembly's role rule, so its code scores as well
     scoring = code_version.files_hash([*sorted((settings.APP_DIR / "evaluation").glob("*.py")),
                                        settings.APP_DIR / "stages" / "assemble.py"]).hexdigest()[:16]
-    made_from = artifacts.Inputs({"stage": "toc_eval", "set": name, "code": collect.code_hash(), "scoring": scoring,
-                                  "files": [f.sha256 for f in intake.files_of(book_id)]})
-    artifacts.write(artifacts.Owner(book_id=book_id), artifacts.book_dir(book_id), "toc_eval", f"{name}.json", row,
-                    made_from)
+    made_from = artifacts.Inputs({"stage": "structure_eval", "set": name, "code": collect.code_hash(),
+                                  "scoring": scoring, "files": [f.sha256 for f in intake.files_of(book_id)]})
+    artifacts.write(artifacts.Owner(book_id=book_id), artifacts.book_dir(book_id), "structure_eval", f"{name}.json",
+                    row, made_from)
 
 
 def _summary(name: str, rows: list[dict], scored: list[dict]) -> dict:
-    chapters = sum(r["chapters"] for r in scored)
-    found = sum(r["chapters_found"] for r in scored)
+    top_total = sum(r["top_nodes"] for r in scored)
+    found = sum(r["top_nodes_found"] for r in scored)
     return {
         "set": name, "books": len(scored), "skipped": [r for r in rows if "skipped" in r],
-        "no_printed_contents": [{"book_id": r["book_id"], "source": r["source"], "chapters": r["chapters"],
-                                 "chapters_found": r["chapters_found"]}
+        "no_printed_contents": [{"book_id": r["book_id"], "source": r["source"], "top_nodes": r["top_nodes"],
+                                 "top_nodes_found": r["top_nodes_found"]}
                                 for r in rows if "skipped" not in r and r.get("printed", "contents") != "contents"],
-        "chapters": chapters, "chapters_found": found,
-        "chapters_found_share": round(found / chapters, 3) if chapters else None,
-        "chapters_below_top": sum(r["chapters_below_top"] for r in scored),
-        "extra_chapters": sum(r["extra_chapters"] for r in scored),
-        "books_with_missed_chapters": [{"book_id": r["book_id"], "source": r["source"],
-                                        "missed": r["missed_chapters"]} for r in scored if r["missed_chapters"]],
-        "rows": [{k: v for k, v in r.items() if k not in ("missed_chapters", "extra_chapter_titles")} for r in scored],
+        "top_nodes": top_total, "top_nodes_found": found,
+        "top_nodes_found_share": round(found / top_total, 3) if top_total else None,
+        "top_nodes_below_top": sum(r["top_nodes_below_top"] for r in scored),
+        "extra_top_nodes": sum(r["extra_top_nodes"] for r in scored),
+        "books_with_missed_top_nodes": [{"book_id": r["book_id"], "source": r["source"],
+                                        "missed": r["missed_top_nodes"]} for r in scored if r["missed_top_nodes"]],
+        "rows": [{k: v for k, v in r.items() if k not in ("missed_top_nodes", "extra_top_node_titles")}
+                 for r in scored],
     }

@@ -1,8 +1,8 @@
 import pytest
 from job_signals import Final
 from stages import intake
-from stages.toc import collect, pages
-from stages.toc.sources import Entry, numbering, printed_contents
+from stages.structure import collect, pages
+from stages.structure.sources import Entry, numbering, printed_contents
 
 from tests.fixtures import FILLER, build, text_page
 from tests.real_db import needs_db
@@ -67,12 +67,12 @@ def test_printed_pages_are_placed_by_the_offset_that_fits_most_titles():
     assert [e.page for e in entries] == [3, 3, 5, 6, 7, 8]
 
 
-def test_chapter_ranges_end_where_the_next_entry_at_their_level_starts():
+def test_node_ranges_end_where_the_next_entry_at_their_level_starts_and_every_node_is_a_node():
     entries = [Entry("Part I", 1, 3), Entry("Chapter 1", 2, 3), Entry("Section", 3, 4), Entry("Chapter 2", 2, 5),
                Entry("Chapter 3", 2, 7)]
     got = [(r["title"], r["first_page"], r["last_page"], r["kind"]) for r in collect.rows(entries, "x", 9)]
-    assert got == [("Part I", 3, 9, "part"), ("Chapter 1", 3, 4, "chapter"), ("Section", 4, 4, "section"),
-                   ("Chapter 2", 5, 6, "chapter"), ("Chapter 3", 7, 9, "chapter")]
+    assert got == [("Part I", 3, 9, "node"), ("Chapter 1", 3, 4, "node"), ("Section", 4, 4, "node"),
+                   ("Chapter 2", 5, 6, "node"), ("Chapter 3", 7, 9, "node")]
 
 
 def test_a_book_without_bookmarks_takes_its_printed_contents_and_stores_the_offset(book):
@@ -89,7 +89,7 @@ def test_a_book_without_bookmarks_takes_its_printed_contents_and_stores_the_offs
 
 @pytest.fixture
 def no_headings(monkeypatch):
-    from stages.toc import scan
+    from stages.structure import scan
 
     monkeypatch.setattr(scan, "recognise", lambda book_id, book_pages, cached_only=False: {p: {} for p in book_pages})
 
@@ -113,10 +113,10 @@ def test_a_book_with_no_contents_but_labelled_chapters_takes_them_however_long(s
     path = build(tmp_path / "e.pdf", [text_page(f"Page {n}") for n in range(120)])
     book_id, _ = intake.register([(path, "ebook.pdf")])
     found = [Entry(f"Chapter {n}. Topic", 1, 20 * n, source="numbering") for n in range(1, 4)]
-    monkeypatch.setattr(numbering, "read", lambda files, skip, lines: numbering.SourceToc("numbering", found))
+    monkeypatch.setattr(numbering, "read", lambda files, skip, lines: numbering.SourceEntries("numbering", found))
     source, entries, _ = collect.choose(book_id)
     assert source == "numbering" and [(e.title, e.page) for e in entries] == [(e.title, e.page) for e in found]
-    monkeypatch.setattr(numbering, "read", lambda files, skip, lines: numbering.SourceToc("numbering", found[:2]))
+    monkeypatch.setattr(numbering, "read", lambda files, skip, lines: numbering.SourceEntries("numbering", found[:2]))
     with pytest.raises(Final):
         collect.choose(book_id)
 
@@ -127,7 +127,7 @@ def test_ignored_bookmarks_leave_the_chapters_to_the_label_knob(stand, tmp_path)
     book_id, _ = intake.register([(build(tmp_path / "r.pdf", pages), "r.pdf")])
     assert collect.choose(book_id)[0] == "bookmarks"
     book_id, _ = intake.register([(build(tmp_path / "k.pdf", [*pages, text_page("The end")]), "k.pdf")],
-                                 {"toc.ignore_bookmarks": True, "toc.chapter_label": "lesson"})
+                                 {"structure.ignore_bookmarks": True, "structure.chapter_label": "lesson"})
     source, entries, evidence = collect.choose(book_id)
     assert source == "labels" and [(e.title, e.page) for e in entries] == [("Lesson one", 2), ("Lesson two", 4)]
     assert "ignored" in evidence["bookmarks"]["failed"]
@@ -151,7 +151,7 @@ def test_title_depth(title, depth):
 
 def test_a_label_is_cut_from_a_title_only_when_its_number_is_well_formed():
     import numerals
-    from stages.toc.pages import words
+    from stages.structure.pages import words
 
     assert [words(t) for t in ("Civil Society", "CIVIL WAR", "IV. Analysis", "Part IV The End", "2.1 Intro",
                                "D. Conclusion", "part ii: oop")] == [
@@ -215,7 +215,7 @@ def _index(*lines):
 
 
 def test_a_numbered_table_with_dot_leaders_is_not_contents():
-    from stages.toc import scan
+    from stages.structure import scan
 
     table = _index("1-a Episcopo 28", "2-a Notarrio 100", "3-a Iudici 50", "4-a Incassatori 40", "11 Scripturis 24",
                    "12 Necessitatibus 326", "Summa 868", "Summa Summarrum 4729")
@@ -225,8 +225,8 @@ def test_a_numbered_table_with_dot_leaders_is_not_contents():
 
 
 def test_a_lettered_run_keeps_c_and_v_as_letters_unless_the_list_has_longer_roman_numerals():
-    from stages.toc import scan
-    from stages.toc.sources import Entry
+    from stages.structure import scan
+    from stages.structure.sources import Entry
 
     found = [Entry(t, None) for t in ["A. Scope", "B. Terms", "C. Sources", "D. Courts", "V. Venue"]]
     scan.levels(found)
@@ -234,8 +234,8 @@ def test_a_lettered_run_keeps_c_and_v_as_letters_unless_the_list_has_longer_roma
 
 
 def test_levels_follow_numbering_styles_whatever_the_language():
-    from stages.toc import scan
-    from stages.toc.sources import Entry
+    from stages.structure import scan
+    from stages.structure.sources import Entry
 
     titles = ["Prefata", "I. Pozitia", "II. Locuitorii", "1. Nationalitatea", "a) Biserica", "b) Scoala",
               "III. Ocupatiunea", "1. Agricultura", "2. Vinicultura", "VI. Administratia"]
@@ -251,7 +251,7 @@ def test_levels_follow_numbering_styles_whatever_the_language():
 
 
 def test_a_scans_recognised_contents_become_entries_with_levels_and_an_offset():
-    from stages.toc import scan
+    from stages.structure import scan
 
     recognised = {3: _layout(("header", "Contents"), _index("Introduction 1", "1. Containers and their", "images 11",
                                                             "Why images 12", "2. Pods 20")),
@@ -266,8 +266,22 @@ def test_a_scans_recognised_contents_become_entries_with_levels_and_an_offset():
     assert scan.folio_offset(recognised) == (6, 3)
 
 
+def test_a_line_on_every_contents_page_and_a_heading_glued_to_the_first_label_stay_out_of_the_entries():
+    from stages.structure import scan
+
+    recognised = {7: _layout(_index("Inhoud", "Woord vooraf 5", "1 Het begin 9", "2 Het midden 30")),
+                  8: _layout(_index("Inhoud", "3 Het einde 52", "4 Het slot 70", "Register 90"))}
+    found, _ = scan.entries(recognised, 100)
+    assert [e.title for e in found][:2] == ["Woord vooraf", "1 Het begin"] and len(found) == 6
+    glued = {7: _layout(_index("NHOUD EERSTE HOOFDSTUK", "EERSTE HOOFDSTUK,", "waarin het begint (5)",
+                               "TWEEDE HOOFDSTUK,", "waarin het verder gaat (46)", "DERDE HOOFDSTUK,",
+                               "waarin het eindigt (80)"))}
+    found, _ = scan.entries(glued, 100)
+    assert found[0].title == "EERSTE HOOFDSTUK, waarin het begint"
+
+
 def test_chapter_files_are_chapters_and_a_part_title_page_gives_the_part(stand, tmp_path):
-    from stages.toc.sources import files
+    from stages.structure.sources import files
 
     def opening(*lines):
         return {"lines": [*lines, FILLER[:90]]}
@@ -321,7 +335,7 @@ def _e(title, level, page, verified=True):
 
 
 def test_reconcile_takes_the_confirmed_printed_contents_as_base_and_bookmarks_add_what_it_lacks():
-    from stages.toc import reconcile
+    from stages.structure import reconcile
 
     printed = [_e("Chapter 1 Start", 1, 3), _e("Basics", 2, 4), _e("Chapter 2 Middle", 1, 10)]
     marks = [_e("1 Start", 1, 3), _e("Chapter 2 Middle", 1, 12), _e("Chapter 3 End", 1, 20), _e("Index", 2, 30)]
@@ -335,7 +349,7 @@ def test_reconcile_takes_the_confirmed_printed_contents_as_base_and_bookmarks_ad
 
 
 def test_reconcile_falls_back_to_bookmarks_when_the_printed_pages_are_unconfirmed():
-    from stages.toc import reconcile
+    from stages.structure import reconcile
 
     printed = [_e("One", 1, 3, False), _e("Two", 1, 9, False), _e("Three", 1, 15, True)]
     marks = [_e("One", 1, 4), _e("Two", 1, 10)]
@@ -344,7 +358,7 @@ def test_reconcile_falls_back_to_bookmarks_when_the_printed_pages_are_unconfirme
 
 
 def test_numbering_confirms_but_never_adds_alone():
-    from stages.toc import reconcile
+    from stages.structure import reconcile
 
     marks = [_e("Chapter 1", 1, 3), _e("Chapter 2", 1, 9)]
     counted = [_e("Chapter 1", 1, 3), _e("3.2 Seen in a reference", 2, 5)]
@@ -353,7 +367,7 @@ def test_numbering_confirms_but_never_adds_alone():
 
 
 def test_levels_come_from_bookmarks_and_unmatched_printed_entries_follow_their_scale():
-    from stages.toc import reconcile
+    from stages.structure import reconcile
 
     printed = [_e("Chapter 1 Start", 2, 3), _e("Basics", 2, 4), _e("Only printed", 3, 5),
                _e("Chapter 2 Middle", 2, 10)]
@@ -372,12 +386,12 @@ def test_the_pages_before_the_first_entry_become_a_front_matter_section():
     entries = [Entry("Chapter 1", 1, 5, source="bookmarks"), Entry("Chapter 2", 1, 9, source="bookmarks")]
     got = collect.rows(collect.with_front_matter(entries, [SimpleNamespace(file_name="a-book.pdf")]), "bookmarks", 12)
     assert [(r["title"], r["first_page"], r["last_page"], r["kind"]) for r in got] == [
-        ("a-book", 1, 4, "front_matter"), ("Chapter 1", 5, 8, "chapter"), ("Chapter 2", 9, 12, "chapter")]
+        ("a-book", 1, 4, "front_matter"), ("Chapter 1", 5, 8, "node"), ("Chapter 2", 9, 12, "node")]
     assert collect.with_front_matter([Entry("Starts at once", 1, 1)], []) == [Entry("Starts at once", 1, 1)]
 
 
 def test_numbering_adds_a_labelled_part_alone_but_not_a_bare_number():
-    from stages.toc import reconcile
+    from stages.structure import reconcile
 
     marks = [_e("Introduction", 1, 3), _e("Access to Knowledge", 1, 18)]
     counted = [Entry("PART TWO THE EMERGENCE", 1, 99, evidence="labelled part number 2", verified=True),
@@ -387,7 +401,7 @@ def test_numbering_adds_a_labelled_part_alone_but_not_a_bare_number():
 
 
 def test_a_numbered_title_on_the_same_page_as_a_longer_bookmark_is_one_entry():
-    from stages.toc import reconcile
+    from stages.structure import reconcile
 
     marks = [_e("Background Introduced by Michael Stonebraker", 1, 5), _e("Languages Introduced by Joe", 1, 30)]
     counted = [Entry("Chapter 1: Background", 1, 5, evidence="labelled chapter number 1", verified=True)]
@@ -408,12 +422,12 @@ def test_a_toc_that_needs_the_card_on_the_cpu_lane_goes_to_the_gpu_lane(monkeypa
     monkeypatch.setattr(book.collect, "needs_raster", lambda book_id: False)
     monkeypatch.setattr(book.collect, "collect", needs_card)
     monkeypatch.setattr(job_queue, "enqueue", lambda type, options, **kw: handed.append((type, options)) or 7)
-    result = book.run_toc({"book_id": 3, "force": True, "_job_id": 1})
-    assert result["toc_scan_job_id"] == 7
-    assert handed == [("toc_scan", {"book_id": 3, "what": ["toc"], "force": True, "run": False})]
+    result = book.run_structure({"book_id": 3, "force": True, "_job_id": 1})
+    assert result["structure_scan_job_id"] == 7
+    assert handed == [("structure_scan", {"book_id": 3, "what": ["structure"], "force": True, "run": False})]
 
 
-def test_a_forced_recollection_forces_every_stage_it_chains(monkeypatch):
+def test_a_forced_recollection_forces_every_stage_it_chains_past_a_failed_layout(monkeypatch):
     import job_queue
     from job_handlers import book
 
@@ -421,12 +435,14 @@ def test_a_forced_recollection_forces_every_stage_it_chains(monkeypatch):
     monkeypatch.setattr(job_queue, "enqueue", lambda type, options, **kw: handed.append((type, options)) or 1)
     monkeypatch.setattr(job_queue, "is_cancelled", lambda id: False)
     monkeypatch.setattr(book.intake, "probe", lambda book_id: {"text_layer": {"pages": 1, "without_layer": []},
-                                                               "toc_sources": []})
-    book.run_intake({"book_id": 3, "then": ["metadata", "toc"], "force": True, "_job_id": 1})
+                                                               "structure_sources": []})
+    book.run_intake({"book_id": 3, "then": ["metadata", "structure"], "force": True, "_job_id": 1})
     monkeypatch.setattr(book.resolve, "current_version", lambda book_id: None)
     monkeypatch.setattr(book.resolve, "collect", lambda *a, **kw: 9)
-    book.run_metadata({"book_id": 3, "what": ["metadata", "toc"], "force": True, "_job_id": 2})
-    assert [(t, o["force"]) for t, o in handed] == [("metadata", True), ("toc", True)]
+    book.run_metadata({"book_id": 3, "what": ["metadata", "structure"], "force": True, "_job_id": 2})
+    monkeypatch.setattr(book.layout, "collect_page", lambda *a, **kw: 1 / 0)
+    book.run_layout_page({"book_id": 3, "what": ["structure"], "force": True, "_job_id": 3})
+    assert [(t, o["force"]) for t, o in handed] == [("metadata", True), ("layout_page", True), ("structure", True)]
 
 
 
@@ -463,7 +479,7 @@ def test_the_books_contents_beats_a_longer_chapter_contents_and_a_year_is_no_pag
 def test_a_plate_both_without_a_layer_and_garbled_counts_once_toward_a_scan():
     from types import SimpleNamespace
 
-    from stages.toc import scan
+    from stages.structure import scan
 
     plates = list(range(1, 27))
     book = SimpleNamespace(pages=100, text_layer={"without_layer": plates, "garbled": plates})
@@ -471,7 +487,7 @@ def test_a_plate_both_without_a_layer_and_garbled_counts_once_toward_a_scan():
 
 
 def test_a_label_and_one_word_at_a_page_s_top_opens_a_chapter_and_a_label_in_a_phrase_does_not():
-    from stages.toc.sources import labelled
+    from stages.structure.sources import labelled
 
     heads = {2: ["درس اول", "معرفی کردن"], 5: ["درس خواندن کلاس"], 9: ["درس دوم"], 12: ["درس 3"], 16: ["درس سوّم"],
              56: [". درس هفتم"]}
@@ -482,38 +498,38 @@ def test_a_label_and_one_word_at_a_page_s_top_opens_a_chapter_and_a_label_in_a_p
 
 
 def test_ignored_bookmarks_neither_stop_a_raster_read_nor_serve_as_the_eval_s_gold(stand, tmp_path):
-    from evaluation import toc_run
+    from evaluation import structure_run
 
     pages = [text_page("Cover", bookmark="IMG_0001.jpg"), text_page("Text", bookmark="IMG_0002.jpg"),
              text_page("More text", bookmark="IMG_0003.jpg")]
     kept, _ = intake.register([(build(tmp_path / "kept.pdf", pages), "kept.pdf")])
-    assert not collect.needs_raster(kept) and len(toc_run._gold(kept)) == 3
+    assert not collect.needs_raster(kept) and len(structure_run._gold(kept)) == 3
     ignored, _ = intake.register([(build(tmp_path / "ign.pdf", [*pages, text_page("End")]), "ign.pdf")],
-                                 {"toc.ignore_bookmarks": True})
-    assert collect.needs_raster(ignored) and toc_run._gold(ignored) == []
+                                 {"structure.ignore_bookmarks": True})
+    assert collect.needs_raster(ignored) and structure_run._gold(ignored) == []
 
 
 def test_a_root_bookmark_the_knob_drops_does_not_count_as_contents_for_a_raster_read(stand, tmp_path):
-    from evaluation import toc_run
+    from evaluation import structure_run
 
     pages = [text_page("Title", bookmark="The book"), {**text_page("Text", bookmark="Only chapter"), "level": 1},
              text_page("More text")]
     kept, _ = intake.register([(build(tmp_path / "kept.pdf", pages), "kept.pdf")])
     assert not collect.needs_raster(kept)
     rootless, _ = intake.register([(build(tmp_path / "root.pdf", [*pages, text_page("End")]), "root.pdf")],
-                                  {"toc.skip_root_bookmark": True})
-    assert collect.needs_raster(rootless) and [e.title for e in toc_run._gold(rootless)] == ["Only chapter"]
+                                  {"structure.skip_root_bookmark": True})
+    assert collect.needs_raster(rootless) and [e.title for e in structure_run._gold(rootless)] == ["Only chapter"]
 
 
 def test_named_contents_pages_that_hold_text_are_read_as_text_not_as_a_picture(stand, tmp_path):
     book_id, _ = intake.register([(build(tmp_path / "named.pdf", [text_page("Title"), contents(),
                                                                   text_page("One")]), "named.pdf")],
-                                 {"toc.contents_pages": [[2, 2]]})
+                                 {"structure.contents_pages": [[2, 2]]})
     assert not collect.needs_raster(book_id)
 
 
 def test_a_word_repeated_before_chapter_numbers_is_found_inside_merged_lines_and_a_name_in_the_prose_is_not():
-    from stages.toc.sources import labelled
+    from stages.structure.sources import labelled
 
     pages = {p: f"Синдер погледна Кай. Синдер каза нещо. Текст на страница {p}." for p in range(1, 31)}
     pages[2] = "…обуща.\nГлава първа Винтът в глезена на Синдер беше се покрил"
@@ -525,7 +541,7 @@ def test_a_word_repeated_before_chapter_numbers_is_found_inside_merged_lines_and
 
 
 def test_a_heading_is_set_apart_when_its_glyphs_stand_on_their_own_line_centred_and_prose_is_not():
-    from stages.toc.sources import labelled
+    from stages.structure.sources import labelled
 
     def run(text, top, x=0.1, height=0.02):
         out = []
@@ -541,7 +557,7 @@ def test_a_heading_is_set_apart_when_its_glyphs_stand_on_their_own_line_centred_
 
 
 def test_a_scanned_contents_set_as_text_blocks_with_bracketed_pages_is_read_and_its_heading_dropped():
-    from stages.toc import scan
+    from stages.structure import scan
 
     def block(kind, text):
         return {"type": kind, "content": [{"type": "text", "content": text}]}
@@ -577,8 +593,8 @@ def _headed_book(pages: int = 100) -> dict[int, dict]:
 
 
 def test_headings_give_the_chapters_by_their_look_and_leave_the_running_heads_out():
-    from stages.toc import scan
-    from stages.toc.sources import headings
+    from stages.structure import scan
+    from stages.structure.sources import headings
 
     got = headings.read(_headed_book(), 100, scan._text)
     assert got.failed is None and got.source == "headings"
@@ -589,7 +605,7 @@ def test_headings_give_the_chapters_by_their_look_and_leave_the_running_heads_ou
 
 
 def test_a_title_stays_a_heading_when_its_running_heads_repeat_its_name():
-    from stages.toc.sources import headings
+    from stages.structure.sources import headings
 
     bl = [{"page": 3, "type": "paragraph_title", "text": "Introduction", "size": 30, "words": 1}]
     bl += [{"page": p, "type": "header", "text": "Introduction", "size": 12, "words": 1} for p in range(4, 9)]
@@ -598,8 +614,8 @@ def test_a_title_stays_a_heading_when_its_running_heads_repeat_its_name():
 
 
 def test_title_page_lines_before_a_contents_at_the_start_are_no_chapters():
-    from stages.toc import scan
-    from stages.toc.sources import headings
+    from stages.structure import scan
+    from stages.structure.sources import headings
 
     layouts = _headed_book()
     for page, text in ((1, "A Series Of Books"), (2, "The Publisher House"), (3, "Contents")):
@@ -614,7 +630,7 @@ def test_title_page_lines_before_a_contents_at_the_start_are_no_chapters():
 
 
 def test_a_long_title_counts_as_a_heading_only_when_typed_as_a_document_title():
-    from stages.toc.sources import headings
+    from stages.structure.sources import headings
 
     long = " ".join(["word"] * 23)
     bl = [{"page": 3, "type": "doc_title", "text": long, "size": 30, "words": 23},
@@ -623,8 +639,8 @@ def test_a_long_title_counts_as_a_heading_only_when_typed_as_a_document_title():
 
 
 def test_too_few_headings_of_one_look_are_no_chapters():
-    from stages.toc import scan
-    from stages.toc.sources import headings
+    from stages.structure import scan
+    from stages.structure.sources import headings
 
     layouts = {p: {"blocks": [_block("paragraph_title", f"Chapter {p} Topic", 30, 0.1)]} for p in (10, 40, 70)}
     got = headings.read(layouts, 100, scan._text)
@@ -633,35 +649,68 @@ def test_too_few_headings_of_one_look_are_no_chapters():
 
 def test_a_book_without_contents_takes_its_headings_before_failing_unless_the_knob_says_no(stand, tmp_path,
                                                                                           monkeypatch):
-    from stages.toc import scan
+    from stages.structure import scan
 
     monkeypatch.setattr(scan, "recognise", lambda book_id, book_pages, cached_only=False: _headed_book())
     book_id, _ = intake.register([(build(tmp_path / "h.pdf", [text_page(f"Page {n}") for n in range(100)]),
                                    "headed.pdf")])
     source, entries, evidence = collect.choose(book_id)
-    assert source == "headings" and evidence["headings"]["notes"]["chapters"] == 6
+    assert source == "headings" and evidence["headings"]["notes"]["nodes"] == 6
     assert collect.choose(book_id, off=("headings",))[0] == "whole_book"
     off, _ = intake.register([(build(tmp_path / "o.pdf", [text_page(f"Page {n}") for n in range(101)]), "off.pdf")],
-                             {"toc.from_headings": False})
+                             {"structure.from_headings": False})
     with pytest.raises(Final):
         collect.choose(off)
 
 
 def test_more_chapters_than_half_the_pages_are_no_structure():
-    from stages.toc import scan
-    from stages.toc.sources import headings
+    from stages.structure import scan
+    from stages.structure.sources import headings
 
     layouts = {p: {"blocks": [_block("paragraph_title", f"Topic {p}", 30, 0.1)]} for p in range(1, 21)}
     got = headings.read(layouts, 20, scan._text)
     assert got.failed and "a page" in got.failed and not got.entries
 
 
-def test_chapters_under_a_contents_bookmark_are_chapters_with_their_levels_kept():
-    marks = [Entry("Cover", 1, 1), Entry("Table of contents", 1, 6),
-             *[Entry(f"{n}. Topic", 2, 10 * n) for n in range(1, 4)], Entry("Index", 1, 90)]
-    got = collect.rows(marks, "bookmarks", 100)
-    assert [(r["title"], r["level"], r["kind"]) for r in got] == [
-        ("Cover", 1, "chapter"), ("Table of contents", 1, "part"), ("1. Topic", 2, "chapter"),
-        ("2. Topic", 2, "chapter"), ("3. Topic", 2, "chapter"), ("Index", 1, "chapter")]
-    two = [Entry("Contents", 1, 3), Entry("One", 2, 5), Entry("Two", 2, 9), Entry("Body", 1, 12)]
-    assert [r["kind"] for r in collect.rows(two, "bookmarks", 20)] == ["chapter", "section", "section", "chapter"]
+def test_a_contents_is_found_by_its_shape_and_a_list_after_it_keeps_its_pages(stand, tmp_path):
+    entries = {"lines": ["Inleiding 5", "Eerste deel 12", "Tweede deel 25", "Derde deel 38", "Besluit 52"]}
+    figures = {"lines": ["Kaart van het dorp 3", "Het oude huis 8", "De haven 14", "De markt 21"]}
+    imprint = {"lines": ["Postbus 820", "Uitgeverij 2018", "Gedrukt 2019"]}
+    path = build(tmp_path / "v.pdf", [text_page("Titel"), imprint, entries, figures,
+                                      *[text_page(f"Pagina {n}") for n in range(56)]])
+    book_id, _ = intake.register([(path, "v.pdf")])
+    found = printed_contents.read(intake.files_of(book_id), None)
+    assert found.notes["pages_found"] == [3, 4] and found.notes["pages"] == [3]
+    assert [e.title for e in found.entries][:2] == ["Inleiding", "Eerste deel"]
+
+
+def test_contents_running_heads_and_folio_lines_are_known_by_repeat_and_number_not_by_word():
+    import pdf
+
+    def line(text, size=10.0):
+        return pdf.Line(text, 50.0, 100.0, size, False)
+
+    lines = {7: [line("Inhoud 7"), line("Inleiding 9"), line("Deel een 30")],
+             8: [line("Inhoud 8"), line("Deel twee 60"), line("Deel drie 90")],
+             13: [line("Hoofdstuk 8 Gevolgen 489"), line("Slot 495")],
+             21: [line("Hoofdstuk 8 Gevolgen 489"), line("Register 500")]}
+    assert printed_contents._running_heads([7, 8], lines) == {"inhoud"}
+    assert printed_contents._running_heads([13, 21], lines) == set()
+    assert printed_contents._own_folio(line("Inhoud • 3"), 3) and not printed_contents._own_folio(line("Slot 495"), 3)
+
+
+def test_an_empty_label_list_matches_no_title(monkeypatch):
+    from stages.structure.sources import headings, numbering
+
+    empty = {"text_layer": {"numbering": {"part": [], "chapter": []}}}
+    monkeypatch.setattr(numbering, "conf", lambda: empty)
+    monkeypatch.setattr(headings, "conf", lambda: empty)
+    numbering.label_pattern.cache_clear()
+    headings._bare_label.cache_clear()
+    try:
+        assert numbering.title_depth("Part One Something") is None
+        assert not numbering.label_pattern("part").match(" 3 Topic")
+        assert not headings._bare_label().match(" 3")
+    finally:
+        numbering.label_pattern.cache_clear()
+        headings._bare_label.cache_clear()

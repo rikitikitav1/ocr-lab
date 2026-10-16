@@ -5,7 +5,7 @@ from pathlib import Path
 import artifacts
 import net
 import settings
-from stages.toc.sources import Entry
+from stages.structure.sources import Entry
 
 REPO = "anybass/HiPS"
 COMMIT = "5ca16dd23c8087e4d00569cf05f5c2a456332bc3"
@@ -51,7 +51,7 @@ def gold(name: str) -> list[Entry]:
             continue
         out.append(Entry(",".join(parts[1:-1]).strip().strip('"'), int(parts[0]), int(parts[-1])))
     roots = [e for e in out if e.level == 1]
-    # a single entry over the whole book is the book itself, not a chapter
+    # a single entry over the whole book is the book itself, not a node
     if len(roots) == 1 and out and out[0] is roots[0] and len(out) > 1:
         out = out[1:]
     return out

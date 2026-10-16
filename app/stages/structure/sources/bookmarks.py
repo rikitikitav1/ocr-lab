@@ -3,11 +3,11 @@ import pdf
 import settings
 from orm.catalogue import BookFile
 
-from stages.toc.sources import Entry, SourceToc
+from stages.structure.sources import Entry, SourceEntries
 
 
-def read(files: list[BookFile]) -> SourceToc:
-    out = SourceToc("bookmarks")
+def read(files: list[BookFile]) -> SourceEntries:
+    out = SourceEntries("bookmarks")
     for f in files:
         for mark in pdf.outline(settings.DATA_DIR / f.file_path):
             if not mark["title"]:

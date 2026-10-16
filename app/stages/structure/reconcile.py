@@ -1,10 +1,11 @@
-# one toc from all sources: a base, the others voting and adding what it lacks; printed contents first
+# one structure from all sources: a base, the others voting and adding what it lacks; printed contents first
+import re
 from collections import Counter
 
 from rapidfuzz import fuzz
 
-from stages.toc.pages import LABEL, label_of, norm, same_words
-from stages.toc.sources import Entry
+from stages.structure.pages import LABEL, label_of, norm, same_words
+from stages.structure.sources import Entry
 
 RANK = ("printed_contents", "bookmarks", "files", "numbering")
 # numbering in running text also hits references and lists, so alone it adds only a labelled part or chapter
@@ -61,7 +62,7 @@ def reconcile(found: dict[str, list[Entry]]) -> tuple[str | None, list[Entry], d
     for source in present:
         if source == base:
             continue
-        entries = _placed(found[source])
+        entries = _joined(_placed(found[source]), merged)
         top = _top(entries)
         report["matched"][source] = 0
         for e in entries:
@@ -78,6 +79,44 @@ def reconcile(found: dict[str, list[Entry]]) -> tuple[str | None, list[Entry], d
     order = {id(e): i for i, e in enumerate(merged)}
     merged.sort(key=lambda e: (e.page, order[id(e)]))
     return base, merged, report
+
+
+def _squashed(title: str) -> str:
+    return re.sub(r"\W", "", title.lower())
+
+
+def _glued(parts: list[Entry]) -> Entry:
+    title = parts[0].title.strip()
+    for p in parts[1:]:
+        title += p.title.strip() if title.endswith("-") else " " + p.title.strip()
+    return Entry(title, parts[0].level, parts[0].page, parts[0].printed, parts[0].evidence,
+                 any(p.verified for p in parts), parts[0].source)
+
+
+def _fit(title: str, rows: list[str]) -> float:
+    return max((fuzz.ratio(_squashed(title), r) for r in rows), default=0)
+
+
+# a title split over entries of one page and level is one entry when only their join reads as a base row
+def _joined(entries: list[Entry], base: list[Entry]) -> list[Entry]:
+    out, i = [], 0
+    while i < len(entries):
+        run = [entries[i]]
+        while i + len(run) < len(entries) and (entries[i + len(run)].page, entries[i + len(run)].level) == \
+                (run[0].page, run[0].level):
+            run.append(entries[i + len(run)])
+        near = [_squashed(b.title) for b in base if abs(b.page - run[0].page) <= SAME_PAGE]
+        best, best_fit = 1, _fit(run[0].title, near)
+        if best_fit < SAME_TITLE:
+            for k in range(2, len(run) + 1):
+                if _fit(run[k - 1].title, near) >= SAME_TITLE:
+                    break
+                got = _fit(_glued(run[:k]).title, near)
+                if got >= SAME_TITLE and got > best_fit:
+                    best, best_fit = k, got
+        out.append(_glued(run[:best]) if best > 1 else run[0])
+        i += best
+    return out
 
 
 # titles and pages from the base, levels from bookmarks where matched, the rest moved onto their scale

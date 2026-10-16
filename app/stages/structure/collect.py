@@ -1,4 +1,4 @@
-# the book's toc as chapter page ranges; with no contents a short book is one chapter, a long one is not recognised
+# the book's structure as node page ranges; with no contents a short book is one node, a long one is not recognised
 import json
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -11,14 +11,15 @@ import numerals
 import pdf
 import settings
 from job_signals import Final
-from orm.catalogue import Book, TocEntry, TocVersion
+from orm.catalogue import Book, StructureNode, StructureVersion
 from orm.db import Session
+from structure import tree
 
 from stages import book_stage, intake, versions
-from stages.toc import pages, reconcile, scan
-from stages.toc.sources import (
+from stages.structure import outlines, pages, reconcile, scan
+from stages.structure.sources import (
     Entry,
-    SourceToc,
+    SourceEntries,
     book_lines,
     bookmarks,
     conf,
@@ -28,40 +29,41 @@ from stages.toc.sources import (
     numbering,
     printed_contents,
 )
-from stages.toc.sources.numbering import title_depth
+from stages.structure.sources.numbering import title_depth
 
-STAGE = "toc"
+STAGE = "structure"
 
 
 def code_hash() -> str:
-    # the toc reads the layer, running heads and numerals, so the code that reads them is its code
-    own = [*sorted((settings.APP_DIR / "stages" / "toc").rglob("*.py")), settings.APP_DIR / "model_steps.py",
+    # the structure reads the layer, running heads and numerals, so the code that reads them is its code
+    own = [*sorted((settings.APP_DIR / "stages" / "structure").rglob("*.py")), settings.APP_DIR / "model_steps.py",
            settings.APP_DIR / "stages" / "running_heads.py", settings.APP_DIR / "numerals.py",
-           settings.APP_DIR / "pdf.py"]
-    digest = code_version.files_hash(own, ("toc.yaml",))
-    digest.update(json.dumps(model_steps.steps()["toc_reader"], sort_keys=True).encode())
+           settings.APP_DIR / "pdf.py", settings.APP_DIR / "structure" / "tree.py"]
+    digest = code_version.files_hash(own, ("structure.yaml",))
+    digest.update(json.dumps(model_steps.steps()["contents_reader"], sort_keys=True).encode())
     return digest.hexdigest()[:16]
 
 
 # a book whose contents MinerU reads is stale when its build changes, as when the code does
 def inputs(book_id: int) -> artifacts.Inputs:
-    # only the knobs set on the book: a new knob at its default leaves every other book's toc fresh
-    knobs = {k: v for k, v in book_knobs.overrides(book_id).items() if k.startswith("toc.")}
+    # only the book's own structure knobs: a new knob at its default, or the reading level, leaves a structure fresh
+    knobs = {k: v for k, v in book_knobs.overrides(book_id).items()
+             if k.startswith("structure.") and k != "structure.reading_level"}
     parts = {"stage": STAGE, "code": code_hash(), "files": [f.sha256 for f in intake.files_of(book_id)],
              "knobs": knobs}
-    if scanned(book_id) or scan.raster_contents(book_id, knobs.get("toc.contents_pages"), run=False) is not None:
+    if scanned(book_id) or scan.raster_contents(book_id, knobs.get("structure.contents_pages"), run=False) is not None:
         from engines import reading
 
         parts["mineru"] = reading.build("mineru")
     return artifacts.Inputs(parts)
 
 
-def current_version(book_id: int) -> TocVersion | None:
+def current_version(book_id: int) -> StructureVersion | None:
     with Session() as session:
-        return versions.current(session, TocVersion, book_id)
+        return versions.current(session, StructureVersion, book_id)
 
 
-def _printed(files, given, lines: dict) -> tuple[SourceToc, dict]:
+def _printed(files, given, lines: dict) -> tuple[SourceEntries, dict]:
     found = printed_contents.read(files, given)
     if found.failed or not found.entries:
         return found, {}
@@ -91,11 +93,11 @@ def without_root(entries: list[Entry]) -> list[Entry]:
 
 
 # the bookmarks as every reader of them sees them, after the book's bookmark knobs
-def book_bookmarks(book_files, knobs: dict) -> SourceToc:
-    if knobs["toc.ignore_bookmarks"]:
-        return SourceToc("bookmarks", failed="ignored by the book knob toc.ignore_bookmarks")
+def book_bookmarks(book_files, knobs: dict) -> SourceEntries:
+    if knobs["structure.ignore_bookmarks"]:
+        return SourceEntries("bookmarks", failed="ignored by the book knob structure.ignore_bookmarks")
     marks = bookmarks.read(book_files)
-    if knobs["toc.skip_root_bookmark"]:
+    if knobs["structure.skip_root_bookmark"]:
         marks.entries = without_root(marks.entries)
     return marks
 
@@ -105,7 +107,7 @@ def needs_raster(book_id: int) -> bool:
     if scanned(book_id):
         return False
     knobs = book_knobs.of(book_id)
-    given = knobs["toc.contents_pages"]
+    given = knobs["structure.contents_pages"]
     book_files = intake.files_of(book_id)
     pages_found, lines = printed_contents.find_pages(book_files, given)
     text = " ".join(x.text for p in pages_found for x in lines.get(p, []))
@@ -119,7 +121,7 @@ def needs_raster(book_id: int) -> bool:
     return scan.raster_contents(book_id, given, run=False) is None
 
 
-# a scan, or a text book whose layer gave no contents, has its toc read from the raster on the GPU lane
+# a scan, or a text book whose layer gave no contents, has its structure read from the raster on the GPU lane
 def wants_raster(book_id: int) -> bool:
     return scanned(book_id) or needs_raster(book_id)
 
@@ -129,13 +131,13 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
     book_files = intake.files_of(book_id)
     total = sum(f.pages for f in book_files)
     knobs = book_knobs.of(book_id)
-    marks = SourceToc("bookmarks", failed="switched off") if "bookmarks" in off and not knobs["toc.ignore_bookmarks"] \
-        else book_bookmarks(book_files, knobs)
-    given = knobs["toc.contents_pages"]
-    label = knobs["toc.chapter_label"]
+    marks = SourceEntries("bookmarks", failed="switched off") \
+        if "bookmarks" in off and not knobs["structure.ignore_bookmarks"] else book_bookmarks(book_files, knobs)
+    given = knobs["structure.contents_pages"]
+    label = knobs["structure.chapter_label"]
     if scanned(book_id):
         printed, placement = scan.read(book_id, given)
-        counted = SourceToc("numbering", failed="a scan has no text to count numbers in")
+        counted = SourceEntries("numbering", failed="a scan has no text to count numbers in")
         heads = scan.top_blocks(book_id, total) if label else {}
     else:
         lines = book_lines(book_files)
@@ -153,6 +155,10 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
     evidence = {"pages": total, "bookmarks": asdict(marks), "printed_contents": asdict(printed),
                 "placement": placement, "files": asdict(by_file), "numbering": asdict(counted), "reconcile": report}
     if base is not None:
+        if not scanned(book_id) and "outlines" not in off:
+            found_pages = frozenset(printed.notes.get("pages") or [])
+            merged, evidence["outlines"] = outlines.fold(merged, lines, measured_offset(placement or {}), total,
+                                                         found_pages)
         return base, merged, evidence
     if label:
         labels = labelled.read(heads, label, "a recognised page" if scanned(book_id) else "the text layer")
@@ -168,7 +174,7 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
     if not scanned(book_id) and "labels" not in off and (seen := labelled.found_in(book_files, lines)) is not None:
         evidence["labels"] = asdict(seen)
         return "labels", seen.entries, evidence
-    if knobs["toc.from_headings"] and "headings" not in off:
+    if knobs["structure.from_headings"] and "headings" not in off:
         seen = headings.read(scan.recognise(book_id, list(range(1, total + 1))), total, scan._text,
                              frozenset(printed.notes.get("pages") or []))
         evidence["headings"] = asdict(seen)
@@ -212,7 +218,7 @@ def _out_of_turn(entries: list[Entry]) -> list[Entry]:
     return out
 
 
-# labelled chapters that can stand as a toc: their numbers rise and they open pages apart
+# labelled chapters that can stand as a structure: their numbers rise and they open pages apart
 def _labelled(entries: list[Entry]) -> int:
     found = [e for e in entries if title_depth(e.title) in (-1, 0)]
     if len(_out_of_turn(found)) > BACKWARDS * max(1, len(found) - 1):
@@ -226,7 +232,7 @@ def _labelled(entries: list[Entry]) -> int:
     return 0 if close > NEIGHBOURS * max(1, steps) else len(found)
 
 
-# the pages before the first entry are a section of their own, so no page of the book is left out of the toc
+# the pages before the first entry are a section of their own, so no page of the book is left out of the structure
 def with_front_matter(entries: list[Entry], files) -> list[Entry]:
     first = min((e.page for e in entries if e.page is not None), default=1)
     if first <= 1:
@@ -237,53 +243,22 @@ def with_front_matter(entries: list[Entry], files) -> list[Entry]:
     return [front, *entries]
 
 
-# a chapter is a top entry that is not a part, or an entry one level below the part it sits in
-def _kind(entry: Entry, top: int, part_level: int | None, part: bool) -> str:
-    if entry.source == "front_matter":
-        return "front_matter"
-    if part:
-        return "part"
-    level = entry.level or top
-    if level == top or (part_level is not None and level == part_level + 1):
-        return "chapter"
-    return "section"
-
-
-# the rows a toc version stores, the front matter included
-def toc_rows(entries: list[Entry], source: str, total: int, files) -> list[dict]:
+# the rows a structure version stores, the front matter included
+def structure_rows(entries: list[Entry], source: str, total: int, files) -> list[dict]:
     return rows(with_front_matter(entries, files), source, total)
-
-
-# an entry named as a contents ("Table of contents") with the chapters under it holds them as a part does
-def _holds_contents(entries: list[Entry], i: int) -> bool:
-    if entries[i].title.strip().rstrip(".:").lower() not in {h.lower() for h in conf()["contents"]["headings"]}:
-        return False
-    level = entries[i].level or 1
-    under = []
-    for x in entries[i + 1:]:
-        if (x.level or 1) <= level:
-            break
-        under.append(x)
-    return sum((x.level or 1) == level + 1 for x in under) >= conf()["contents"]["bookmark_children"]
 
 
 # an entry ends where the next one at its level or above starts; one starting on the same page ends there
 def rows(entries: list[Entry], source: str, total: int) -> list[dict]:
     top = min(e.level or 1 for e in entries)
     out = []
-    part_level = None
     for i, e in enumerate(entries):
-        level_here = e.level or top
-        part = e.source != "front_matter" and (title_depth(e.title) == -1 or _holds_contents(entries, i))
-        if part:
-            part_level = level_here
-        elif part_level is not None and level_here <= part_level:
-            part_level = None
         level = (e.level or top) - top + 1
         nxt = next((x.page for x in entries[i + 1:] if (x.level or top) <= (e.level or top)), None)
         last = total if nxt is None else max(e.page, nxt - 1)
         out.append({"ord": i + 1, "title": e.title, "level": min(level, 6), "level_source": e.source or source,
-                    "first_page": e.page, "last_page": last, "kind": _kind(e, top, part_level, part),
+                    "first_page": e.page, "last_page": last,
+                    "kind": "front_matter" if e.source == "front_matter" else "node",
                     "votes": e.votes or {source: {"level": e.level, "printed": e.printed, "evidence": e.evidence}}})
     return out
 
@@ -296,26 +271,35 @@ def measured_offset(placement: dict) -> int | None:
     return placement.get("offset") if tried and placement["verified"] * 2 > tried else None
 
 
+# each row's parent is the nearest row before it one level up, so the rows form the tree a version stores
+def with_parents(rows: list[dict]) -> list[dict]:
+    parents = tree.parents([row["level"] for row in rows])
+    return [{**row, "parent_ord": None if parent is None else rows[parent]["ord"]}
+            for row, parent in zip(rows, parents, strict=True)]
+
+
 def write_version(book_id: int, made_from: artifacts.Inputs, entries: list[dict], job_id: int | None,
                   evidence: dict) -> int:
     with Session() as session:
         versions.lock_book(session, book_id)
-        version = versions.new(session, TocVersion, book_id, made_from.key, job_id)
+        version = versions.new(session, StructureVersion, book_id, made_from.key, job_id)
         number = version.version
-        for row in entries:
-            session.add(TocEntry(toc_version_id=version.id, **row))
+        levels = [row["level"] for row in entries]
+        version.depth = tree.depth(levels)
+        for row in with_parents(entries):
+            session.add(StructureNode(structure_version_id=version.id, **row))
         session.flush()
         book_stage.settle(session, book_id)
         book = session.get(Book, book_id)
         book.page_offset = measured_offset(evidence.get("placement") or {})
-        # the result is a run on the current toc, and no run is on a version made just now
+        # the result is a run on the current structure, and no run is on a version made just now
         book.result_run_id = None
         session.commit()
         version_id = version.id
-    owner = artifacts.Owner(toc_version_id=version_id)
-    base = artifacts.version_dir(book_id, "toc", number)
+    owner = artifacts.Owner(structure_version_id=version_id)
+    base = artifacts.version_dir(book_id, STAGE, number)
     artifacts.write(owner, base, STAGE, "sources.json", json.loads(json.dumps(evidence, default=str)), made_from)
-    artifacts.write(owner, base, STAGE, "toc.json", entries, made_from)
+    artifacts.write(owner, base, STAGE, "nodes.json", entries, made_from)
     return version_id
 
 
@@ -323,12 +307,12 @@ def collect(book_id: int, job_id: int | None = None, force: bool = False, raster
     previous = current_version(book_id)
     made_from = inputs(book_id)
     # a version whose evidence never got written is not fresh: its artifacts follow the commit
-    kept = previous is not None and artifacts.find_done(artifacts.Owner(toc_version_id=previous.id), STAGE,
-                                                       "toc.json", made_from.key) is not None
+    kept = previous is not None and artifacts.find_done(artifacts.Owner(structure_version_id=previous.id), STAGE,
+                                                       "nodes.json", made_from.key) is not None
     if kept and previous.input_hash == made_from.key and not force:
         return previous.id
     source, entries, evidence = choose(book_id, raster=raster)
-    found = toc_rows(entries, source, evidence["pages"], intake.files_of(book_id))
+    found = structure_rows(entries, source, evidence["pages"], intake.files_of(book_id))
     # keyed after the work: a raster read just kept names MinerU's build, so the version is not stale at once
     return write_version(book_id, inputs(book_id), found, job_id, {"chosen": source, **evidence})
 

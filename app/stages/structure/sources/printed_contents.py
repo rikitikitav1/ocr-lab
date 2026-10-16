@@ -7,8 +7,8 @@ import pdf
 from orm.catalogue import BookFile
 
 from stages import running_heads
-from stages.toc.sources import PRINTED_AHEAD, Entry, SourceToc, book_lines, conf, pages_of, windows
-from stages.toc.sources.numbering import title_depth
+from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, book_lines, conf, pages_of, windows
+from stages.structure.sources.numbering import title_depth
 
 LEADER = r"(?:\s*(?:\.\s?|·\s?|…|_){2,}\s*|\s{2,}|\s)"
 ENTRY = re.compile(rf"^(?P<title>.*?\S){LEADER}(?P<page>{numerals.PAGE})$", re.I)
@@ -17,36 +17,76 @@ TRAILING_LEADER = re.compile(r"[\s.·…_]+$")
 INDENT_GAP = 5
 NUMBERED_SHARE = 0.5
 READ_AHEAD = 20
+# a contents' numbers mostly rise, reach across a third of the book, and start again only where another list does
+CONTENTS_RISING = 0.7
+CONTENTS_REACH = 3
+CONTENTS_FALL = 0.1
+# a block repeating at least a third of the contents' titles is the contents again, briefer or one node's
+SHARED = 3
 WATERMARK_SAMPLE = 40
 WATERMARK_SHARE = 0.6
 FOLIO = re.compile(rf"^\s*{numerals.PAGE}\s*$", re.I)
 JOIN_SLACK = 3
-
-
-def _heading_words() -> set[str]:
-    return {running_heads.norm(w) for w in conf()["contents"]["headings"]}
-
-
-# compared without spaces, since a text layer may set a heading letter by letter ("СОДЕРЖАНИ Е")
-def _is_heading(text: str) -> bool:
-    return bool(running_heads.norm(text)) and running_heads.norm(text) in _heading_words()
+# a page number with no leader, a mark that is no dash (a dash between numbers is a range), the next row's title
+ROW_MARK = re.compile(r"(?<=[^\s.·…_])\s+(\d{1,4})\s+([^\w\s.,:;()'\"’“”‐\-–—])\s+(?=\w)")
+ROW_MARK_LINES = 3
+LONE_LABEL = re.compile(r"^\(?(?:[IVXLC]+|[A-Za-z]{1,2}|\d{1,3})[.)]\)?$")
 
 
 def _numbered(lines: list[pdf.Line]) -> int:
     return sum(bool(ENTRY.match(line.text)) for line in lines)
 
 
-def _is_contents(lines: list[pdf.Line]) -> bool:
-    need = conf()["contents"]["min_lines"]
-    if sum(bool(DOTTED.search(line.text)) for line in lines) >= need:
-        return True
-    return any(_is_heading(line.text) for line in lines[:3]) and _numbered(lines) >= need
+def _is_dotted(lines: list[pdf.Line]) -> bool:
+    return sum(bool(DOTTED.search(line.text)) for line in lines) >= conf()["contents"]["min_lines"]
 
 
-# a contents run goes on while the next page still lists entries, past the window if it must
+# an entry's Arabic page inside the book (a postal box, a year are not pages); Roman pages count as entries only
+def _pages_on(lines: list[pdf.Line], total: int) -> tuple[list[int], int]:
+    arabic, entries = [], 0
+    for line in lines:
+        m = ENTRY.match(line.text)
+        if not m:
+            continue
+        page = m.group("page")
+        if not page.isdigit():
+            entries += 1
+        elif 1 <= int(page) <= total + PRINTED_AHEAD:
+            arabic.append(int(page))
+            entries += 1
+    return arabic, entries
+
+
+# a contents points forward through the book: its pages' numbers rise, stay inside it and reach across a third of it
+def _contents_like(numbers: list[int], total: int) -> bool:
+    if len(set(numbers)) < conf()["contents"]["min_lines"]:
+        return False
+    rising = sum(b >= a for a, b in zip(numbers, numbers[1:], strict=False))
+    return rising >= CONTENTS_RISING * (len(numbers) - 1) and (max(numbers) - min(numbers)) * CONTENTS_REACH >= total
+
+
+# contents by shape, no heading word: runs of pages listing entries, cut where the numbers start again, judged whole
 def _contents_pages(files: list[BookFile], lines: dict[int, list[pdf.Line]]) -> list[int]:
     total = sum(f.pages for f in files)
-    found = [p for p in sorted(lines) if _is_contents(lines[p])]
+    need = conf()["contents"]["min_lines"]
+    numbered = {}
+    for p in sorted(lines):
+        arabic, entries = _pages_on(lines[p], total)
+        if entries >= need:
+            numbered[p] = arabic
+    pieces, piece = [], []
+    for p, arabic in numbered.items():
+        restarts = piece and arabic and piece[-1][1] and arabic[0] < piece[-1][1][-1] - CONTENTS_FALL * total
+        if piece and (p != piece[-1][0] + 1 or restarts):
+            pieces.append(piece)
+            piece = []
+        piece.append((p, arabic))
+    pieces += [piece] if piece else []
+    found = [p for p in sorted(lines) if _is_dotted(lines[p])]
+    for piece in pieces:
+        if _contents_like([n for _, arabic in piece for n in arabic], total):
+            found += [p for p, _ in piece]
+    found = sorted(set(found))
     for p in list(found):
         nxt = p + 1
         while nxt <= total and nxt not in found:
@@ -81,13 +121,32 @@ def _without_page_number(text: str) -> str:
     return FOLIO_EDGE.sub("", text.strip()).strip().lower()
 
 
-# a contents heading topping several pages in the entries' size is a running head, a larger one a title
-def _running_heads(pages: list[int], lines: dict[int, list[pdf.Line]]) -> tuple[set[str], float]:
-    body = Counter(x.size for p in pages for x in lines.get(p, [])).most_common(1)
-    body_size = body[0][0] if body else 0
-    tops = Counter(_without_page_number(lines[p][0].text) for p in pages
-                   if lines.get(p) and lines[p][0].size <= body_size)
-    return {text for text, n in tops.items() if n >= 2 and _is_heading(text)}, body_size
+# by place on the page, not by the layer's order: a heading set first may come out last
+def _first_line(page_lines: list[pdf.Line]) -> pdf.Line | None:
+    return min((x for x in page_lines if not FOLIO.match(x.text)), key=lambda x: (x.top, x.x), default=None)
+
+
+def _last_line(page_lines: list[pdf.Line]) -> pdf.Line | None:
+    return max((x for x in page_lines if not FOLIO.match(x.text)), key=lambda x: (x.top, x.x), default=None)
+
+
+# a number far from the page it is printed on is an entry's page, not the page's folio
+def _far_number(line: pdf.Line, page: int) -> bool:
+    m = ENTRY.match(line.text)
+    return bool(m) and m.group("page").isdigit() and abs(int(m.group("page")) - page) > PRINTED_AHEAD
+
+
+# the line topping two or more contents pages once their folios are cut is the running head, whatever it says
+def _running_heads(pages: list[int], lines: dict[int, list[pdf.Line]]) -> set[str]:
+    tops = Counter(_without_page_number(first.text) for p in pages
+                   if (first := _first_line(lines.get(p, []))) and not _far_number(first, p))
+    return {text for text, n in tops.items() if n >= 2 and text}
+
+
+# an edge line pointing at the very page it is printed on points at the contents itself: the page's folio line
+def _own_folio(line: pdf.Line, page: int) -> bool:
+    m = ENTRY.match(line.text)
+    return bool(m) and m.group("page").isdigit() and int(m.group("page")) == page
 
 
 # a line printed on most pages of the book (a download stamp, a licence line) is never an entry
@@ -99,13 +158,11 @@ def _without_watermarks(files: list[BookFile], pages: list[int], lines: dict[int
     return {p: [x for x in lines.get(p, []) if x.text.strip() not in marks] for p in pages}
 
 
-def _running_head(line: pdf.Line, page_lines: list[pdf.Line], running: tuple[set[str], float]) -> bool:
-    words, (repeated, body_size) = _without_page_number(line.text), running
-    if line is not page_lines[0]:
-        return False
-    if words != line.text.strip().lower() and _is_heading(words):
+def _running_head(line: pdf.Line, page_lines: list[pdf.Line], repeated: set[str], page: int) -> bool:
+    if (line is _first_line(page_lines) or line is _last_line(page_lines)) and _own_folio(line, page):
         return True
-    return line.size <= body_size and words in repeated
+    return line is _first_line(page_lines) and not _far_number(line, page) and \
+        _without_page_number(line.text) in repeated
 
 
 # centred lines without page numbers (a part title over two lines) join whatever their indent
@@ -117,6 +174,12 @@ def _continues(pending: pdf.Line, line: pdf.Line, numbered: bool) -> bool:
 def _entries(page: int, lines: list[pdf.Line]) -> list[tuple[Entry, pdf.Line]]:
     out, pending = [], []
     for line in lines:
+        # a wrapped row may come out as its title lines, then its label alone, then its page number alone
+        if FOLIO.match(line.text) and len(pending) > 1 and LONE_LABEL.match(pending[-1].text):
+            title = " ".join([pending[-1].text, *(x.text for x in pending[:-1])])
+            out.append((Entry(title, None, printed=line.text.strip(), evidence=f"contents page {page}"), pending[-1]))
+            pending = []
+            continue
         m = ENTRY.match(line.text)
         # a Roman page number is lower case or follows a leader, or "Part I" reads as an entry on page I
         if m is not None and not m.group("page").isdigit() and not m.group("page").islower() \
@@ -165,7 +228,7 @@ def _indent_steps(xs: list[float]) -> dict[float, int]:
 # a book may print a brief contents and then a full one: each starts at a contents heading, the fullest wins
 
 
-# the book's own contents covers the book; a chapter's contents beside it covers that chapter, however many lines
+# the book's own contents covers the book; a node's contents beside it covers that node, however many lines
 def _reach(block: list, total: int) -> tuple[int, int]:
     numbers = _pages_of(block, total)
     return (max(numbers) - min(numbers) if numbers else 0, sum(e.printed is not None for e, _, _ in block))
@@ -177,7 +240,7 @@ def _pages_of(block: list, total: int) -> list[int]:
     return [n for n in numbers if n <= total + PRINTED_AHEAD]
 
 
-# a block whose numbers go on from the last one's is the same contents; one starting again is a chapter's own
+# a block whose numbers go on from the last one's is the same contents; one starting again is a node's own
 def _continued(blocks: list[list], total: int) -> list[list]:
     out: list[list] = []
     for block in blocks:
@@ -189,26 +252,60 @@ def _continued(blocks: list[list], total: int) -> list[list]:
     return out
 
 
+def _starts_again(block: list, page_lines: list[pdf.Line], total: int) -> bool:
+    before, now = _pages_of(block, total), _pages_on(page_lines, total)[0]
+    return bool(before and now) and now[0] < before[-1] - CONTENTS_FALL * total
+
+
+# a mark the book sets after a page number at least a few times splits its rows run together on one line
+def _row_mark(lines: list[pdf.Line]) -> str | None:
+    marks = Counter(m.group(2) for line in lines for m in ROW_MARK.finditer(line.text))
+    mark, n = marks.most_common(1)[0] if marks else (None, 0)
+    return mark if n >= ROW_MARK_LINES else None
+
+
+# each row keeps its page number; a tail without one is a title wrapped onto the next line
+def _rows(line: pdf.Line, mark: str | None) -> list[pdf.Line]:
+    cuts = [m for m in ROW_MARK.finditer(line.text) if m.group(2) == mark] if mark else []
+    tail = re.search(r"\s(\d{1,4})$", line.text)
+    numbers = [int(m.group(1)) for m in cuts] + ([int(tail.group(1))] if tail else [])
+    if not cuts or numbers != sorted(numbers):
+        return [line]
+    starts = [0, *(m.end() for m in cuts)]
+    ends = [*(m.start(2) for m in cuts), len(line.text)]
+    return [pdf.Line(line.text[a:b].strip(), line.x, line.top, line.size, line.bold) for a, b in zip(starts, ends,
+                                                                                              strict=True)]
+
+
 def parse(pages: list[int], lines: dict[int, list[pdf.Line]],
-          total: int) -> tuple[list[tuple[Entry, pdf.Line, int]], list[int]]:
+          total: int) -> tuple[list[tuple[Entry, pdf.Line, int]], list[list]]:
     blocks: list[list] = [[]]
     running = _running_heads(pages, lines)
+    sizes = Counter(x.size for p in pages for x in lines.get(p, []) if ENTRY.match(x.text))
+    body = sizes.most_common(1)[0][0] if sizes else 0
+    last_page = None
+    mark = _row_mark([x for p in pages for x in lines.get(p, [])])
     for p in pages:
-        page_lines = [x for x in lines.get(p, [])
-                      if not _running_head(x, lines[p], running) and not FOLIO.match(x.text)]
-        start = 0
-        for i, line in enumerate(page_lines):
-            if _is_heading(line.text):
-                blocks[-1] += [(e, line, p) for e, line in _entries(p, page_lines[start:i])]
-                if blocks[-1]:
-                    blocks.append([])
-                start = i + 1
-        blocks[-1] += [(e, line, p) for e, line in _entries(p, page_lines[start:])]
+        page_lines = []
+        for x in lines.get(p, []):
+            labelled = bool(page_lines) and LONE_LABEL.match(page_lines[-1].text) is not None
+            if not _running_head(x, lines[p], running, p) and (labelled or not FOLIO.match(x.text)):
+                page_lines += _rows(x, mark)
+        # a list after the contents (of tables, of cases) starts on its own page and starts its numbers again
+        opens = not blocks[-1] or p != last_page + 1 or _starts_again(blocks[-1], page_lines, total)
+        if blocks[-1] and opens:
+            blocks.append([])
+        # a block's first line set larger than its entries, with no page number, is its heading ("Contents")
+        head = _first_line(page_lines)
+        if opens and head is not None and not ENTRY.match(head.text) and head.size > body:
+            page_lines = [x for x in page_lines if x is not head]
+        last_page = p
+        blocks[-1] += [(e, line, p) for e, line in _entries(p, page_lines)]
     blocks = [_indented(b) for b in _continued([b for b in blocks if b], total)]
     if not blocks:
         return [], []
     fullest = max(blocks, key=lambda b: _reach(b, total))
-    return _headings_only(fullest), [len(b) for b in blocks if b is not fullest]
+    return _headings_only(fullest), [b for b in blocks if b is not fullest]
 
 
 # a line without a page number is a title only when set larger than the entries, so the imprint drops
@@ -250,7 +347,9 @@ def _depths(parsed: list[tuple[Entry, pdf.Line, int]]) -> list[int]:
 # levels: size and weight first, then title numbers when most entries have one, else the indent
 def levels(parsed: list[tuple[Entry, pdf.Line, int]]) -> tuple[list[Entry], str]:
     style = _styles([(e, line) for e, line, _ in parsed])
-    by_numbers = sum(_depth(e) is not None for e, _, _ in parsed) >= NUMBERED_SHARE * len(parsed)
+    # rows split out of one printed line count as that line
+    printed = {(page, line.top, line.x): e for e, line, page in reversed(parsed)}
+    by_numbers = sum(_depth(e) is not None for e in printed.values()) >= NUMBERED_SHARE * len(printed)
     if by_numbers:
         inner = _depths(parsed)
     else:
@@ -276,7 +375,7 @@ READER_PROMPT = (
 def model_read(text: str) -> list[Entry]:
     import model_steps
 
-    answer = model_steps.parse_json(model_steps.call("toc_reader", READER_PROMPT, text))
+    answer = model_steps.parse_json(model_steps.call("contents_reader", READER_PROMPT, text))
     out = []
     for item in answer.get("entries") or []:
         if not isinstance(item, dict) or not str(item.get("title") or "").strip():
@@ -288,8 +387,8 @@ def model_read(text: str) -> list[Entry]:
     return out
 
 
-def read(files: list[BookFile], given: list[list[int]] | None) -> SourceToc:
-    out = SourceToc("printed_contents")
+def read(files: list[BookFile], given: list[list[int]] | None) -> SourceEntries:
+    out = SourceEntries("printed_contents")
     pages, lines = find_pages(files, given)
     out.notes["pages"] = pages
     lines = _without_watermarks(files, pages, lines)
@@ -302,7 +401,16 @@ def read(files: list[BookFile], given: list[list[int]] | None) -> SourceToc:
         return out
     parsed, others = parse(pages, lines, sum(f.pages for f in files))
     if others:
-        out.notes["other_contents"] = others
+        out.notes["other_contents"] = [len(b) for b in others]
+    # pages before the winning block and blocks sharing its titles stay skipped; a list after it gives its pages back
+    if parsed:
+        titles = {running_heads.norm(e.title) for e, _, _ in parsed}
+        kept = {p for _, _, p in parsed}
+        for block in others:
+            if sum(running_heads.norm(e.title) in titles for e, _, _ in block) * SHARED >= len(block):
+                kept |= {p for _, _, p in block}
+        out.notes["pages"] = [p for p in pages if p in kept or p < min(kept)]
+        out.notes["pages_found"] = pages
     if sum(e.printed is not None for e, _, _ in parsed) >= conf()["contents"]["min_lines"]:
         out.entries, out.notes["levels_by"] = levels(parsed)
         out.notes["read_by"] = "parser"

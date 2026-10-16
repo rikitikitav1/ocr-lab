@@ -1,4 +1,4 @@
-# a book's chapters from the headings of its pages read as pictures: headings grouped by look, one group the chapters
+# a book's top nodes from the headings of its pages read as pictures: headings grouped by look, one group the top nodes
 import collections
 import functools
 import math
@@ -7,7 +7,7 @@ import statistics
 
 import numerals
 
-from stages.toc.sources import Entry, SourceToc, conf
+from stages.structure.sources import Entry, SourceEntries, conf
 
 TITLE_TYPES = ("doc_title", "title", "paragraph_title")
 NUMBER = rf"(?:\d{{1,3}}|{numerals.ROMAN_LABEL_UPPER})"
@@ -18,12 +18,13 @@ RUNNING = re.compile(rf"(?<!\w)(?=\w)({NUMBER})(?!\w)")
 DASHES = ("—", "-", "–")
 
 
-# a bare "Chapter 3" block, its word one of the toc's part and chapter labels or the headings' own
+# a bare "Chapter 3" block, its word one of the configured part and chapter labels
 @functools.cache
 def _bare_label() -> re.Pattern:
-    words = (*conf()["text_layer"]["numbering"]["part"], *conf()["text_layer"]["numbering"]["chapter"],
-             *conf()["scan_layer"]["headings"]["bare_labels"])
+    words = (*conf()["text_layer"]["numbering"]["part"], *conf()["text_layer"]["numbering"]["chapter"])
     alternatives = "|".join(re.escape(w) for w in words)
+    if not alternatives:
+        return re.compile(r"(?!)")
     return re.compile(rf"^(?:{alternatives})\s+(?:{NUMBER}|(?-i:[A-Z]))\.?$", re.I)
 
 
@@ -48,7 +49,7 @@ def blocks(layouts: dict[int, dict], text_of) -> list[dict]:
 def _repeats(cand: list[dict], total: int):
     c = conf()["scan_layer"]["headings"]
 
-    # a running head carries its page number and its chapter's name, so it repeats apart from the title it copies
+    # a running head carries its page number and its node's name, so it repeats apart from the title it copies
     def key(b):
         k = _norm(b["text"])
         header = b["type"] == "header"
@@ -70,7 +71,7 @@ def _repeats(cand: list[dict], total: int):
 def candidates(bl: list[dict], total: int) -> tuple[float, list[dict]]:
     c = conf()["scan_layer"]["headings"]
     body = statistics.median([b["size"] for b in bl if b["type"] == "text" and b["words"] >= 20] or [10])
-    # a block typed header is a guess from its place on the page: chapter titles at a page's top get it too
+    # a block typed header is a guess from its place on the page: node titles at a page's top get it too
     def short(b):
         return b["words"] <= c["max_words"] or (b["type"] == "doc_title" and b["words"] <= c["doc_title_max_words"])
 
@@ -157,9 +158,9 @@ def front_end(contents: frozenset[int]) -> int:
     return max(head) if head else 0
 
 
-def read(layouts: dict[int, dict], total: int, text_of, contents: frozenset[int] = frozenset()) -> SourceToc:
+def read(layouts: dict[int, dict], total: int, text_of, contents: frozenset[int] = frozenset()) -> SourceEntries:
     c = conf()["scan_layer"]["headings"]
-    out = SourceToc("headings")
+    out = SourceEntries("headings")
     _, cand = candidates(blocks(layouts, text_of), total)
     cut = front_end(contents)
     cand = [b for b in cand if b["page"] > cut]
@@ -167,32 +168,32 @@ def read(layouts: dict[int, dict], total: int, text_of, contents: frozenset[int]
 
     def spread(g):
         ps = [b["page"] for b in g]
-        return max(ps) - min(ps) >= c["chapter_spread"] * total
+        return max(ps) - min(ps) >= c["node_spread"] * total
 
-    eligible = [i for i, g in enumerate(groups) if len(g) >= c["min_chapters"] and spread(g)]
+    eligible = [i for i, g in enumerate(groups) if len(g) >= c["min_nodes"] and spread(g)]
     out.notes = {"candidates": len(cand), "groups": len(groups), "eligible": len(eligible), "front_end": cut}
     if not eligible:
-        out.failed = (f"no group of {c['min_chapters']} or more headings of one look spread over "
-                      f"{c['chapter_spread']:.0%} of the book among {len(cand)} candidates")
+        out.failed = (f"no group of {c['min_nodes']} or more headings of one look spread over "
+                      f"{c['node_spread']:.0%} of the book among {len(cand)} candidates")
         return out
     pick = next((i for i in eligible if running_number(groups[i])), eligible[0])
     entries = []
     for i, g in enumerate(groups):
-        # a larger group joins the chapters unless it runs a number (parts); a smaller one sits below them
+        # a larger group joins the top nodes unless it runs a number (parts); a smaller one sits below them
         if i < pick:
-            level = 0 if len(g) >= c["min_chapters"] and running_number(g) else 1
+            level = 0 if len(g) >= c["min_nodes"] and running_number(g) else 1
         elif i == pick:
             level = 1
         else:
             level = 2 + sum(1 for j in range(pick + 1, i) if len(groups[j]) >= 2)
         entries += [(b["page"], level, b["text"]) for b in g]
     top = min(level for _, level, _ in entries)
-    chapters = sum(level == top for _, level, _ in entries)
-    # a reference manual's every subhead taken for a chapter: more chapters than half the pages is no structure
-    if chapters > c["max_chapters_per_page"] * total:
-        out.failed = f"{chapters} chapters in {total} pages: more than {c['max_chapters_per_page']} a page"
+    tops = sum(level == top for _, level, _ in entries)
+    # a reference manual's every subhead taken for a node: more top nodes than half the pages is no structure
+    if tops > c["max_nodes_per_page"] * total:
+        out.failed = f"{tops} top nodes in {total} pages: more than {c['max_nodes_per_page']} a page"
         return out
     out.entries = [Entry(title, level - top + 1, page, evidence=f"a heading read on page {page}", verified=True,
                          source="headings") for page, level, title in sorted(entries, key=lambda e: e[0])]
-    out.notes["chapters"] = len(groups[pick])
+    out.notes["nodes"] = len(groups[pick])
     return out

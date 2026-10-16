@@ -8,21 +8,17 @@ import numerals
 import settings
 from job_signals import Deferred
 from orm.catalogue import Book
-from rapidfuzz import fuzz
 
 from stages import intake, running_heads
-from stages.toc import pages as placing
-from stages.toc.sources import PRINTED_AHEAD, Entry, SourceToc, conf, pages_of, windows
-from stages.toc.sources.numbering import title_depth
-from stages.toc.sources.printed_contents import ENTRY, TRAILING_LEADER, _heading_words
+from stages.structure import pages as placing
+from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, conf, pages_of, windows
+from stages.structure.sources.numbering import title_depth
+from stages.structure.sources.printed_contents import CONTENTS_RISING, ENTRY, TRAILING_LEADER
 
-STAGE = "toc"
+STAGE = "structure"
 FIELDS = [("tier", "standard"), ("ocr_mode", "ocr"), ("output_formats", ["middle_json"])]
 CHUNK = 30
 MIN_FOLIOS = 3
-HEADING_LIKE = 85
-# a contents page's numbers rise; misread digits and front matter in Roman leave some steps back, a table many
-CONTENTS_RISING = 0.7
 
 
 def is_scan(book: Book) -> bool:
@@ -82,7 +78,7 @@ def recognise(book_id: int, book_pages: list[int], cached_only: bool = False) ->
         raise
     out = {}
     for f, a, b in _runs(book_pages, files):
-        made_from = artifacts.Inputs({"stage": "toc_ocr", "file": f.sha256, "pages": [a, b], "fields": FIELDS,
+        made_from = artifacts.Inputs({"stage": "structure_ocr", "file": f.sha256, "pages": [a, b], "fields": FIELDS,
                                       "build": build})
         name = _kept_name(f, a, b)
         done = artifacts.find_done(owner, STAGE, name, made_from.key)
@@ -121,20 +117,18 @@ def _blocks(page: dict, kind: str) -> list[dict]:
     return [b for b in page.get("blocks", []) if b.get("type") == kind]
 
 
-# a contents heading, read with a letter lost ("ОЛАВЛЕНИЕ"), is no part of the first entry
-def _without_heading(text: str) -> str:
-    words = text.split()
-    if words and max(fuzz.ratio(running_heads.norm(words[0]), h) for h in _heading_words()) >= HEADING_LIKE:
-        return " ".join(words[1:])
-    return text
-
-
-# a line without a page number opens the next entry, unless the next line says it again (a page heading)
+# a line without a page number opens the next entry, unless the next line says it again, whole or its end
 def _joined(pending: str, text: str) -> str:
-    pending = _without_heading(pending)
-    if pending and running_heads.norm(text).startswith(running_heads.norm(pending)):
+    said, again = running_heads.norm(pending), running_heads.norm(text)
+    if said and (again.startswith(said) or (again and said.endswith(again))):
         return text
     return f"{pending} {text}".strip()
+
+
+# a line without a page number on two or more contents pages is their running head ("Contents" on each)
+def _running(texts: list[list[str]]) -> set[str]:
+    seen = Counter(k for page in texts for k in {running_heads.norm(t) for t in page if _entry(t) is None})
+    return {k for k, n in seen.items() if k and n >= 2}
 
 
 # an entry's page number after a leader, or in brackets at the end of its description: "... лазер (46)"
@@ -175,17 +169,20 @@ def _contents_like(numbers: list[int], total: int) -> bool:
 
 # index items in order; an item without a page number is the first line of a wrapped title
 def entries(recognised: dict[int, dict], total: int) -> tuple[list[Entry], list[int]]:
-    out, pending, contents_pages = [], "", []
+    found = {}
     for page in sorted(recognised):
         items = _items(recognised[page])
         numbers = _numbers(items)
         # text blocks are any page's prose, so they need as many numbered lines as a contents in the layer does
         prose = not _blocks(recognised[page], "index")
-        if not _contents_like(numbers, total) or (prose and not _spans_book(numbers, total)):
-            continue
-        contents_pages.append(page)
-        for item in items:
-            text = " ".join(_text(item).split())
+        if _contents_like(numbers, total) and (not prose or _spans_book(numbers, total)):
+            found[page] = [" ".join(_text(item).split()) for item in items]
+    running = _running(list(found.values()))
+    out, pending = [], ""
+    for page, texts in found.items():
+        for text in texts:
+            if running_heads.norm(text) in running:
+                continue
             m = _entry(text)
             if m is None or not m.group("page").isdigit():
                 pending = _joined(pending, text)
@@ -194,7 +191,7 @@ def entries(recognised: dict[int, dict], total: int) -> tuple[list[Entry], list[
             pending = ""
             if title:
                 out.append(Entry(title, None, printed=m.group("page"), evidence=f"recognised contents page {page}"))
-    return out, contents_pages
+    return out, list(found)
 
 
 # a title's numbering style, read from its shape alone: Roman, Arabic by its dots, a letter, or a labelled part
@@ -260,23 +257,23 @@ def folio_offset(recognised: dict[int, dict]) -> tuple[int | None, int]:
 
 
 # a text book without contents in its text layer: the raster is read, entries placed through the text
-def raster_contents(book_id: int, given: list[list[int]] | None, run: bool) -> SourceToc | None:
+def raster_contents(book_id: int, given: list[list[int]] | None, run: bool) -> SourceEntries | None:
     files = intake.files_of(book_id)
     recognised = contents_window(book_id, files, given, cached_only=not run)
     if recognised is None:
         return None
     found, contents_pages = entries(recognised, sum(f.pages for f in files))
     levels(found)
-    return SourceToc("printed_contents", found, failed=None if found else "no contents in the recognised pages",
+    return SourceEntries("printed_contents", found, failed=None if found else "no contents in the recognised pages",
                      notes={"pages": contents_pages, "read_by": "recognition of a text book"})
 
 
-def read(book_id: int, given: list[list[int]] | None) -> tuple[SourceToc, dict]:
+def read(book_id: int, given: list[list[int]] | None) -> tuple[SourceEntries, dict]:
     files = intake.files_of(book_id)
     total = sum(f.pages for f in files)
     recognised = contents_window(book_id, files, given)
     found, contents_pages = entries(recognised, total)
-    out = SourceToc("printed_contents", found, notes={"pages": contents_pages, "read_by": "recognition"})
+    out = SourceEntries("printed_contents", found, notes={"pages": contents_pages, "read_by": "recognition"})
     if not found:
         out.failed = "no contents in the recognised pages"
         return out, {}

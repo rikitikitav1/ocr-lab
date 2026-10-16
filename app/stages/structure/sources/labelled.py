@@ -5,7 +5,7 @@ import numerals
 import pdf
 import settings
 
-from stages.toc.sources import Entry, SourceToc
+from stages.structure.sources import Entry, SourceEntries
 
 # recognition leaves stray marks at a line's ends (". درس هفتم")
 EDGES = re.compile(r"^[\W_]+|[\W_]+$")
@@ -22,8 +22,8 @@ def is_label(text: str, label: str) -> bool:
 
 
 # `heads` maps a page to its top lines in order; the first label line on a page opens a chapter there
-def read(heads: dict[int, list[str]], label: str, where: str) -> SourceToc:
-    out = SourceToc("labels", notes={"label": label})
+def read(heads: dict[int, list[str]], label: str, where: str) -> SourceEntries:
+    out = SourceEntries("labels", notes={"label": label})
     for page in sorted(heads):
         title = next((clean(t) for t in heads[page] if is_label(t, label)), None)
         if title is not None:
@@ -116,7 +116,7 @@ CENTRED = 0.15
 LARGER = 1.1
 
 
-def found_in(files, lines: dict[int, list]) -> SourceToc | None:
+def found_in(files, lines: dict[int, list]) -> SourceEntries | None:
     by_page = {f.first_page + i: (f, i) for f in files for i in range(f.pages)}
 
     def apart(page: int, heading: str) -> bool:
@@ -127,5 +127,5 @@ def found_in(files, lines: dict[int, list]) -> SourceToc | None:
     if got is None:
         return None
     label, hits = got
-    return SourceToc("labels", [Entry(title, 1, page, evidence=f"the text layer, page {page}", verified=True,
+    return SourceEntries("labels", [Entry(title, 1, page, evidence=f"the text layer, page {page}", verified=True,
                                       source="labels") for page, title in hits], notes={"label": label})

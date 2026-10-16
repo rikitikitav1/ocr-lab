@@ -6,7 +6,7 @@ import numerals
 from rapidfuzz import fuzz
 
 from stages import running_heads
-from stages.toc.sources import Entry
+from stages.structure.sources import Entry
 
 MIN_KEY = 8
 KEY_CHARS = 40
@@ -19,7 +19,7 @@ SAME_WORDS = 95
 norm = running_heads.norm
 
 
-# repeated top and bottom lines are running heads and are not searched, but for a chapter's opening top
+# repeated top and bottom lines are running heads and are not searched, but for a node's opening top
 def page_text(lines: dict[int, list], skip: set[int]) -> dict[int, str]:
     heads = running_heads.per_page(lines)
     return {page: norm(" ".join(x.text for i, x in enumerate(page_lines) if i not in heads[page]))
@@ -36,7 +36,7 @@ def words(title: str) -> str:
 NUMBER = re.compile(rf"\d{{1,3}}(?:\.\d{{1,3}})*|{numerals.ROMAN_LABEL}")
 
 
-# a title holding only the label ("Unit I:") is the chapter whose title opens with it
+# a title holding only the label ("Unit I:") is the node whose title opens with it
 def label_of(short: str, long: str) -> bool:
     x, y = re.findall(r"[^\W_]+", short.lower()), re.findall(r"[^\W_]+", long.lower())
     return 0 < len(x) <= 2 and len(y) > len(x) and y[: len(x)] == x and bool(NUMBER.fullmatch(x[-1]))

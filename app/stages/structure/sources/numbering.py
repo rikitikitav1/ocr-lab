@@ -6,7 +6,7 @@ from functools import cache
 import numerals
 from orm.catalogue import BookFile
 
-from stages.toc.sources import Entry, SourceToc, book_lines, conf
+from stages.structure.sources import Entry, SourceEntries, book_lines, conf
 
 DOTTED = re.compile(r"^(?P<num>\d{1,2}(?:\.\d{1,3}){1,4})\.?\s*(?P<title>[^\W\d_].*)$")
 ROMAN_TITLED = re.compile(rf"^(?P<num>{numerals.ROMAN_LABEL_UPPER})\.\s+(?P<title>[^\W\d_].*)$")
@@ -17,6 +17,8 @@ MAX_TITLE_WORDS = 15
 @cache
 def label_pattern(kind: str) -> re.Pattern:
     words = "|".join(re.escape(w) for w in conf()["text_layer"]["numbering"][kind])
+    if not words:
+        return re.compile(r"(?!)")
     # a number in words is any word ("Part One", "part one"), so "Part of Speech" reads as a part too
     number = rf"\d{{1,3}}|{numerals.ROMAN_LABEL}|\w+"
     return re.compile(rf"^(?P<label>{words})\s+(?P<num>{number})\b[.:]?\s*(?P<title>.*)$", re.I)
@@ -97,8 +99,8 @@ def _candidates(lines: dict, skip_pages: set[int]) -> list[tuple[str, tuple, str
 
 
 # a number met again, stepping back, or outside its chapter is a running head or a reference
-def read(files: list[BookFile], skip_pages: set[int], lines: dict | None = None) -> SourceToc:
-    out = SourceToc("numbering")
+def read(files: list[BookFile], skip_pages: set[int], lines: dict | None = None) -> SourceEntries:
+    out = SourceEntries("numbering")
     found = _candidates(lines if lines is not None else book_lines(files), skip_pages)
     # a bare Roman number is a chapter only in books without labelled chapters; elsewhere it is a list item
     labelled = any(k == "chapter" for k, *_ in found)

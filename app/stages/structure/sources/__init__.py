@@ -37,7 +37,7 @@ class Entry:
 
 
 @dataclass
-class SourceToc:
+class SourceEntries:
     source: str
     entries: list[Entry] = field(default_factory=list)
     failed: str | None = None
@@ -46,7 +46,7 @@ class SourceToc:
 
 @cache
 def conf() -> dict:
-    return yaml.safe_load((settings.CONFIG_DIR / "toc.yaml").read_text())
+    return yaml.safe_load((settings.CONFIG_DIR / "structure.yaml").read_text())
 
 
 def book_lines(files: list[BookFile], pages: set[int] | None = None) -> dict[int, list[pdf.Line]]:
