@@ -1,7 +1,7 @@
-# a run's state from its chapters and their jobs: when to assemble a chapter, when the run moves on
+# a run's state from its pieces and their jobs: when to assemble a piece, when the run moves on
 import job_queue
 import settings
-from orm.catalogue import Chapter, Run, RunStage, RunStatus
+from orm.catalogue import Piece, Run, RunStage, RunStatus
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import select
@@ -14,26 +14,26 @@ def _round(job: Job) -> int:
     return int(job.options.get("round", 0))
 
 
-# a chapter's jobs of its latest round: a rerun's state is never read off the jobs of the round before it
+# a piece's jobs of its latest round: a rerun's state is never read off the jobs of the round before it
 def jobs_of(session, run_id: int, ord: int) -> list[Job]:
     jobs = list(session.scalars(select(Job).where(Job.run_id == run_id, Job.options["ord"].astext == str(ord))))
     last = max((_round(j) for j in jobs), default=0)
     return [j for j in jobs if _round(j) == last]
 
 
-# the readings a chapter's done read jobs of its latest round made or found, by range, and the builds that made them
+# the readings a piece's done read jobs of its latest round made or found, by range, and the builds that made them
 def round_readings(session, run_id: int, ord: int) -> tuple[dict[str, int], dict[str, dict]]:
     readings: dict[str, int] = {}
     builds: dict[str, dict] = {}
     for job in jobs_of(session, run_id, ord):
-        if job.type == "read_chapter" and job.status == "done":
+        if job.type == "read_piece" and job.status == "done":
             readings.update((job.result or {}).get("readings") or {})
             builds[job.options["engine"]] = (job.result or {}).get("build")
     return readings, builds
 
 
 def _both_read(jobs: list[Job]) -> bool:
-    return {j.options["engine"] for j in jobs if j.type == "read_chapter" and j.status == "done"} >= set(ENGINES)
+    return {j.options["engine"] for j in jobs if j.type == "read_piece" and j.status == "done"} >= set(ENGINES)
 
 
 # what a door or the worker's settling queues for a run hangs under the run's book_run job, so it shows in its tree
@@ -49,58 +49,77 @@ def _enqueue(session, run: Run, type: str, options: dict) -> int:
                              session=session)
 
 
-def _enqueue_assembly(session, run_id: int, ord: int, chapter: Chapter, jobs: list[Job]) -> None:
-    chapter.status = "running"
-    _enqueue(session, session.get(Run, run_id), "assemble_chapter",
+def _enqueue_assembly(session, run_id: int, ord: int, piece: Piece, jobs: list[Job]) -> None:
+    piece.status = "running"
+    _enqueue(session, session.get(Run, run_id), "assemble_piece",
              {"run_id": run_id, "ord": ord, "round": max(map(_round, jobs), default=0)})
 
 
-# once both engines read a chapter, its assembly goes on the queue, once
+# the piece after each one in a run read by the tree, by its piece rows; a run by pieces waits for none
+def next_ords(session, run: Run) -> dict[int, int]:
+    if run.reading_level is None:
+        return {}
+    ords = list(session.scalars(select(Piece.ord).where(Piece.run_id == run.id).order_by(Piece.ord)))
+    return dict(zip(ords, ords[1:], strict=False))
+
+
+# a piece takes its tail on the next one's first page from the next one's reading, so it waits for those reads
+def _neighbour_read(session, run_id: int, nxt: int | None) -> bool:
+    return nxt is None or not any(j.type == "read_piece" and j.status in OPEN for j in jobs_of(session, run_id, nxt))
+
+
+# once both engines read a piece and its next piece's reads ended, its assembly goes on the queue, once
 def assemble_when_read(run_id: int, ord: int) -> None:
     with Session() as session:
-        chapter = session.scalar(select(Chapter).where(Chapter.run_id == run_id, Chapter.ord == ord)
-                                 .with_for_update())
-        jobs = jobs_of(session, run_id, ord) if chapter is not None else []
-        if chapter is not None and chapter.status == "pending" and _both_read(jobs):
-            _enqueue_assembly(session, run_id, ord, chapter, jobs)
+        following = next_ords(session, session.get(Run, run_id))
+        # this read may be the last one a previous piece waited for
+        for o in sorted({ord, *(p for p, n in following.items() if n == ord)}):
+            piece = session.scalar(select(Piece).where(Piece.run_id == run_id, Piece.ord == o)
+                                     .with_for_update())
+            jobs = jobs_of(session, run_id, o) if piece is not None else []
+            if piece is not None and piece.status == "pending" and _both_read(jobs) \
+                    and _neighbour_read(session, run_id, following.get(o)):
+                _enqueue_assembly(session, run_id, o, piece, jobs)
         session.commit()
 
 
 def fail(run_id: int, ord: int, error: str | None) -> None:
     with Session() as session:
-        chapter = session.get(Chapter, (run_id, ord))
-        if chapter is not None and chapter.status != "failed":
-            chapter.status, chapter.errors = "failed", [{"error": error}]
+        piece = session.get(Piece, (run_id, ord))
+        if piece is not None and piece.status != "failed":
+            piece.status, piece.errors = "failed", [{"error": error}]
             session.commit()
 
 
-# an open chapter whose jobs all ended: read but never assembled is assembled now, anything else failed
+# an open piece whose jobs all ended: read but never assembled is assembled now, anything else failed
 def _reconcile(session, run_id: int) -> None:
-    # the chapter rows are locked like assemble_when_read locks them, so the two never queue one assembly twice
-    for chapter in session.scalars(select(Chapter).where(Chapter.run_id == run_id,
-                                                         Chapter.status.in_(("pending", "running")))
+    following = next_ords(session, session.get(Run, run_id))
+    # the piece rows are locked like assemble_when_read locks them, so the two never queue one assembly twice
+    for piece in session.scalars(select(Piece).where(Piece.run_id == run_id,
+                                                         Piece.status.in_(("pending", "running")))
                                    .with_for_update()):
-        jobs = jobs_of(session, run_id, chapter.ord)
+        jobs = jobs_of(session, run_id, piece.ord)
         if not jobs or any(j.status in OPEN for j in jobs):
             continue
-        if any(j.type == "assemble_chapter" and j.status == "done" for j in jobs):
+        if any(j.type == "assemble_piece" and j.status == "done" for j in jobs):
             continue
-        if chapter.status == "pending" and _both_read(jobs) and not any(j.type == "assemble_chapter" for j in jobs):
-            _enqueue_assembly(session, run_id, chapter.ord, chapter, jobs)
+        if piece.status == "pending" and _both_read(jobs) and not any(j.type == "assemble_piece" for j in jobs):
+            if _neighbour_read(session, run_id, following.get(piece.ord)):
+                _enqueue_assembly(session, run_id, piece.ord, piece, jobs)
             continue
         ended = [j for j in jobs if j.status in ("error", "cancelled")]
-        chapter.status = "failed"
-        chapter.errors = [{"error": f"{j.type} {j.id} {j.status}"} for j in ended] or [{"error": "no job left"}]
+        piece.status = "failed"
+        piece.errors = [{"error": f"{j.type} {j.id} {j.status}"} for j in ended] or [{"error": "no job left"}]
 
 
-# the last chapter to end moves the run on: to its metrics when every chapter is done, else to attention
+# the last piece to end moves the run on: to its metrics when every piece is done, else to attention
 def finish(run_id: int) -> None:
     with Session() as session:
         run = session.scalar(select(Run).where(Run.id == run_id).with_for_update())
         if run is None or run.stage != RunStage.ASSEMBLE:
             return
         _reconcile(session, run_id)
-        statuses = list(session.scalars(select(Chapter.status).where(Chapter.run_id == run_id)))
+        statuses = list(session.scalars(select(Piece.status).where(Piece.run_id == run_id)))
         if any(s in ("pending", "running") for s in statuses):
             session.commit()
             return
@@ -112,7 +131,7 @@ def finish(run_id: int) -> None:
         session.commit()
 
 
-# runs whose open chapters wait on no live job: a cancel or a dead worker ended their jobs without the ending hooks
+# runs whose open pieces wait on no live job: a cancel or a dead worker ended their jobs without the ending hooks
 def settle() -> list[int]:
     live = select(Job.id).where(Job.run_id == Run.id, Job.status.in_(OPEN)).exists()
     with Session() as session:
@@ -122,12 +141,12 @@ def settle() -> list[int]:
     return stuck
 
 
-# a chapter read and assembled again: its readings are kept, so only the assembly costs anything
-def _restart(session, run: Run, chapter: Chapter) -> None:
-    chapter.status, chapter.errors = "pending", []
-    next_round = max(map(_round, jobs_of(session, run.id, chapter.ord)), default=0) + 1
+# a piece read and assembled again: its readings are kept, so only the assembly costs anything
+def _restart(session, run: Run, piece: Piece) -> None:
+    piece.status, piece.errors = "pending", []
+    next_round = max(map(_round, jobs_of(session, run.id, piece.ord)), default=0) + 1
     for engine in ENGINES:
-        _enqueue(session, run, "read_chapter", {"run_id": run.id, "ord": chapter.ord, "engine": engine,
+        _enqueue(session, run, "read_piece", {"run_id": run.id, "ord": piece.ord, "engine": engine,
                                                 "round": next_round})
 
 
@@ -143,7 +162,7 @@ def to_attention(run: Run) -> None:
     run.status, run.stage = RunStatus.ATTENTION, RunStage.ATTENTION
 
 
-# a bundle that failed for good leaves the run where resume_run picks it up, as a failed chapter does
+# a bundle that failed for good leaves the run where resume_run picks it up, as a failed piece does
 def metrics_failed(run_id: int) -> None:
     with Session() as session:
         run = session.scalar(select(Run).where(Run.id == run_id).with_for_update())
@@ -172,41 +191,41 @@ def _reopen(session, run_id: int) -> Run:
 
 
 # a profile given with the rerun becomes the run's under the same lock that reopens it
-def rerun_chapter(run_id: int, ord: int, profile_id: int | None = None) -> None:
+def rerun_piece(run_id: int, ord: int, profile_id: int | None = None) -> None:
     with Session() as session:
         run = _reopen(session, run_id)
-        chapter = session.get(Chapter, (run_id, ord))
-        if chapter is None:
-            raise LookupError(f"run {run_id} has no chapter {ord}")
+        piece = session.get(Piece, (run_id, ord))
+        if piece is None:
+            raise LookupError(f"run {run_id} has no piece {ord}")
         if profile_id is not None:
             run.profile_id = profile_id
-        _restart(session, run, chapter)
+        _restart(session, run, piece)
         session.commit()
 
 
-# a stopped run goes on with the chapters that are not done; the done ones keep their artifacts
+# a stopped run goes on with the pieces that are not done; the done ones keep their artifacts
 def resume(run_id: int) -> list[int]:
     with Session() as session:
         run = _reopen(session, run_id)
-        # with no chapter taken from the toc there is nothing to resume, and the metrics would bundle an empty book
-        if session.scalar(select(Chapter.ord).where(Chapter.run_id == run_id).limit(1)) is None:
-            raise ValueError(f"run {run_id} has no chapters: it stopped before taking them from its toc; "
+        # with no piece taken from the structure there is nothing to resume, and the metrics would bundle an empty book
+        if session.scalar(select(Piece.ord).where(Piece.run_id == run_id).limit(1)) is None:
+            raise ValueError(f"run {run_id} has no pieces: it stopped before taking them from its structure; "
                              f"start a new run")
-        chapters = list(session.scalars(select(Chapter).where(Chapter.run_id == run_id, Chapter.status != "done")))
-        for chapter in chapters:
-            _restart(session, run, chapter)
-        if not chapters:
+        pieces = list(session.scalars(select(Piece).where(Piece.run_id == run_id, Piece.status != "done")))
+        for piece in pieces:
+            _restart(session, run, piece)
+        if not pieces:
             run.stage = RunStage.METRICS
             _enqueue(session, run, "book_metrics", {"run_id": run_id})
         session.commit()
-        return [c.ord for c in chapters]
+        return [c.ord for c in pieces]
 
 
-# what a retried job's chapter goes back to: a read waits for its engines again, an assembly is under way
-RETRIED_CHAPTER = {"read_chapter": "pending", "assemble_chapter": "running"}
+# what a retried job's piece goes back to: a read waits for its engines again, an assembly is under way
+RETRIED_CHAPTER = {"read_piece": "pending", "assemble_piece": "running"}
 
 
-# a failed job among the chapter's latest, back on the queue, reopens the chapter and the run as a rerun does
+# a failed job among the piece's latest, back on the queue, reopens the piece and the run as a rerun does
 def _reopen_for(session, run: Run, job: Job) -> None:
     if job.type == "book_metrics" and run.status == RunStatus.ATTENTION:
         run.status, run.stage = RunStatus.RUNNING, RunStage.METRICS
@@ -214,10 +233,10 @@ def _reopen_for(session, run: Run, job: Job) -> None:
     if job.type not in RETRIED_CHAPTER:
         return
     ord = job.options["ord"]
-    chapter = session.scalar(select(Chapter).where(Chapter.run_id == run.id, Chapter.ord == ord).with_for_update())
-    if chapter is None or chapter.status != "failed" or job.id not in {j.id for j in jobs_of(session, run.id, ord)}:
+    piece = session.scalar(select(Piece).where(Piece.run_id == run.id, Piece.ord == ord).with_for_update())
+    if piece is None or piece.status != "failed" or job.id not in {j.id for j in jobs_of(session, run.id, ord)}:
         return
-    chapter.status, chapter.errors = RETRIED_CHAPTER[job.type], []
+    piece.status, piece.errors = RETRIED_CHAPTER[job.type], []
     if not busy(run):
         start(run)
 
@@ -241,9 +260,9 @@ def cancel(run_id: int) -> list[int]:
         run = session.scalar(select(Run).where(Run.id == run_id).with_for_update())
         if run is None:
             raise LookupError(f"no run {run_id}")
-        for chapter in session.scalars(select(Chapter).where(Chapter.run_id == run_id,
-                                                             Chapter.status.in_(("pending", "running")))):
-            chapter.status, chapter.errors = "failed", [{"error": "cancelled"}]
+        for piece in session.scalars(select(Piece).where(Piece.run_id == run_id,
+                                                             Piece.status.in_(("pending", "running")))):
+            piece.status, piece.errors = "failed", [{"error": "cancelled"}]
         run.status, run.stage = RunStatus.CANCELLED, RunStage.CANCELLED
         session.commit()
     return stopped

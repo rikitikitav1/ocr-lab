@@ -1,5 +1,5 @@
 # how the chapter checks read the book; the checks report numbers, never a verdict
-chapter:
+piece:
   # a page whose layer has fewer words is read as a picture (a cover, a full-page figure) and left out of the text shares
   layer_min_words: 20
   # a heading longer than this many words is a paragraph an engine took for a heading
@@ -12,4 +12,4 @@ book:
   # a paragraph at least this long met in two chapters is text the chapters' page ranges took twice
   duplicate_min_chars: 120
   # how many chapters the report lists as the worst by each number
-  worst_chapters: 5
+  worst_pieces: 5

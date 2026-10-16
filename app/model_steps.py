@@ -13,8 +13,9 @@ def steps() -> dict:
     return yaml.safe_load((settings.CONFIG_DIR / "models.yaml").read_text())["steps"]
 
 
-def call(step: str, system: str, user: str) -> str:
-    conf = dict(steps()[step])
+# `extra` adds call parameters for this call only, such as a JSON answer asked again after prose came back
+def call(step: str, system: str, user: str, **extra) -> str:
+    conf = {**steps()[step], **extra}
     provider, model = conf.pop("provider"), conf.pop("model")
     hand = (lambda: card.hand_to(card.OLLAMA)) if provider == "ollama" else None
     return models_client.chat(provider, model, [{"role": "system", "content": system},

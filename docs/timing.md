@@ -2,7 +2,7 @@
 
 Time per page on this machine, from the job times of the raw run of the shelf
 ([experiment](experiments/2026-10-11_raw-run.md); 43 books, 14069 pages). Each book's time is summed per phase
-and divided by its pages; a chapter's reading is its first, uncached one. Job time only: the card's handovers and the
+and divided by its pages; a piece's reading is its first, uncached one. Job time only: the card's handovers and the
 wait in the queue are not in it.
 
 Books with a text layer, 37 books, 12735 pages:

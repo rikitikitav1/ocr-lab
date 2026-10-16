@@ -17,7 +17,7 @@ def test_every_assembly_pass_is_a_run_knob_whose_default_is_one_of_its_options()
 
 
 def test_book_knobs_are_listed_in_their_own_group():
-    assert "toc.contents_pages" in registry.registry()["groups"]["book"]["knobs"]
+    assert "structure.contents_pages" in registry.registry()["groups"]["book"]["knobs"]
 
 
 def test_an_unknown_knob_or_option_is_refused():
@@ -43,7 +43,7 @@ def test_the_default_profile_is_one_per_book_and_a_derived_one_records_the_manua
     assert first == again
     derived = profiles.derive(first, {"assembly.code_union": True}, {"2": {"assembly.mono_paragraphs": False}})
     assert derived["parent_id"] == first and derived["values"]["assembly.code_union"]["source"] == "manual"
-    assert derived["chapter_overrides"] == {"2": {"assembly.mono_paragraphs": False}}
+    assert derived["piece_overrides"] == {"2": {"assembly.mono_paragraphs": False}}
     assert profiles.derive(first, {"assembly.code_union": True}, {"2": {"assembly.mono_paragraphs": False}})["id"] \
         == derived["id"]
 
@@ -54,5 +54,5 @@ def test_knobs_applied_are_the_values_that_differ_from_the_registry_default():
 
     values = {"assembly.code_union": {"value": True, "source": "preset", "evidence": "preset code"},
               "assembly.mono_paragraphs": {"value": True, "source": "manual", "evidence": "derived"}}
-    got = bundle.profile_view(Profile(id=1, preset="code", sha256="x", values=values, chapter_overrides={}))
+    got = bundle.profile_view(Profile(id=1, preset="code", sha256="x", values=values, piece_overrides={}))
     assert got["knobs_applied"] == {"assembly.code_union": True}

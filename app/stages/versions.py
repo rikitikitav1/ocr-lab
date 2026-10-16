@@ -1,4 +1,4 @@
-# a book's versions of a stage (metadata, toc): the current one, and a new one made current under the book's lock
+# a book's versions of a stage (metadata, structure): the current one, and a new one made current under the book's lock
 from orm.catalogue import Book
 from sqlalchemy import func, select, update
 

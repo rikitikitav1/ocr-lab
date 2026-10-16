@@ -3,11 +3,16 @@ from typing import Literal
 
 import settings
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class Refused(ValueError):
     pass
+
+
+# a book's chain opens with metadata when it is asked for, else with the page layout, which chains the rest
+def chain_head(what: list[str]) -> str:
+    return "metadata" if "metadata" in what else "layout_page"
 
 
 class _Spec(BaseModel):
@@ -18,33 +23,38 @@ class BookOptions(_Spec):
     book_id: int
 
 
-# what intake chains after itself: metadata then toc as on submission, or toc alone when metadata waits
+# what intake chains after itself: metadata then structure as on submission, or structure alone when metadata waits
 class IntakeOptions(BookOptions):
-    then: list[Literal["metadata", "toc", "run"]] = ["metadata", "toc"]
+    then: list[Literal["metadata", "structure", "layout", "run"]] = ["metadata", "structure"]
     # a recollection collects every stage it chains again, a submission only what is stale
     force: bool = False
 
     @model_validator(mode="after")
-    def _run_after_toc(self):
-        if "run" in self.then and "toc" not in self.then:
-            raise ValueError("run starts once the toc is collected; add toc to then")
+    def _run_after_structure(self):
+        if "run" in self.then and "structure" not in self.then:
+            raise ValueError("run starts once the structure is collected; add structure to then")
         return self
 
 
 # the book-level stages a recollection can ask for, and the ones that exist so far; one place for both doors
-BOOK_STAGES = ("intake", "metadata", "toc")
-BUILT_BOOK_STAGES = ("intake", "metadata", "toc")
+BOOK_STAGES = ("intake", "metadata", "structure", "layout")
+BUILT_BOOK_STAGES = ("intake", "metadata", "structure", "layout")
 RECOLLECT_DEFAULT = ["metadata"]
 
 
 class RecollectOptions(BookOptions):
-    what: list[Literal["intake", "metadata", "toc"]] = RECOLLECT_DEFAULT
+    what: list[Literal["intake", "metadata", "structure", "layout"]] = RECOLLECT_DEFAULT
     force: bool = False
-    # a submission asking for a run starts one once the toc is collected
+    # a submission asking for a run starts one once the structure is collected
     run: bool = False
 
 
-class TocEvalOptions(_Spec):
+# the heading layout is read for one book from its current structure and page layout
+class LayoutOptions(BookOptions):
+    force: bool = False
+
+
+class StructureEvalOptions(_Spec):
     set: Literal["bookmarks_off", "hips", "longdocbench"]
     book_ids: list[int] | None = None
 
@@ -61,13 +71,13 @@ class RunOptions(_Spec):
     run_id: int
 
 
-# a chapter's jobs carry the round they belong to: 0 for the run, one more for each rerun or resume
-class ChapterOptions(RunOptions):
+# a piece's jobs carry the round they belong to: 0 for the run, one more for each rerun or resume
+class PieceOptions(RunOptions):
     ord: int
     round: int = 0
 
 
-class ReadChapterOptions(RunOptions):
+class ReadPieceOptions(RunOptions):
     ord: int
     round: int = 0
     engine: Literal[settings.ENGINES]
@@ -88,10 +98,17 @@ class ReadRangeOptions(BookOptions):
         return self
 
 
-# a finished run's chapters assembled again from their kept readings with run knobs set over the profile's
+# the deepest tree level a book is read at; deeper nodes ride inside their parent's piece
+MAX_READING_LEVEL = 9
+
+
+# a finished run's pieces assembled again from their kept readings with run knobs set over the profile's
 class ReassembleOptions(RunOptions):
     knobs: dict
     ords: list[int] | None = None
+    # cut the run at this tree level instead of its own; the re-read off cuts as runs read before it were cut
+    reading_level: int | None = Field(None, ge=0, le=MAX_READING_LEVEL)
+    reread: bool = True
 
 
 class CleanupOptions(_Spec):
@@ -108,19 +125,22 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     # metadata reads what it can on the CPU and hands the rest to the card only when a step needs it
     "metadata": (RecollectOptions, "cpu"),
     "metadata_gpu": (RecollectOptions, "gpu"),
-    "toc": (RecollectOptions, "cpu"),
-    # a scan's contents are recognised on the GPU, so its toc runs there
-    "toc_scan": (RecollectOptions, "gpu"),
+    "structure": (RecollectOptions, "cpu"),
+    # a scan's contents are recognised on the GPU, so its structure runs there
+    "structure_scan": (RecollectOptions, "gpu"),
+    # the page layout comes before the structure and the heading layout after it, both from the text layer
+    "layout_page": (RecollectOptions, "cpu"),
+    "layout_headings": (LayoutOptions, "cpu"),
     "book_run": (RunOptions, "cpu"),
     "profile_search": (RunOptions, "gpu"),
-    # a chapter's readings take the card, engine by engine; its assembly reads them back on the CPU
-    "read_chapter": (ReadChapterOptions, "gpu"),
-    "assemble_chapter": (ChapterOptions, "cpu"),
+    # a piece's readings take the card, engine by engine; its assembly reads them back on the CPU
+    "read_piece": (ReadPieceOptions, "gpu"),
+    "assemble_piece": (PieceOptions, "cpu"),
     "book_metrics": (RunOptions, "cpu"),
     "read_range": (ReadRangeOptions, "gpu"),
     "reassemble": (ReassembleOptions, "cpu"),
     "eval_run": (EmptyOptions, "cpu"),
-    "toc_eval": (TocEvalOptions, "cpu"),
+    "structure_eval": (StructureEvalOptions, "cpu"),
     # the engines read on the card, so the measurement runs on the GPU lane
     "element_eval": (ElementEvalOptions, "gpu"),
     "cleanup": (CleanupOptions, "cpu"),

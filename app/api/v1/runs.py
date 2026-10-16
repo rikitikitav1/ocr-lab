@@ -61,9 +61,9 @@ def get_run(id: int):
     return runs.get_run(id)
 
 
-@router.get("/runs/{id}/chapters")
-def run_chapters(id: int):
-    return runs.run_chapters(id)
+@router.get("/runs/{id}/nodes")
+def run_pieces(id: int):
+    return runs.run_pieces(id)
 
 
 @router.get("/runs/{id}/report")
@@ -72,8 +72,8 @@ def run_report(id: int):
 
 
 @router.get("/runs/{id}/artifacts")
-def run_artifacts(id: int, stage: str | None = None, chapter: int | None = None):
-    return runs.run_artifacts(id, stage, chapter)
+def run_artifacts(id: int, stage: str | None = None, node: int | None = None):
+    return runs.run_artifacts(id, stage, node)
 
 
 @router.get("/runs/{id}/artifacts/{artifact_id}")
@@ -101,9 +101,9 @@ class Rerun(BaseModel):
     overrides: dict | None = None
 
 
-@router.post("/runs/{id}/chapters/{ord}/rerun", status_code=202)
-def rerun_chapter(id: int, ord: int, body: Rerun):
-    return runs.rerun_chapter(id, ord, body.overrides)
+@router.post("/runs/{id}/nodes/{ord}/rerun", status_code=202)
+def rerun_node(id: int, ord: int, body: Rerun):
+    return runs.rerun_node(id, ord, body.overrides)
 
 
 @router.post("/runs/{id}/resume", status_code=202)

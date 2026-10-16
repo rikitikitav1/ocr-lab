@@ -26,9 +26,9 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 ## R3. Artifact storage and atomic stages
 
 - **Decision**: artifacts on a mounted volume under `data/`: book-level stages per version
-  `data/books/<book_id>/<metadata|toc>/v<N>/...`, run stages per run
-  `data/runs/<book_id>/<run_id>/<stage>/[<chapter>/]...`. Every file is written to a `.tmp` sibling,
-  fsynced and renamed into place; then a row in `artifacts` records path, sha256, stage, chapter,
+  `data/books/<book_id>/<metadata|structure>/v<N>/...`, run stages per run
+  `data/runs/<book_id>/<run_id>/<stage>/[<piece>/]...`. Every file is written to a `.tmp` sibling,
+  fsynced and renamed into place; then a row in `artifacts` records path, sha256, stage, piece,
   input hash, profile hash and engine builds. A stage is done when its manifest row exists and the
   file sha matches.
 - **Rationale**: FR-020 to FR-025: rename is atomic on one filesystem, so a crash never leaves a
@@ -41,14 +41,14 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 
 - **Decision**: one `jobs` table, claim with `SELECT ... FOR UPDATE SKIP LOCKED`, two lanes:
   `gpu` (one worker thread, serial, owns the card) and `cpu` (N threads, default 4). Job types are
-  stage-sized: `intake`, `metadata`, `toc`, `assemble_chapter`, `book_metrics`, `profile_search`,
-  `eval_run`. A book run is a parent job that enqueues its stage jobs; chapter assembly fans out one
-  job per chapter. Retries, `Deferred` and `Final` semantics as in rag-lab, except the attempt budget: 3 to 5 per stage from
+  stage-sized: `intake`, `metadata`, `structure`, `assemble_piece`, `book_metrics`, `profile_search`,
+  `eval_run`. A book run is a parent job that enqueues its stage jobs; piece assembly fans out one
+  job per piece. Retries, `Deferred` and `Final` semantics as in rag-lab, except the attempt budget: 3 to 5 per stage from
   `config/budgets.yaml` (FR-057) instead of one global `MAX_ATTEMPTS=3`; backoff
   `60*attempts` s as in rag-lab.
 - **Fixes over rag-lab**, from its friction journal:
-  - a worker restart killed the running job and lost it: stage and chapter checkpoints (R3) make a
-    restart cost at most one chapter, and `requeue_stale` picks the job up again;
+  - a worker restart killed the running job and lost it: stage and piece checkpoints (R3) make a
+    restart cost at most one piece, and `requeue_stale` picks the job up again;
   - jobs were found by polling: `pg_notify` on every state change, and a `wait_job` door
     (long-poll, REST and MCP) that returns when the job or any child finishes;
   - the worker silently ran old code: the worker runs from a copy of `app/` and `config/` made at
@@ -61,10 +61,10 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
     door, there are no exec-only scripts for normal work.
 - **GPU handover**: reuse rag-lab's supervisor pattern unchanged: each converter container runs
   `supervisor.py` with `take` and `let_go`; the `gpu` lane calls `take` before a reading and
-  `let_go` when switching engines. Chapter jobs are ordered by engine within a book to cut
+  `let_go` when switching engines. Piece jobs are ordered by engine within a book to cut
   handovers.
 - **Alternatives**: Celery or RQ (another broker, no transactional enqueue with the catalogue);
-  one job per book (a restart redoes the book, no per-chapter visibility).
+  one job per book (a restart redoes the book, no per-piece visibility).
 
 ## R5. Reusing what rag-lab downloaded
 
@@ -94,14 +94,14 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 ## R7. Conversion engines and the internal document model
 
 - **Decision**: Docling (docling-serve 1.35.0 in the reused image) for text-layer pages, MinerU
-  4.0.7 for pages without a text layer; engine per chapter or page range is a knob. Engines are
-  called per chapter page range (long chapters split at a knob-set page count, with continuation
+  4.0.7 for pages without a text layer; engine per piece or page range is a knob. Engines are
+  called per piece page range (long pieces split at a knob-set page count, with continuation
   marked), never per fixed 50 or 100 page piece. Engine output is translated by an adapter into
   ocr-lab's own document model: a pydantic tree of blocks (heading with level and level source,
   paragraph, code, table, list, figure with image ref, caption, note, page marker). Writers read
   only this model.
-- **Rationale**: Principle V (engine quirks stop at the adapter); FR-042 and FR-043 (chapters are
-  the unit, levels come from the table of contents); the `#######` and per-piece style ranking
+- **Rationale**: Principle V (engine quirks stop at the adapter); FR-042 and FR-043 (pieces are
+  the unit, levels come from the structure); the `#######` and per-piece style ranking
   defects in rag-lab came from trusting engine levels inside fixed pieces.
 - **Alternatives**: DoclingDocument as the internal model (convenient, but MinerU output and our
   level sources would have to be forced into Docling's schema; DoclingDocument becomes an output
@@ -112,7 +112,7 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 - **Decision**: start `app/engines/` as a copy of rag-lab's engines module (converter client with
   `take_once`, `let_go`, `reading`; `converter_tools` for the docling-serve and MinerU HTTP
   APIs; card handover `hand_to`; the OpenAI-compatible model client) and `converters/supervisor.py`,
-  then change it where ocr-lab differs: page ranges per chapter instead of fixed pieces, build
+  then change it where ocr-lab differs: page ranges per node instead of fixed pieces, build
   stamp and timings recorded per reading into the artifact manifest, adapters into the own
   document model.
 - **Rationale**: owner's choice; the module already handles card handover, hung tools, upload
@@ -148,7 +148,7 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
   series, links to other editions), while each site added parsing, rate limits and bans. Every value
   now comes from the book itself; the code stays in git history.
 
-## R9. Table of contents sources and reconciliation
+## R9. Structure sources and reconciliation
 
 - **Decision**: sources, each a knob with its own extractor and score:
   bookmarks (pypdfium2 outline), printed contents (rag-lab's dot-leader parser plus a model reading
@@ -160,7 +160,7 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
   Reconciliation matches entries across sources by normalised title (rapidfuzz) and page,
   resolves printed page numbers to file pages by the offset that maximises matches, keeps per
   entry the level of the highest-ranked source that has it, and stamps that source (FR-009).
-  Filtering removes front and back matter that is not a chapter (contents pages, index, ads for
+  Filtering removes front and back matter that is not body text (contents pages, index, ads for
   other books, blank pages) by a classifier knob.
 - **Rationale**: in the rung study, bookmarks exist in all 22 bookmark books, printed contents with
   dot leaders in only 5 of 22, numbering covers a median 6% but agrees 100% where it fires; the
@@ -185,8 +185,8 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 - **Decision**: the knob registry is `config/knobs.yaml` (groups, knobs, options, one-line help,
   probe name, cost class) with each option bound to a registered Python function. Presets are
   `config/presets/*.yaml`. Search is mechanical: probes run first (cheap, CPU) and pick the preset
-  and the knobs worth trying; then coordinate search over those knobs on a sample of chapters
-  (first, longest, one with code, one with figures), each candidate scored by the same chapter
+  and the knobs worth trying; then coordinate search over those knobs on a sample of pieces
+  (first, longest, one with code, one with figures), each candidate scored by the same piece
   checks the report uses; best values are frozen and the full book runs. A model is called only
   by probes that need it (contents pages without dot leaders, subject). Budget per book (number of
   candidates, GPU minutes) is a knob.
@@ -198,9 +198,9 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
 ## R11. Quality measures
 
 - **Decision**:
-  - structure: chapters found against the reconciled table of contents (recall and level
-    agreement), levels within 1..6, no chapter below its own sections, toc sub-entries found out of
-    those listed (no page threshold for a flat chapter);
+  - structure: nodes found against the reconciled structure (recall and level
+    agreement), levels within 1..6, no piece below its own sub-nodes, sub-nodes found out of
+    those listed (no page threshold for a flat piece);
   - text fidelity on text pages: the share of layer words lost and the share of words not in the
     layer, kept apart rather than folded into one F1, with running heads the engines set aside left
     out;
@@ -209,7 +209,7 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
     calibrated on text books run as scans (FR-049);
   - images and links: every link resolves, every file referenced, decorative images (same image
     hash on many pages) excluded;
-  - chapters and the book are reported in numbers with the worst chapters named, no verdict label
+  - pieces and the book are reported in numbers with the worst pieces named, no verdict label
     (owner's decision, 2026-10-10).
 - **Alternatives**: word similarity only (stays ~98% while structure is wrong).
 
@@ -236,14 +236,14 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
   `db/schema.sql` (rag-lab `real_db.py` pattern); door tests through FastAPI `TestClient` and the
   MCP client; stage tests on small fixture PDFs generated in tests (pypdfium2 cannot write, so
   fixtures are built with reportlab) plus a handful of real pages; a kill-and-resume test that
-  stops a worker mid-chapter and compares bundles (SC-005); ruff with rag-lab's rule set;
+  stops a worker mid-piece and compares bundles (SC-005); ruff with rag-lab's rule set;
   `scripts/check.sh` runs ruff, then pytest.
 - **Alternatives**: testcontainers (slower, rag-lab does fine without).
 
 ## R14. Performance and scale
 
 - **Decision**: no time target in this feature (spec: run time not bounded, runs resume). Every
-  stage and chapter records seconds and GPU seconds so targets can be set after the first
+  stage and piece records seconds and GPU seconds so targets can be set after the first
   evaluation run. Scale: one owner; shelf of 135 PDFs in 34 folders, 2074 gold PDFs; evaluation
   set starts at about 25 books.
 
@@ -259,9 +259,9 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
   children's book, a school textbook and a poetry collection are easy to find and join the set
   before the first evaluation run, to check that shared behaviour assumes no genre (FR-050).
 
-## R16. External gold sets for the table-of-contents stage
+## R16. External gold sets for the structure stage
 
-- **Decision**: measure the toc stage on its own, before chapter assembly exists, on two external
+- **Decision**: measure the structure stage on its own, before piece assembly exists, on two external
   sets next to our bookmark books:
   - HiPS (github.com/anybass/HiPS): PDFs of doctrinal legal textbooks with ground-truth TOCs as
     `Level, Heading, Page`, levels up to 7; code MIT, data CC BY-NC 4.0, so it is fetched into

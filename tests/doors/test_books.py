@@ -38,7 +38,7 @@ def test_submit_twice_returns_the_same_book(client, inbox):
     assert jobs and {j["book_id"] for j in jobs} == {first.json()["id"]}
     assert "intake" in client.get(f"/v1/books/{first.json()['id']}").json()["stages"]
     assert "gpu_holders" in client.get("/v1/queue").json()
-    assert client.get(f"/v1/books/{first.json()['id']}").json()["stale"] == {"metadata": False, "toc": False}
+    assert client.get(f"/v1/books/{first.json()['id']}").json()["stale"] == {"metadata": False, "structure": False}
 
 
 def test_paths_outside_shelf_are_refused(client, stand, tmp_path):
@@ -81,7 +81,7 @@ def test_volume_order_reads_roman_numbers_and_puts_words_last():
 
 
 def test_a_shelf_snapshot_names_the_books_whose_toc_or_metadata_moved(client, inbox, monkeypatch):
-    from stages.toc import collect
+    from stages.structure import collect
 
     monkeypatch.setattr(resolve, "gather", _fake_sources("Found title"))
     path = build(inbox / "h.pdf", [text_page("One", bookmark="One"), text_page("Two", bookmark="Two")])
@@ -97,7 +97,7 @@ def test_a_shelf_snapshot_names_the_books_whose_toc_or_metadata_moved(client, in
     collect.collect(book["id"], force=True)
     unchanged = client.get(f"/v1/shelf/snapshots/{taken['id']}/changes").json()
     assert unchanged["moved"] == [] and unchanged["with_new_versions"] == 1
-    entries = client.get(f"/v1/books/{book['id']}/toc").json()["entries"][:-1]
+    entries = client.get(f"/v1/books/{book['id']}/structure").json()["entries"][:-1]
     rows = [{k: e[k] for k in ("ord", "title", "level", "level_source", "first_page", "last_page", "kind", "votes")}
             for e in entries]
     collect.write_version(book["id"], collect.inputs(book["id"]), rows, None, {"chosen": "printed_contents"})
@@ -105,8 +105,8 @@ def test_a_shelf_snapshot_names_the_books_whose_toc_or_metadata_moved(client, in
     changes = client.get(f"/v1/shelf/snapshots/{taken['id']}/changes",
                          params={"book_ids": [book["id"], still["id"]]}).json()
     assert changes["books"] == 2 and [m["book_id"] for m in changes["moved"]] == [book["id"]]
-    toc, meta = changes["moved"][0]["toc"], changes["moved"][0]["metadata"]
-    assert toc["base"] == ["bookmarks", "printed_contents"] and [r["title"] for r in toc["removed"]] == ["Two"]
+    got, meta = changes["moved"][0]["structure"], changes["moved"][0]["metadata"]
+    assert got["base"] == ["bookmarks", "printed_contents"] and [r["title"] for r in got["removed"]] == ["Two"]
     assert meta["fields"]["title"]["after"] == {"value": "Hand title", "source": "manual"}
     assert client.get("/v1/shelf/snapshots/999999/changes").status_code == 404
 
@@ -115,52 +115,73 @@ def test_toc_is_collected_alone_and_read_through_the_door(client, inbox):
     import job_queue
 
     path = build(inbox / "r.pdf", [text_page("One", bookmark="One"), text_page("Two", bookmark="Two")])
-    book = client.post("/v1/books", json={"file_paths": [str(path)], "then": ["toc"]}).json()
-    assert client.get(f"/v1/books/{book['id']}/toc").status_code == 404
-    job = client.post(f"/v1/books/{book['id']}/recollect", json={"what": ["toc"]}).json()["job_id"]
-    assert job_queue.get(job).type == "toc"
-    from stages.toc import collect
+    book = client.post("/v1/books", json={"file_paths": [str(path)], "then": ["structure"]}).json()
+    assert client.get(f"/v1/books/{book['id']}/structure").status_code == 404
+    job = client.post(f"/v1/books/{book['id']}/recollect", json={"what": ["structure"]}).json()["job_id"]
+    assert job_queue.get(job).type == "layout_page"
+    from stages.structure import collect
 
     collect.collect(book["id"])
-    toc = client.get(f"/v1/books/{book['id']}/toc").json()
-    assert [(e["title"], e["first_page"], e["last_page"]) for e in toc["entries"]] == [("One", 1, 1), ("Two", 2, 2)]
-    assert toc["chosen"] == "bookmarks"
-    assert client.get(f"/v1/books/{book['id']}").json()["toc"] == {"version": toc["version"], "base": "bookmarks"}
-    assert client.get(f"/v1/books/{book['id']}/toc", params={"source": "bookmarks"}).json()["chosen"] == "bookmarks"
-    assert client.get(f"/v1/books/{book['id']}/toc", params={"source": "nope"}).status_code == 404
+    got = client.get(f"/v1/books/{book['id']}/structure").json()
+    assert [(e["title"], e["first_page"], e["last_page"]) for e in got["entries"]] == [("One", 1, 1), ("Two", 2, 2)]
+    assert got["chosen"] == "bookmarks"
+    assert [e["parent_ord"] for e in got["entries"]] == [None, None] and got["depth"] == 1
+    assert client.get(f"/v1/books/{book['id']}").json()["structure"] == {"version": got["version"], "base": "bookmarks"}
+    by_source = client.get(f"/v1/books/{book['id']}/structure", params={"source": "bookmarks"}).json()
+    assert by_source["chosen"] == "bookmarks"
+    assert client.get(f"/v1/books/{book['id']}/structure", params={"source": "nope"}).status_code == 404
 
 
 def test_knobs_at_submission_and_later(client, inbox):
     pdf = build(inbox / "k.pdf", [text_page(str(i)) for i in range(12)])
     book = client.post("/v1/books", json={"file_paths": [str(pdf)],
-                                          "knobs": {"toc.contents_pages": [[3, 4]],
+                                          "knobs": {"structure.contents_pages": [[3, 4]],
                                                     "metadata.title_pages.head": 5}}).json()
-    assert book["knobs"] == {"toc.contents_pages": [[3, 4]], "metadata.title_pages.head": 5}
+    assert book["knobs"] == {"structure.contents_pages": [[3, 4]], "metadata.title_pages.head": 5}
     changed = client.patch(f"/v1/books/{book['id']}/knobs",
                            json={"set": {"metadata.title_pages.tail": 2}, "unset": ["metadata.title_pages.head"]})
     assert changed.json()["effective"]["metadata.title_pages.head"] == 20
     assert changed.json()["effective"]["metadata.title_pages.tail"] == 2
 
 
+def test_a_file_that_is_not_a_whole_pdf_is_refused_and_nothing_is_stored(client, inbox):
+    pdf = build(inbox / "whole.pdf", [text_page("1"), text_page("2")])
+    stored = set((settings.DATA_DIR / "files").rglob("*.pdf"))
+    cut = inbox / "cut.pdf"
+    cut.write_bytes(pdf.read_bytes()[: len(pdf.read_bytes()) // 3])
+    text = inbox / "notes.pdf"
+    text.write_text("not a pdf at all")
+    downloading = inbox / "book.pdf.crdownload"
+    downloading.write_bytes(pdf.read_bytes())
+    for path, says in ((cut, "not a readable PDF"), (text, "no %PDF- header"), (downloading, "takes .pdf files")):
+        refused = client.post("/v1/books", json={"file_paths": [str(path)]})
+        assert refused.status_code == 400 and says in refused.json()["error"]["message"]
+    upload = client.post("/v1/books/upload", files={"files": ("scan.djvu", pdf.read_bytes())})
+    assert upload.status_code == 400 and ".djvu" in upload.json()["error"]["message"]
+    assert set((settings.DATA_DIR / "files").rglob("*.pdf")) == stored
+
+
 def test_bad_knobs_are_refused(client, inbox):
     pdf = build(inbox / "b.pdf", [text_page("1"), text_page("2")])
     assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": {"nope": 1}}).status_code == 400
-    out_of_range = {"toc.contents_pages": [[1, 50]]}
+    out_of_range = {"structure.contents_pages": [[1, 50]]}
     assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": out_of_range}).status_code == 400
-    not_a_switch = {"toc.from_headings": "yes"}
+    not_a_switch = {"structure.from_headings": "yes"}
     assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": not_a_switch}).status_code == 400
+    not_a_level = {"structure.reading_level": True}
+    assert client.post("/v1/books", json={"file_paths": [str(pdf)], "knobs": not_a_level}).status_code == 400
     run_without_toc = client.post("/v1/books", json={"file_paths": [str(pdf)], "then": ["metadata", "run"]})
-    assert run_without_toc.status_code == 400 and "add toc" in run_without_toc.json()["error"]["message"]
+    assert run_without_toc.status_code == 400 and "add structure" in run_without_toc.json()["error"]["message"]
 
 
 def test_given_contents_pages_mark_printed_contents(stand, inbox):
     from stages import intake
 
     pdf = build(inbox / "c.pdf", [text_page(str(i)) for i in range(6)])
-    book, _ = intake.register([(pdf, "c.pdf")], {"toc.contents_pages": [[2, 3]]})
+    book, _ = intake.register([(pdf, "c.pdf")], {"structure.contents_pages": [[2, 3]]})
     probed = intake.probe(book)
     assert probed["has_printed_contents"] is True
-    assert probed["toc_sources"]["contents_pages_given"] == [[2, 3]]
+    assert probed["structure_sources"]["contents_pages_given"] == [[2, 3]]
 
 
 def test_original_title_is_optional_and_not_missing(client, inbox, monkeypatch):
@@ -197,11 +218,11 @@ def test_recollect_with_run_passes_it_down_the_chain_and_needs_the_toc(client, i
     def options(answer):
         return client.get(f"/v1/jobs/{answer.json()['job_id']}").json()["options"]
 
-    assert options(client.post(url, json={"what": ["toc"], "run": True}))["run"] is True
-    assert options(client.post(url, json={"what": ["metadata", "toc"], "run": True}))["run"] is True
+    assert options(client.post(url, json={"what": ["structure"], "run": True}))["run"] is True
+    assert options(client.post(url, json={"what": ["metadata", "structure"], "run": True}))["run"] is True
     assert "run" in options(client.post(url, json={"what": ["intake"], "run": True}))["then"]
-    assert options(client.post(url, json={"what": ["toc"]}))["run"] is False
-    many = client.post("/v1/books/recollect", json={"ids": [book["id"]], "what": ["toc"], "run": True}).json()
+    assert options(client.post(url, json={"what": ["structure"]}))["run"] is False
+    many = client.post("/v1/books/recollect", json={"ids": [book["id"]], "what": ["structure"], "run": True}).json()
     assert client.get(f"/v1/jobs/{many['jobs'][str(book['id'])]}").json()["options"]["run"] is True
 
 
@@ -236,25 +257,25 @@ def test_toc_eval_scores_the_contents_against_bookmarks_switched_off(client, inb
     from stages import intake
 
     intake.probe(book["id"])
-    assert client.post("/v1/eval/toc", json={"set": "longdocbench"}).status_code == 400
+    assert client.post("/v1/eval/structure", json={"set": "longdocbench"}).status_code == 400
     unknown = {"set": "bookmarks_off", "book_ids": [book["id"], 999999]}
-    assert client.post("/v1/eval/toc", json=unknown).status_code == 404
-    job = client.post("/v1/eval/toc", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
-    result = evaluation.run_toc_eval({**job_queue.get(job).options, "_job_id": job})
-    assert result["chapters"] == 3 and result["chapters_found"] == 3
+    assert client.post("/v1/eval/structure", json=unknown).status_code == 404
+    job = client.post("/v1/eval/structure", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
+    result = evaluation.run_structure_eval({**job_queue.get(job).options, "_job_id": job})
+    assert result["top_nodes"] == 3 and result["top_nodes_found"] == 3
     assert result["rows"][0]["source"] == "printed_contents"
     job_queue.complete(job, result=result)
-    other = client.post("/v1/eval/toc", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
+    other = client.post("/v1/eval/structure", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
     compare = {"job_a": job, "job_b": other}
-    assert client.get("/v1/eval/toc/compare", params=compare).status_code == 400
-    worse = {**result, "chapters_found": 2, "rows": [{**result["rows"][0], "chapters_found": 2}],
-             "books_with_missed_chapters": [{"book_id": book["id"], "missed": [{"title": "Chapter 2 Part number 2"}]}]}
+    assert client.get("/v1/eval/structure/compare", params=compare).status_code == 400
+    worse = {**result, "top_nodes_found": 2, "rows": [{**result["rows"][0], "top_nodes_found": 2}],
+             "books_with_missed_top_nodes": [{"book_id": book["id"], "missed": [{"title": "Chapter 2 Part number 2"}]}]}
     job_queue.complete(other, result=worse)
-    same = client.get("/v1/eval/toc/compare", params={"job_a": job, "job_b": job}).json()
+    same = client.get("/v1/eval/structure/compare", params={"job_a": job, "job_b": job}).json()
     assert same["moved"] == [] and same["unchanged"] == 1
-    moved = client.get("/v1/eval/toc/compare", params=compare).json()
-    assert moved["totals"]["chapters_found"] == {"a": 3, "b": 2, "delta": -1}
-    assert [(m["book_id"], m["changed"]) for m in moved["moved"]] == [(book["id"], ["chapters_found", "missed"])]
+    moved = client.get("/v1/eval/structure/compare", params=compare).json()
+    assert moved["totals"]["top_nodes_found"] == {"a": 3, "b": 2, "delta": -1}
+    assert [(m["book_id"], m["changed"]) for m in moved["moved"]] == [(book["id"], ["missed", "top_nodes_found"])]
     assert moved["moved"][0]["b"]["missed"] == ["Chapter 2 Part number 2"]
 
 
@@ -272,22 +293,22 @@ def test_a_toc_version_without_its_evidence_is_collected_again(client, inbox):
     from orm.catalogue import Artifact
     from orm.db import Session
     from sqlalchemy import delete
-    from stages.toc import collect
+    from stages.structure import collect
 
     path = build(inbox / "k.pdf", [text_page("One", bookmark="One"), text_page("Two", bookmark="Two")])
     book = client.post("/v1/books", json={"file_paths": [str(path)], "then": []}).json()
     first = collect.collect(book["id"])
     assert collect.collect(book["id"]) == first
     with Session() as session:
-        session.execute(delete(Artifact).where(Artifact.toc_version_id == first))
+        session.execute(delete(Artifact).where(Artifact.structure_version_id == first))
         session.commit()
-    assert client.get(f"/v1/books/{book['id']}/toc", params={"source": "bookmarks"}).status_code == 404
+    assert client.get(f"/v1/books/{book['id']}/structure", params={"source": "bookmarks"}).status_code == 404
     assert collect.collect(book["id"]) != first
 
 
 def test_a_scans_toc_goes_stale_when_the_mineru_build_changes(client, inbox, monkeypatch):
     from engines import converter
-    from stages.toc import collect
+    from stages.structure import collect
 
     path = build(inbox / "s.pdf", [text_page("One"), text_page("Two")])
     book = client.post("/v1/books", json={"file_paths": [str(path)], "then": []}).json()
@@ -299,7 +320,7 @@ def test_a_scans_toc_goes_stale_when_the_mineru_build_changes(client, inbox, mon
 
 
 def test_metadata_collected_again_keeps_a_ready_book_ready(client, inbox, monkeypatch):
-    from stages.toc import collect
+    from stages.structure import collect
 
     path = build(inbox / "st.pdf", [text_page("One", bookmark="One"), text_page("Two", bookmark="Two")])
     book = client.post("/v1/books", json={"file_paths": [str(path)], "then": []}).json()

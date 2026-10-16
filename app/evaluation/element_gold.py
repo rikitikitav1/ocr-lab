@@ -122,7 +122,7 @@ def _tags_outside_code(text: str) -> str:
 
 
 def plain(markdown: str) -> str:
-    # the writer's comments (chapter marks, figures not kept) are not the book's text
+    # the writer's comments (node marks, figures not kept) are not the book's text
     text = re.sub(r"<!--.*?-->", " ", markdown, flags=re.S)
     text = _tags_outside_code(unicodedata.normalize("NFKC", text).translate(TYPOGRAPHY))
     # cross-references and anchors pandoc left unresolved are the gold's own artefacts

@@ -54,6 +54,19 @@ def test_code_names_no_spec_numbers():
     assert not found, "spec numbers in code:\n" + "\n".join(found)
 
 
+TASK_ID = re.compile(r"\bT\d{3}\b")
+
+
+# task ids live in tasks.md alone; a doc says what was done in words
+def test_docs_name_no_task_ids():
+    found = []
+    for path in [ROOT / "README.md", *(ROOT / "docs").rglob("*.md")]:
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if TASK_ID.search(line):
+                found.append(f"{path.relative_to(ROOT)}:{n}: {line.strip()[:80]}")
+    assert not found, "task ids in docs:\n" + "\n".join(found)
+
+
 DOORS = {"pdf.py", "engines/converter_tools.py", "models_client.py"}
 STAGES = ("stages", "evaluation", "job_handlers")
 RAW = re.compile(r"^\s*(?:import|from)\s+(pypdfium2|httpx|openai|text_clean)\b", re.MULTILINE)

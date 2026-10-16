@@ -1,7 +1,7 @@
 # how long a book's run takes and when it starts, from what the stand's finished runs cost per page
 import statistics
 
-from orm.catalogue import Book, Chapter, Run, RunStatus
+from orm.catalogue import Book, Piece, Run, RunStatus
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import func, select
@@ -23,11 +23,11 @@ def _costs(session) -> dict[str, list[float]]:
     done = select(Run).where(Run.status == RunStatus.DONE).order_by(Run.id.desc()).limit(LOOKED_AT)
     for run in session.scalars(done):
         jobs = session.execute(select(Job.type, Job.elapsed).where(Job.run_id == run.id, Job.status == "done")).all()
-        reads = [e or 0 for t, e in jobs if t == "read_chapter"]
+        reads = [e or 0 for t, e in jobs if t == "read_piece"]
         book = session.get(Book, run.book_id)
         if not reads or min(reads) < CACHED_READ or not book.pages:
             continue
-        total = sum(e or 0 for t, e in jobs if t in ("read_chapter", "assemble_chapter", "book_metrics"))
+        total = sum(e or 0 for t, e in jobs if t in ("read_piece", "assemble_piece", "book_metrics"))
         out["scan" if _scanned(book) > book.pages / 2 else "text"].append(total / book.pages)
     return out
 
@@ -61,8 +61,8 @@ def estimate(book_id: int, run_id: int | None = None) -> dict:
         for run in session.scalars(waiting.order_by(Run.id)):
             if run_id is not None and run.id >= run_id:
                 continue
-            counts = dict(session.execute(select(Chapter.status, func.count()).where(Chapter.run_id == run.id)
-                                          .group_by(Chapter.status)).all())
+            counts = dict(session.execute(select(Piece.status, func.count()).where(Piece.run_id == run.id)
+                                          .group_by(Piece.status)).all())
             left = 1 - counts.get("done", 0) / sum(counts.values()) if counts else 1
             cost = _seconds(session.get(Book, run.book_id), spreads, "median")
             if cost is None:

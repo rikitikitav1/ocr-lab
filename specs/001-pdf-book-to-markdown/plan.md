@@ -7,11 +7,11 @@
 ## Summary
 
 A stand under Docker Compose takes a PDF book (text or scanned), catalogues it with complete
-metadata, builds a reconciled table of contents from every source it can find, assembles a
-per-book profile of knobs by mechanical probes and a sampled search, assembles the book chapter
-by chapter through Docling or MinerU into its own document model, and writes a Markdown bundle
+metadata, builds a reconciled structure (a tree of nodes) from every source it can find, assembles a
+per-book profile of knobs by mechanical probes and a sampled search, assembles the book piece
+by piece through Docling or MinerU into its own document model, and writes a Markdown bundle
 with images, the resolved profile and a quality report. Every stage writes atomic artifacts with a
-manifest in Postgres, so any run resumes from the last finished stage or chapter. Work goes
+manifest in Postgres, so any run resumes from the last finished stage or piece. Work goes
 through a Postgres job queue with a serial GPU lane and a parallel CPU lane; everything is reachable
 through an HTTP API and the same operations as MCP tools. Engines and model weights are the ones
 rag-lab already holds. Decisions and their reasons: [research.md](research.md).
@@ -36,7 +36,7 @@ TestClient and MCP client for doors, a kill-and-resume stand test; ruff
 
 **Project Type**: web service (API plus worker) with MCP tools, no frontend
 
-**Performance Goals**: none fixed in this feature (spec); every stage and chapter records seconds
+**Performance Goals**: none fixed in this feature (spec); every stage and piece records seconds
 and GPU seconds so targets can be set after the first evaluation run (research R14)
 
 **Constraints**: one GPU shared with rag-lab, only one stand holds the converters at a time; no
@@ -53,9 +53,9 @@ overwritten, removed only by an explicit cleanup
 | principle | how the plan meets it | status |
 |---|---|---|
 | I. Autonomous Conversion | one `POST /books/{id}/runs` produces the bundle; profile search runs inside the stand; failures still produce a bundle whose numbers show the loss | pass |
-| II. Book Profile of Knobs | `config/knobs.yaml` registry, presets, immutable profiles with source and evidence per value, chapter overrides | pass |
+| II. Book Profile of Knobs | `config/knobs.yaml` registry, presets, immutable profiles with source and evidence per value, piece overrides | pass |
 | III. Measured Quality | report schema in `contracts/bundle.md`; structure metrics are first-class; search scores with the report's own checks | pass |
-| IV. Structure Matches the Book | toc stage reconciling bookmarks, printed contents (recognised on scans), chapter files and numbering, level source stamped per entry, chapters as the unit, levels from toc | pass |
+| IV. Structure Matches the Book | structure stage reconciling bookmarks, printed contents (recognised on scans), chapter files and numbering, level source stamped per node, the structure's nodes as the unit, levels from the structure | pass for the levels, the tree in phase 14 |
 | V. Format-Agnostic Core | own document model; engine adapters; Markdown writer reads only the model | pass |
 | VI. Gated Shared Behaviour | evaluation sets, gates registered before runs, per-member deltas, unexpected-change count | pass |
 | VII. Reproducible Runs | profile sha, engine build stamps, code hash on every run; model calls cached | pass |
@@ -104,23 +104,26 @@ app/
 ├── api/v1/                   # books, runs, profiles, jobs, eval, stand routers
 ├── use_cases/                # what routes and tools call; no HTTP inside
 ├── worker.py                 # lanes gpu and cpu, code hash stamp
-├── job_handlers/             # book.py (intake, metadata, toc chain), run.py, evaluation.py
+├── job_handlers/             # book.py (intake, metadata, layout, structure chain), run.py, evaluation.py
 ├── job_queue.py              # claim, retry, defer, notify, wait
 ├── job_specs.py              # pydantic option specs per job type
 ├── stages/
 │   ├── intake.py             # sha, pages, text layer map, bookmarks, contents probe
 │   ├── metadata/             # resolve.py, file_metadata.py, title_pages.py,
 │   │                         # model_reader.py, language.py, candidates.py (field list)
-│   ├── toc/                  # sources/*.py, pages.py (printed pages to book pages), scan.py, reconcile.py, collect.py
+│   ├── structure/            # the structure: sources/*.py, pages.py (printed pages to book pages), scan.py, reconcile.py, collect.py
+│   ├── layout/               # page.py (body, slots, notes), headings.py (level styles from pins), collect.py
 │   ├── profile_search.py     # probes, presets, sampled coordinate search
-│   ├── assemble.py           # one chapter: engine, adapter, rules, checks
-│   └── book_metrics.py       # aggregate, whole-book checks, numbers, bundle
+│   ├── assemble.py           # one piece: engine, adapter, rules, checks
+│   ├── run_pieces.py         # the run's pieces cut from the structure at the reading level
+│   ├── run_state.py          # piece jobs and statuses of a run
+│   └── bundle.py             # whole-book numbers, report, bundle
 ├── engines/                  # borrowed from rag-lab and adapted: converter client, card handover, adapters, model client
 ├── document/                 # document model (pydantic blocks)
 ├── rules/                    # knob option implementations that transform the model
 ├── probes/                   # knob probes
 ├── writers/markdown.py
-├── quality/                  # chapter checks, scan measures, book numbers
+├── quality/                  # piece checks, scan measures, book numbers
 ├── evaluation/               # sets, gates, comparison
 ├── artifacts.py              # atomic write, manifest, input hash, resume lookup
 ├── models_client.py          # OpenAI-compatible model client with cache
@@ -136,7 +139,7 @@ config/
 ├── quality.yaml
 ├── budgets.yaml              # attempts per stage
 ├── metadata.yaml             # book knob defaults (title-page window)
-├── toc.yaml                  # toc sources: contents search, then text_layer and scan_layer rules
+├── structure.yaml            # structure sources: contents search, then text_layer and scan_layer rules
 ├── tesseract_languages.yaml  # book languages to Tesseract data for Docling's OCR
 ├── engines.yaml              # the fields each engine is called with
 ├── net.yaml                  # retry pauses, set-aside time
@@ -171,18 +174,24 @@ Follows the spec priorities; each step ends runnable and measured.
 
 1. **P0**: compose, migrations, queue and worker with lanes, artifacts and manifest, intake and
    metadata stages, books doors, `wait_job`, stand door.
-2. **P1**: toc stage (bookmarks, printed contents and their recognition on scans, chapter files,
+2. **P1**: structure stage (bookmarks, printed contents and their recognition on scans, chapter files,
    numbering; typography, catalogue and model later), measured against bookmarks before assembly,
    document model, engine adapters, Markdown writer, then a detection scheme per element (code,
    tables, formulas, running heads, images) measured on rag-lab `converter_gold` before any rule,
-   chapter assembly with default preset, book metrics, report, bundle.
-3. **P2**: resume at stage and chapter level and the kill-and-resume test; it comes before profile
+   piece assembly with default preset, book metrics, report, bundle.
+3. **P2**: resume at stage and piece level and the kill-and-resume test; it comes before profile
    search because search multiplies run time and must be cheap to interrupt.
-4. **P3**: knob registry loading, probes, presets, sampled search, candidates, chapter rerun with
+4. **P3**: knob registry loading, probes, presets, sampled search, candidates, node rerun with
    overrides.
 5. **P4**: evaluation sets, gates, comparison, `bookmarks_off` and `as_scan` modes.
 6. **P5**: doors needed by an external agent to add a knob (registry listing, evaluation on a
    subset, unexpected-change count); the first knob added this way is the acceptance test.
+7. **Structure as a tree and the book's layout** (FR-063, FR-064): the two layouts beside the
+   system; then the tree in five steps, each gated on the shelf: parent and depth beside `kind`;
+   assembly, run and bundle by the tree, the engines reading in today's units and the tree cut at
+   its nodes' heading lines; `kind` and the part and chapter lists gone; the internal names
+   (stage, tables, config, knobs, response fields) renamed from toc and chapter to structure and
+   node; docs, README, diagrams and contracts.
 
 Git init happens before step 1: `.gitignore` with `creds-shared.db`, `data/`, `.env`.
 

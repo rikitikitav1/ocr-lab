@@ -44,7 +44,7 @@ def get_job(id: int) -> dict:
 BRIEF_ROWS = 50
 
 
-# a run of many chapters has thousands of jobs, so a wait gives counts and the jobs not done unless asked for all
+# a run of many pieces has thousands of jobs, so a wait gives counts and the jobs not done unless asked for all
 def _brief(rows: list[dict]) -> dict:
     counts: dict = {}
     for r in rows:
@@ -54,7 +54,7 @@ def _brief(rows: list[dict]) -> dict:
     return {"counts": counts, "not_done": not_done[:BRIEF_ROWS], "not_done_total": len(not_done)}
 
 
-# a run waiting in attention says why, its job errors and failed chapters, so the caller needs no second call
+# a run waiting in attention says why, its job errors and failed pieces, so the caller needs no second call
 @tool("wait_job", "GET /v1/jobs/{id}/wait",
       "Blocks until a job and the jobs under it finish, its run needs attention, or `timeout` seconds pass. "
       "Returns counts per type and status, the jobs not done (errors first) and why stopped runs stopped; "
@@ -89,7 +89,7 @@ def cancel_jobs(ids: list[int]) -> dict:
 
 
 @tool("retry_jobs", "POST /v1/jobs/retry",
-      "Gives failed or cancelled jobs a fresh attempt budget and reopens their chapters and runs; returns the "
+      "Gives failed or cancelled jobs a fresh attempt budget and reopens their pieces and runs; returns the "
       "ids changed.")
 def retry_jobs(ids: list[int]) -> dict:
     return {"changed": run_state.retry(ids)}

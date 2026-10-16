@@ -46,7 +46,7 @@ curl -s localhost:8100/v1/runs/<run>/report | jq '.numbers, .images'
 ```
 
 Expect: bundle under `data/bundles/1/<run>/` with `.md`, `images/`, `profile.yaml`, `report.json`;
-`structure.chapter_recall` against bookmarks; `images.broken_links == 0`; every value in
+`numbers.pieces_done` equal to `numbers.pieces`; `images.broken_links == 0`; every value in
 `profile.yaml` carries a source and evidence.
 
 ## 4. Move the bundle (SC-004)
@@ -59,21 +59,21 @@ Expect: zero broken links, zero unreferenced images.
 
 ## 5. Kill and resume (User Story 2, SC-005)
 
-Start a run on a long book, wait until `GET /runs/<id>/chapters` shows some chapters done, then
+Start a run on a long book, wait until `GET /runs/<id>/nodes` shows some nodes done, then
 `docker compose kill worker && docker compose up -d worker`, then
-`POST /runs/<id>/resume`. Expect: done chapters keep their artifacts (same sha), only the
-interrupted chapter reruns, and the final bundle is byte-identical to an uninterrupted run of the
+`POST /runs/<id>/resume`. Expect: done pieces keep their artifacts (same sha), only the
+interrupted piece reruns, and the final bundle is byte-identical to an uninterrupted run of the
 same book and profile (test `tests/stand/test_kill_resume.py`).
 
-## 6. Rerun one chapter (User Story 1, scenario 6)
+## 6. Rerun one node (User Story 1, scenario 6)
 
 ```bash
-curl -s -XPOST localhost:8100/v1/runs/<run>/chapters/4/rerun \
+curl -s -XPOST localhost:8100/v1/runs/<run>/nodes/4/rerun \
      -d '{"overrides": {"blocks.sidebars": "blockquote"}}' -H 'content-type: application/json'
 ```
 
-Expect: only chapter 4 artifacts are new; book metrics recomputed; report shows the override as
-`chapters: [4]`.
+Expect: only the artifacts of the piece holding node 4 are new; book metrics recomputed; the answer names
+`nodes_rerun`, and the report shows the override under `profile.piece_overrides`.
 
 ## 7. Evaluation with a gate (User Story 4)
 

@@ -18,9 +18,9 @@ def test_jobs_doors(stand, client):
 
 def test_job_types_name_their_lane_options_budget_and_whether_the_worker_runs_them(client):
     types = {t["type"]: t for t in client.get("/v1/job_types").json()}
-    assert types["read_chapter"]["lane"] == "gpu" and types["read_chapter"]["attempts"] == 5
-    assert {"run_id", "ord", "engine"} <= set(types["read_chapter"]["options"]["properties"])
-    assert types["read_chapter"]["built"] and not types["profile_search"]["built"]
+    assert types["read_piece"]["lane"] == "gpu" and types["read_piece"]["attempts"] == 5
+    assert {"run_id", "ord", "engine"} <= set(types["read_piece"]["options"]["properties"])
+    assert types["read_piece"]["built"] and not types["profile_search"]["built"]
 
 
 def test_the_stand_names_the_code_a_live_worker_runs_even_when_it_is_idle(client):

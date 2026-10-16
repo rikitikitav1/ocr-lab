@@ -1,5 +1,5 @@
-from stages.toc import reconcile
-from stages.toc.sources import Entry
+from stages.structure import reconcile
+from stages.structure.sources import Entry
 
 
 def _e(title, level, page, verified=True, evidence=""):
@@ -46,3 +46,13 @@ def test_numbering_alone_never_makes_a_base_and_a_page_far_apart_is_a_conflict()
     marks = [_e("Setup", 1, 10), _e("Usage", 1, 24)]
     _, _, report = reconcile.reconcile({"printed_contents": printed, "bookmarks": marks})
     assert report["conflicts"] == [{"title": "Usage", "printed_contents": 20, "bookmarks": 24}]
+
+
+def test_a_title_the_bookmarks_split_on_one_page_is_one_entry_and_a_whole_neighbour_stays_apart():
+    printed = [_e("Unit VI: Distinguishing Between IncomeProducing Activities and Personal Consumption", 1, 521),
+               _e("Glossary", 1, 681)]
+    marks = [_e("Unit VI:", 1, 521), _e("Distinguishing Between Income-", 1, 521),
+             _e("Producing Activities and Personal Consumption", 1, 521), _e("Glossary", 1, 681), _e("B", 1, 681)]
+    _, merged, report = reconcile.reconcile({"printed_contents": printed, "bookmarks": marks})
+    assert [e.title for e in merged] == [*(p.title for p in printed), "B"]
+    assert merged[0].votes["bookmarks"]["page"] == 521

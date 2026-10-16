@@ -5,17 +5,19 @@ import book_knobs
 import job_queue
 import job_specs
 import numerals
+import pdf
+import pypdfium2 as pdfium
 import settings
 from job_signals import Deferred
 from mcp_tools import tool
-from orm.catalogue import Book, BookFile, MetadataField, MetadataVersion, Run, TocVersion
+from orm.catalogue import Book, BookFile, MetadataField, MetadataVersion, Run, StructureVersion
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import select
 from stages import eta, file_order, intake, versions
 from stages.metadata import fields, resolve
 from stages.metadata.candidates import REQUIRED, SOUGHT
-from stages.toc import collect, evidence
+from stages.structure import collect, evidence
 
 
 def _allowed(path: Path) -> Path:
@@ -29,6 +31,26 @@ def _allowed(path: Path) -> Path:
 
 
 ORDERS = ("given", "by_number")
+# what a submission takes; other formats are later features
+SUFFIXES = (".pdf",)
+
+
+# every file is checked before any is stored, so a bad one leaves nothing behind
+def _checked_files(sources: list[tuple[Path, str]]) -> None:
+    for path, name in sources:
+        if Path(name).suffix.lower() not in SUFFIXES:
+            raise job_specs.Refused(f"{name}: a submission takes {', '.join(SUFFIXES)} files, not "
+                                    f"{Path(name).suffix or 'a file without an extension'}")
+        with open(path, "rb") as f:
+            head = f.read(1024)
+        if b"%PDF-" not in head:
+            raise job_specs.Refused(f"{name}: not a PDF file (no %PDF- header)")
+        try:
+            pages = pdf.page_count(path)
+        except pdfium.PdfiumError as e:
+            raise job_specs.Refused(f"{name}: not a readable PDF ({e}); a file still downloading reads so too") from e
+        if pages < 1:
+            raise job_specs.Refused(f"{name}: a PDF without pages")
 
 
 # the order of the files makes the book, so it is settled before the book is registered
@@ -39,6 +61,7 @@ def submit(sources: list[tuple[Path, str]], knobs: dict | None = None, then: lis
     if order not in ORDERS:
         raise job_specs.Refused(f"order must be one of {ORDERS}")
     book_knobs.check(knobs)
+    _checked_files(sources)
     if order == "by_number":
         sources, _ = file_order.by_number(sources)
     options = job_specs.check("intake", {"book_id": 0, **({"then": then} if then is not None else {})})
@@ -54,7 +77,7 @@ def submit(sources: list[tuple[Path, str]], knobs: dict | None = None, then: lis
 
 @tool("add_book", "POST /v1/books",
       "Registers a book from PDF files on the shelf (shelf_paths, under books/) or in data/inbox (file_paths), "
-      "ordered as given or by_number, and queues its intake job (cpu lane), which chains metadata and toc "
+      "ordered as given or by_number, and queues its intake job (cpu lane), which chains metadata and structure "
       "unless `then` says otherwise. Returns the book view with `created`; a known file set returns the "
       "existing book.")
 def add_book(shelf_paths: list[str] | None = None, file_paths: list[str] | None = None,
@@ -67,7 +90,7 @@ def add_book(shelf_paths: list[str] | None = None, file_paths: list[str] | None 
 # a knob change takes effect at the next collection of metadata or the table of contents
 @tool("set_book_knobs", "PATCH /v1/books/{id}/knobs",
       "Sets or unsets a book's own knobs (see `knobs`, group book) and returns its overrides and effective "
-      "values; they take effect at the next metadata or toc collection.")
+      "values; they take effect at the next metadata or structure collection.")
 def set_book_knobs(id: int, set: dict | None = None, unset: list[str] | None = None) -> dict:
     with Session() as session:
         book = session.get(Book, id)
@@ -89,9 +112,9 @@ def _fields(session, book_id: int) -> dict:
             "not_found": sorted(n for n, f in found.items() if f["value"] is None and n in SOUGHT)}
 
 
-# the current toc version and the source its base came from; toc_sources are intake's counts per source
-def _toc(session, book_id: int) -> dict | None:
-    version = versions.current(session, TocVersion, book_id)
+# the current structure version and the source its base came from; structure_sources are intake's counts per source
+def _structure(session, book_id: int) -> dict | None:
+    version = versions.current(session, StructureVersion, book_id)
     return {"version": version.version, "base": evidence.base(session, version.id)} if version else None
 
 
@@ -108,7 +131,8 @@ def _view(session, book: Book) -> dict:
                        "garbled": len(layer.get("garbled", [])),
                        "pages_without_layer": layer.get("without_layer", [])[:200]} if layer else None,
         "has_bookmarks": book.has_bookmarks, "has_printed_contents": book.has_printed_contents,
-        "toc_sources": book.toc_sources, "toc": _toc(session, book.id), "metadata": _fields(session, book.id),
+        "structure_sources": book.structure_sources, "structure": _structure(session, book.id),
+        "metadata": _fields(session, book.id),
         "knobs": book.knobs or {}, "page_offset": book.page_offset,
         "result_run_id": book.result_run_id,
         "runs": [{"id": r.id, "status": r.status} for r in runs],
@@ -126,8 +150,8 @@ def _stages(session, book_id: int) -> dict:
 
 
 @tool("book", "GET /v1/books/{id}",
-      "One book: files, text layer, toc sources, current metadata, knobs, runs, the result run, the newest job "
-      "of each book stage with its error, and whether metadata and toc are stale.")
+      "One book: files, text layer, structure sources, current metadata, knobs, runs, the result run, the newest job "
+      "of each book stage with its error, and whether metadata and structure are stale.")
 def get_book(id: int) -> dict:
     with Session() as session:
         book = session.get(Book, id)
@@ -140,7 +164,7 @@ def get_book(id: int) -> dict:
 # whether the current versions were made from other inputs than today's; a run collects stale ones again first
 def _stale(book_id: int) -> dict:
     out = {}
-    for what, check in (("metadata", resolve.stale), ("toc", collect.stale)):
+    for what, check in (("metadata", resolve.stale), ("structure", collect.stale)):
         try:
             out[what] = check(book_id)
         except Deferred as e:
@@ -215,27 +239,25 @@ def _checked_what(what: list[str] | None) -> list[str]:
 
 
 def _checked_run(what: list[str], run: bool) -> None:
-    collects_toc = "toc" in what or what == ["intake"]
-    if run and not collects_toc:
-        raise job_specs.Refused("run starts once the toc is collected; add toc to what")
+    collects_structure = "structure" in what or what == ["intake"]
+    if run and not collects_structure:
+        raise job_specs.Refused("run starts once the structure is collected; add structure to what")
 
 
 def _enqueue_recollect(session, book_id: int, what: list[str], run: bool = False) -> int:
     # intake again re-reads the files, then chains the stages asked for, or both as on submission
     if "intake" in what:
-        then = [w for w in what if w != "intake"] or ["metadata", "toc"]
+        then = [w for w in what if w != "intake"] or ["metadata", "structure"]
         return job_queue.enqueue("intake", {"book_id": book_id, "then": then + ["run"] * run, "force": True},
                                  book_id=book_id, session=session)
-    if "metadata" not in what:
-        return job_queue.enqueue("toc", {"book_id": book_id, "what": ["toc"], "force": True, "run": run},
-                                 book_id=book_id, session=session)
-    return job_queue.enqueue("metadata", {"book_id": book_id, "what": what, "force": True, "run": run},
+    return job_queue.enqueue(job_specs.chain_head(what), {"book_id": book_id, "what": what, "force": True, "run": run},
                              book_id=book_id, session=session)
 
 
 @tool("recollect", "POST /v1/books/{id}/recollect",
-      "Queues one job that collects a book's stages again (`what` from intake, metadata, toc; default "
-      "metadata), forced even when nothing is stale; `run` starts a run once the toc is collected. Returns {job_id}; "
+      "Queues one job that collects a book's stages again (`what` from intake, metadata, structure, layout; default "
+      "metadata), forced even when nothing is stale; `run` starts a run once the structure is collected. "
+      "Returns {job_id}; "
       "follow it with wait_job.")
 def recollect(id: int, what: list[str] | None = None, run: bool = False) -> dict:
     what = _checked_what(what)
@@ -251,7 +273,8 @@ def recollect(id: int, what: list[str] | None = None, run: bool = False) -> dict
 # one all-or-nothing call for many books: every id and stage is checked before a job is queued
 @tool("recollect_books", "POST /v1/books/recollect",
       "Like recollect for many books at once (all books when `ids` is empty); every id and stage is checked "
-      "before any job is queued. `run` starts a run for every book once its toc is collected, so with empty `ids` "
+      "before any job is queued. `run` starts a run for every book once its structure is collected, "
+      "so with empty `ids` "
       "it runs the whole shelf on the GPU. Returns {jobs: {book_id: job_id}}.")
 def recollect_books(ids: list[int] | None = None, what: list[str] | None = None, run: bool = False) -> dict:
     what = _checked_what(what)

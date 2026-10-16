@@ -4,7 +4,6 @@ from html import escape
 
 from document.model import (
     Caption,
-    Chapter,
     Code,
     Document,
     Figure,
@@ -12,9 +11,11 @@ from document.model import (
     Formula,
     Heading,
     ListBlock,
+    Node,
     Note,
     PageMarker,
     Paragraph,
+    Piece,
     Table,
 )
 
@@ -107,8 +108,21 @@ def _note(block: Note) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in body)
 
 
-def _block(block, chapter_level: int) -> str | None:
+# the anchors this writer puts before a node, and before a unit in documents written before nodes
+ANCHOR = re.compile(r"<!-- (?:chapter|node) [^>]*-->\n\n")
+
+
+# the anchor a reader slices the document at: the node's order, its level in the book, its parent and pages
+def node_comment(node: Node, role: str) -> str:
+    parent = "" if node.parent_ord is None else f" parent={node.parent_ord}"
+    pages = f"{node.first_page}-{node.last_page}"
+    return f"<!-- node ord={node.ord} level={node.level}{parent} pages={pages} role={role} -->"
+
+
+def _block(block, chapter_level: int, opened: dict[int, str] | None = None) -> str | None:
     match block:
+        case Heading() if block.node is not None and opened and block.node in opened:
+            return opened[block.node] + "\n\n" + _heading(chapter_level + block.level, block.text)
         case Heading():
             return _heading(chapter_level + block.level, block.text)
         case Paragraph():
@@ -134,22 +148,24 @@ def _block(block, chapter_level: int) -> str | None:
     raise TypeError(f"no Markdown for {type(block).__name__}")
 
 
-def body(blocks: list, chapter_level: int) -> str:
-    return "\n\n".join(text for block in blocks if (text := _block(block, chapter_level)))
+def body(blocks: list, chapter_level: int, opened: dict[int, str] | None = None) -> str:
+    return "\n\n".join(text for block in blocks if (text := _block(block, chapter_level, opened)))
 
 
-# the book title is #, so a chapter at toc level 1 is ## and its inner headings go below it
-def chapter(ch: Chapter) -> str:
+# the book title is #, so a node at level 1 is ## and its inner headings go below it
+def piece(ch: Piece) -> str:
     level = ch.level + 1
-    head = [f"<!-- chapter ord={ch.ord} pages={ch.first_page}-{ch.last_page} role={ch.role} -->",
-            _heading(level, ch.title)]
-    return "\n\n".join([*head, body(ch.blocks, level)]) if ch.blocks else "\n\n".join(head)
+    own = ch.nodes[0] if ch.nodes else Node(ord=ch.ord, title=ch.title, level=ch.level, first_page=ch.first_page,
+                                             last_page=ch.last_page, pinned=True)
+    opened = {n.ord: node_comment(n, ch.role) for n in ch.nodes[1:] if n.anchored}
+    head = [node_comment(own, ch.role), _heading(level, ch.title)]
+    return "\n\n".join([*head, body(ch.blocks, level, opened)]) if ch.blocks else "\n\n".join(head)
 
 
-# the book: its title on top, then its chapters' Markdown in order
-def book(title: str, chapters: list[str]) -> str:
-    return "\n\n".join([_heading(1, title), *chapters]) + "\n"
+# the book: its title on top, then its pieces' Markdown in order
+def book(title: str, pieces: list[str]) -> str:
+    return "\n\n".join([_heading(1, title), *pieces]) + "\n"
 
 
 def document(doc: Document) -> str:
-    return book(doc.title, [chapter(ch) for ch in doc.chapters])
+    return book(doc.title, [piece(ch) for ch in doc.pieces])

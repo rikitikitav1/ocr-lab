@@ -5,7 +5,7 @@ from use_cases import evaluation
 router = APIRouter()
 
 
-class TocEval(BaseModel):
+class StructureEval(BaseModel):
     set: str
     book_ids: list[int] | None = None
 
@@ -21,11 +21,11 @@ def element_eval(body: ElementEval):
     return evaluation.element_eval(body.engines, body.ids, body.knobs)
 
 
-@router.post("/eval/toc", status_code=202)
-def toc_eval(body: TocEval):
-    return evaluation.toc_eval(body.set, body.book_ids)
+@router.post("/eval/structure", status_code=202)
+def structure_eval(body: StructureEval):
+    return evaluation.structure_eval(body.set, body.book_ids)
 
 
-@router.get("/eval/toc/compare")
-def toc_eval_compare(job_a: int, job_b: int):
-    return evaluation.toc_eval_compare(job_a, job_b)
+@router.get("/eval/structure/compare")
+def structure_eval_compare(job_a: int, job_b: int):
+    return evaluation.structure_eval_compare(job_a, job_b)

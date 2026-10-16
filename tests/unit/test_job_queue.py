@@ -92,7 +92,7 @@ def test_wait_returns_on_timeout(stand):
 def test_budget_is_read_per_stage_and_bounded():
     import job_specs
 
-    assert 3 <= job_specs.attempts_for("assemble_chapter") <= 5
+    assert 3 <= job_specs.attempts_for("assemble_piece") <= 5
     assert all(3 <= v <= 5 for v in job_specs.budgets().values())
 
 

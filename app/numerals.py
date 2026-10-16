@@ -14,6 +14,9 @@ ARABIC = r"\d{1,4}"
 # a page number as a contents line or a page edge prints it
 PAGE = rf"(?:{ARABIC}|{ROMAN})"
 
+# a label over a title ("ГЛАВА 1", "PART I", "3"); a Roman one from C up reads as an acronym ("Using CLI")
+LABEL_LINE = re.compile(rf"^\s*(?:[^\W\d_]+\s+)?(?:\d{{1,3}}|(?!c){ROMAN_LABEL})\s*[.:]?\s*$", re.I)
+
 _WHOLE = re.compile(rf"^{ROMAN}$")
 _DIGITS = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
 
