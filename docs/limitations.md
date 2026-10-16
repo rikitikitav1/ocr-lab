@@ -5,21 +5,21 @@ so a later change can be checked against them; the numbers are the books' ids in
 [books.md](books.md). The measurements behind them are in
 [experiments.md](experiments.md).
 
-## Table of contents
+## Structure
 
 | limitation | seen on |
 |---|---|
 | When bookmarks and the printed contents disagree on a page, the printed page wins (the printed contents is the base); the bookmarks were right in 5 of 6 such conflicts on 71 and 4 of 5 on 101. 188 such conflicts sit on 14 books, 142 of them on 89; who is right on the other 12 books is not checked yet | 71, 101, 89 and 11 more |
-| Reading a contents spread over several pages made one book worse: a doubled chapter 1 row, two "Introduction" rows lost, five rows four pages late, dot leaders left in titles | 101 |
-| The contents parser makes entries of author names and wrapped second title lines, and a drifting offset (+9 to +11) leaves entries unverified; the toc itself is right by the bookmarks | 94 |
+| Reading a contents spread over several pages made one book worse: a doubled "Chapter 1" row, two "Introduction" rows lost, five rows four pages late, dot leaders left in titles | 101 |
+| The contents parser makes entries of author names and wrapped second title lines, and a drifting offset (+9 to +11) leaves entries unverified; the structure itself is right by the bookmarks | 94 |
 | A wrapped label leaves a junk row ("Chapter §"); a layer's "III" read as "Ill" leaves another | 71, 87 |
-| A number in words is any word after a part or chapter label, so "Part of Speech" or "Chapter Summary" read as numbered | none seen on the shelf |
+| A number in words is any word after a part or chapter label of the numbering lists, so "Part of Speech" or "Chapter Summary" read as numbered | none seen on the shelf |
 | Service roles are not given when the numbering starts after the first 15% of the pages, which leaves short books with a long foreword without them | 68, 96, 75 |
-| A book with no bookmarks, no printed contents and no labelled chapters takes its chapters from the headings of its pages read as pictures; not served are chapter titles set as pictures, and a reference manual whose every subhead looks alike, which fails as "structure not recognised" (more than one chapter to two pages) | 8, 9 (pictures), 55 |
+| A book with no bookmarks, no printed contents and no labelled chapters takes its nodes from the headings of its pages read as pictures; not served are chapter titles set as pictures, and a reference manual whose every subhead looks alike, which fails as "structure not recognised" (more than one node to two pages) | 8, 9 (pictures), 55 |
 | Chapters labelled by ordinal words ("درس اول", lesson one) need a book knob naming the word; image-file bookmarks need a knob to be ignored | 119 |
 | A dictionary's units are its letters; nothing reads them | 116 |
 | Right-to-left printed contents were never seen on the shelf, so their parsing is untested | none |
-| Sections whose heading opens with a decorative initial come out garbled in the text layer ("jVîeseriile" for "Meseriile") and are not matched to the toc: 1 of 19 sub-entries found | 111 |
+| Sections whose heading opens with a decorative initial come out garbled in the text layer ("jVîeseriile" for "Meseriile") and are not matched to the structure: 1 of 19 sub-entries found | 111 |
 
 ## Text and elements
 
@@ -38,7 +38,7 @@ so a later change can be checked against them; the numbers are the books' ids in
 | Docling's paragraph order within a page can be wrong (paragraphs and footnotes swapped), and the page referee takes Docling on a tie | 73, 112 |
 | Word measures split on `\w+`, so a run of CJK is one word: agreement and the referee's picks mean little there | 118 |
 | Agreement does not tell an empty engine from a disagreeing one | 9 |
-| The recognition engine is fixed to MinerU, and long chapters are not read in chunks | all |
+| The recognition engine is fixed to MinerU, and a long piece is not read in chunks | all |
 
 ## Metadata
 

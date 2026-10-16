@@ -2,7 +2,8 @@
 
 Tables live in PostgreSQL; large payloads (engine output, document model, bundle files) live as
 artifacts on disk and are referenced by `artifacts` rows (research R3). Ids are `bigint` identity
-unless noted. Every table has `created_at`.
+unless noted. Every table has `created_at`. "fk" names what a field points at; the schema holds the
+constraint only where `db/schema.sql` has a REFERENCES (the `job_id` of the versions tables has none).
 
 ## books
 
@@ -16,11 +17,11 @@ The catalogue record (spec: Source book, Catalogue record).
 | text_layer | jsonb | per page: `layer`, `none`; plus counts |
 | has_bookmarks | bool | |
 | has_printed_contents | bool | null until probed |
-| toc_sources | jsonb | sources found at intake, with entry counts |
+| structure_sources | jsonb | sources found at intake, with entry counts |
 | stage | text | current stage, see state machine |
 | result_run_id | fk runs | best finished run (FR-053), recomputed when a run finishes |
-| knobs | jsonb | book-level knob overrides (FR-059): `metadata.title_pages.head`, `metadata.title_pages.tail`, `toc.contents_pages`, `toc.skip_root_bookmark`, `toc.ignore_bookmarks`, `toc.chapter_label`, `toc.from_headings` |
-| page_offset | int | book page minus printed page number, measured on the printed contents when the text confirms most entries, whichever toc source won; null otherwise |
+| knobs | jsonb | book-level knob overrides (FR-059): `metadata.title_pages.head`, `metadata.title_pages.tail`, `structure.contents_pages`, `structure.skip_root_bookmark`, `structure.ignore_bookmarks`, `structure.chapter_label`, `structure.from_headings`, `structure.reading_level` |
+| page_offset | int | book page minus printed page number, measured on the printed contents when the text confirms most entries, whichever structure source won; null otherwise |
 
 ## metadata_fields
 
@@ -59,7 +60,7 @@ Volumes are not files of one book: each volume is its own book, and volumes are 
 Book pages are numbered across files; artifacts and reports carry `(file ord, in-file page)` next
 to the book page.
 
-## metadata_versions, toc_versions
+## metadata_versions, structure_versions
 
 Book-level results are versioned (FR-052).
 
@@ -72,30 +73,50 @@ Book-level results are versioned (FR-052).
 | job_id | fk jobs | the job that collected it |
 | current | bool | one current version per book and kind |
 
-`metadata_fields` and `toc_entries` hang off a version, not off the book or a run. A manual
+`metadata_fields` and `nodes` hang off a version, not off the book or a run. A manual
 metadata edit (FR-051) creates a new metadata version that copies the rest.
 
-## toc_entries
+`structure_versions` holds the book's structure as a tree of nodes; `depth` is the number of levels the structure
+found, book metadata (FR-064).
 
-Reconciled table of contents (FR-008, FR-009, FR-043).
+## layout_versions
+
+The book's layouts (FR-063), versioned like the structure.
 
 | field | type | notes |
 |---|---|---|
 | id | bigint | |
-| toc_version_id | fk toc_versions | |
+| book_id | fk books | |
+| kind | text | `page` (body, slots, notes; collected before the structure) or `headings` (per level: size, weight, pins in style, label; after it) |
+| version | int | 1, 2, ... per book and kind |
+| input_hash | text | the code's and the files' hashes, and for `headings` the structure version and the current page layout version |
+| job_id | fk jobs | |
+| current | bool | one current version per book and kind |
+| structure_version_id | fk structure_versions | the structure whose pins gave the heading styles; `headings` only |
+| layout | jsonb | the layout itself; a scan's page layout is `{"skipped": "a scan"}` until scans get one |
+
+## nodes
+
+The reconciled structure's nodes (FR-008, FR-009, FR-043, FR-064).
+
+| field | type | notes |
+|---|---|---|
+| id | bigint | |
+| structure_version_id | fk structure_versions | |
 | ord | int | order in the book |
 | title | text | |
-| level | int | 1..6 |
+| level | int | 1 and deeper, as many levels as the book gives (the schema CHECK holds 1..6 today) (FR-064) |
+| parent_ord | int | `ord` of the nearest earlier node with a lower level, null at the top (FR-064) |
 | level_source | text | `bookmarks`, `printed_contents`, `numbering`, `typography`, `catalogue`, `model` |
 | first_page, last_page | int | book pages, numbered across files; the file and in-file page come from `book_files.first_page` |
-| kind | text | `chapter`, `part`, `section`, `front_matter`, `back_matter` (filtered entries are kept with their kind) |
+| kind | text | `node` or `front_matter`; a node's depth lives in `level` alone (FR-064) |
 | votes | jsonb | which sources had this entry, with their levels |
 
 ## knobs (config, not a table)
 
 `config/knobs.yaml`: groups → knobs → options. Each knob: `name`, `help` (one line), `options`,
 `probe` (registered probe name or null), `cost` (`cpu`, `gpu`, `model`), `scope` (`book`,
-`chapter`). Each option names a registered implementation. Loaded and validated at start; a door
+`run`). Each option names a registered implementation. Loaded and validated at start; a door
 lists it.
 
 ## presets (config, not a table)
@@ -113,7 +134,7 @@ Resolved profile of a book (FR-012 to FR-015).
 | book_id | fk books | |
 | preset | text | |
 | values | jsonb | knob path → `{option, source, evidence}`; source is `preset`, `probe`, `search`, `manual` |
-| chapter_overrides | jsonb | chapter ord → knob path → option (FR-044) |
+| piece_overrides | jsonb | piece ord → knob path → option (FR-044) |
 | sha256 | text | hash of the canonical resolved form, stamped on runs and artifacts |
 | parent_id | fk profiles | the profile it was derived from (manual edit or search) |
 
@@ -127,8 +148,8 @@ Every candidate the search tried (FR-021).
 |---|---|---|
 | search_job_id | fk jobs | |
 | profile_values | jsonb | |
-| sample_chapters | int[] | |
-| scores | jsonb | chapter checks per sampled chapter |
+| sample_pieces | int[] | |
+| scores | jsonb | piece checks per sampled piece |
 | decision | text | `kept`, `dropped` |
 | reason | text | |
 
@@ -142,7 +163,8 @@ One processing of one book with one profile (spec: Run).
 | book_id | fk books | |
 | profile_id | fk profiles | |
 | metadata_version_id | fk metadata_versions | version the run used |
-| toc_version_id | fk toc_versions | version the run used |
+| structure_version_id | fk structure_versions | version the run used |
+| reading_level | int | the tree level the run's pieces were cut at, frozen when the run starts; null for a run read by chapters before the tree (not read or assembled again, its bundle stays) |
 | format | text | `markdown` in this feature |
 | dir | text | `data/runs/<book_id>/<run_id>` |
 | status | text | `queued`, `running`, `needs_attention`, `done`, `failed`, `cancelled` |
@@ -151,19 +173,19 @@ One processing of one book with one profile (spec: Run).
 | engine_builds | jsonb | build stamps of engines used |
 | bundle_dir | text | set when done |
 
-## chapters
+## pieces
 
-Chapter of a run (spec: Chapter; FR-042, FR-044, FR-046).
+Piece of a run: a node of the reading level, read and assembled as one (spec: Chapter; FR-042, FR-044, FR-046).
 
 | field | type | notes |
 |---|---|---|
 | run_id | fk runs | |
-| ord | int | matches the toc entry |
-| toc_entry_id | fk toc_entries | |
+| ord | int | matches the node |
+| node_id | fk nodes | |
 | status | text | `pending`, `running`, `done`, `failed` (error kept in `errors`) |
 | engine | text | |
-| checks | jsonb | chapter numbers: text lost and not in the layer, sub-entries found, headings, figures, pass counts |
-| errors | jsonb | why a failed chapter failed |
+| checks | jsonb | piece numbers: text lost and not in the layer, sub-entries found, headings, figures, pass counts |
+| errors | jsonb | why a failed piece failed |
 | seconds, gpu_seconds | real | |
 | unique | | (run_id, ord) |
 
@@ -175,12 +197,12 @@ Manifest of stage artifacts (FR-020, FR-022, FR-023).
 |---|---|---|
 | id | bigint | |
 | run_id | fk runs | null for book-level stages |
-| metadata_version_id, toc_version_id | fk | set for versioned book-level stages |
+| metadata_version_id, structure_version_id | fk | set for versioned book-level stages |
 | book_id | fk books | set for intake, which belongs to the book itself; a row has one owner among run and versions, or only the book |
 | stage | text | |
-| chapter_ord | int | null for book-level stages |
-| name | text | e.g. `toc.bookmarks.json`, `engine.docling.p101-140.json`, `model.after.drop_running_heads.json` |
-| path | text | relative to `data/` (run artifacts under `runs/<book_id>/<run_id>/`, versioned book-level ones under `books/<book_id>/metadata/v<N>/` and `books/<book_id>/toc/v<N>/`) |
+| piece_ord | int | null for book-level stages |
+| name | text | e.g. `nodes.json`, `engine.docling.p101-140.json`, `model.after.drop_running_heads.json` |
+| path | text | relative to `data/` (run artifacts under `runs/<book_id>/<run_id>/`, versioned book-level ones under `books/<book_id>/metadata/v<N>/` and `books/<book_id>/structure/v<N>/`) |
 | sha256 | text | |
 | input_hash | text | hash of inputs, profile sha and engine builds; reuse on resume only if equal |
 | meta | jsonb | engine build, knobs applied, model call ids |
@@ -219,9 +241,9 @@ Queue (research R4).
 | field | type | notes |
 |---|---|---|
 | id | bigint | |
-| type | text | `book_run`, `intake`, `metadata`, `toc`, `toc_scan` (a scan's toc on the GPU lane), `profile_search`, `assemble_chapter`, `book_metrics`, `eval_run`, `toc_eval`, `cleanup`, and `noop`, `noop_gpu` for tests of the queue; the list follows `SPECS` in `app/job_specs.py`; a recollection runs as `intake`, `metadata` or `toc` |
+| type | text | `book_run`, `intake`, `metadata`, `metadata_gpu`, `structure`, `structure_scan` (a scan's structure on the GPU lane), `layout_page`, `layout_headings`, `profile_search`, `read_piece`, `assemble_piece`, `book_metrics`, `read_range`, `reassemble`, `eval_run`, `structure_eval`, `element_eval`, `cleanup`, and `noop`, `noop_gpu` for tests of the queue; the list follows `SPECS` in `app/job_specs.py`; a recollection runs as `intake`, `metadata`, `structure` or `layout_page`; the chain after intake is metadata, layout_page, structure, layout_headings, and a failed page layout does not stop it |
 | lane | text | `gpu`, `cpu` |
-| parent_id | fk jobs | book run → stage jobs → chapter jobs |
+| parent_id | fk jobs | book run → stage jobs → piece jobs |
 | run_id | fk runs | |
 | book_id | fk books | the book a job works on, for book-level jobs and their children |
 | options | jsonb | validated by a pydantic spec per type |
@@ -265,25 +287,25 @@ Queue (research R4).
 
 ## State machines
 
-Book stage (FR-041): `uploaded → metadata → toc → ready`; book-level stages, each producing a new
+Book stage (FR-041): `uploaded → metadata → ready` (ready once the structure is collected); book-level stages, each producing a new
 version (FR-052). Run stage: `profile → assembling → metrics → done`, starting from the current
 versions. Any stage can go to `failed` and back to itself on resume.
 
 Run status: `queued → running → done | needs_attention | failed | cancelled`. `needs_attention`
-means every chapter is done or failed and at least one failed after its retries (FR-056); resume
-reruns the failed chapters. `failed` and `cancelled` runs can be resumed into `running` in the
+means every piece is done or failed and at least one failed after its retries (FR-056); resume
+reruns the failed pieces. `failed` and `cancelled` runs can be resumed into `running` in the
 same `dir`.
 
 Job status: `new → running → done | error`, plus `paused` and `cancelled`. Jobs end in `error`, runs
-and chapters in `failed`; the two words are kept apart on purpose.
+and pieces in `failed`; the two words are kept apart on purpose.
 
-Chapter status: `pending → running → done | failed`; rerunning a chapter sets it back to
+Piece status: `pending → running → done | failed`; rerunning a piece sets it back to
 `pending`, then `book_metrics` recomputes (FR-044, FR-045).
 
 ## Validation rules from the spec
 
-- Heading levels 1..6 in the document model; a writer rejects anything else (FR-004).
-- A chapter's level comes from its toc entry; inner headings are relative to it (FR-043).
-- Book numbers = sums of the chapters' words and sub-entries, with the worst chapters named; no verdict label (FR-045).
+- Heading levels 1..6 in the document model; a writer rejects anything else (FR-004); structure levels below 6 sit at 6.
+- A node's level comes from the structure; inner headings are relative to it (FR-043).
+- Book numbers = sums of the pieces' words and sub-nodes, with the worst pieces named; no verdict label (FR-045).
 - A new knob option is selected only by profiles naming it; the evaluation run counts members whose
   output changed without selecting it (FR-016, FR-028).

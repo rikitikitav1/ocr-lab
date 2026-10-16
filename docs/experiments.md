@@ -1,7 +1,7 @@
 # Experiments log
 
 A lab journal of the changes that decide how a PDF book becomes Markdown: question, setup, result,
-decision. Every rule that reads a table, a code block, a table of contents or a title page was tried
+decision. Every rule that reads a table, a code block, a structure or a title page was tried
 on a set of books before it was kept, and the entries below record what each try moved and on which
 book. What every number in a bundle's report means is in [measurement.md](measurement.md).
 
@@ -19,7 +19,7 @@ Books are named by their id on the stand; [books.md](books.md) lists them.
      which way. Several changes in one run are allowed only when each book that got worse can be
      pinned on one of them;
   2. a fix seen on one or two books becomes a knob of those books, off for the rest (a book knob, or
-     a per-chapter override of a run knob);
+     a per-piece override of a run knob);
   3. a default changes only after a gate run declared beforehand: the columns, the tolerance, and
      the books the rule must not touch. Every stage measured here repeats byte for byte, so "no harm"
      is a list of every book (or section) that got worse, each with its reason, not a noise band.
@@ -27,8 +27,8 @@ Books are named by their id on the stand; [books.md](books.md) lists them.
 
   A knob set on two or three books for one reason is a candidate for the default and goes through
   step 3.
-- **A column the rule writes cannot judge it.** A rule that marks chapters as service cannot be
-  judged by a count of service chapters, and a rule that sets heading levels cannot be judged on cuts
+- **A column the rule writes cannot judge it.** A rule that marks nodes as service cannot be
+  judged by a count of service nodes, and a rule that sets heading levels cannot be judged on cuts
   that have no outline. Each gate names a column the rule does not produce, and checks that its set
   can fire the rule at all.
 - **No gold at run time.** The assembler chooses an engine, a table grid or a code reading only from
@@ -39,8 +39,8 @@ Books are named by their id on the stand; [books.md](books.md) lists them.
   - *Elements* (code, tables, headings, prose): the text-PDF sections of rag-lab's `converter_gold`,
     each a cut PDF with a hand-made Markdown gold, scored per element by
     `POST /v1/eval/elements` (`app/evaluation/element_run.py`). After two gold guards, 91 sections.
-  - *Table of contents*: the shelf of books that have bookmarks, collected with the bookmarks
-    switched off and scored against them (`POST /v1/eval/toc` with `bookmarks_off`): the bookmarks
+  - *Structure*: the shelf of books that have bookmarks, collected with the bookmarks
+    switched off and scored against them (`POST /v1/eval/structure` with `bookmarks_off`): the bookmarks
     are the gold. A second, outside set is HiPS, 49 open English law books with tables of contents
     written by people (`"set": "hips"`).
   - *Metadata*: `eval/gold/metadata.yaml`, fields checked by hand on the book's own pages; plus every
@@ -84,7 +84,7 @@ Each entry also follows these rules:
 - **One entry per stage.** A new change of a stage is a new subsection and a new table row in that
   stage's entry, not a new file.
 - **Every number carries its n and its set**, written beside the table it belongs to rather than
-  once for the whole entry. A count of chapters found on the bookmarks-off shelf and a count on HiPS
+  once for the whole entry. A count of nodes found on the bookmarks-off shelf and a count on HiPS
   are not two measurements of one thing.
 - **Every comparison names who moved.** The stages here are deterministic, so a delta is not read
   against an interval: it is read as the list of books or sections that got better and worse, with
@@ -111,3 +111,4 @@ Each entry also follows these rules:
 | 2026-10-10 | [The run and its report](experiments/2026-10-10_run-and-report.md) | Lost text against the book's own heads, picture pages on recognised ranges, knobs and profiles byte-identical |
 | 2026-10-11 | [A raw run of the shelf](experiments/2026-10-11_raw-run.md) | 43 books on the defaults, defects by mechanism, the layer reader, shared pages, GPU memory, the open defects |
 | 2026-10-12 | [A book's structure from its headings](experiments/2026-10-12_scan-structure.md) | Pages read as pictures, the headings grouped by style, two failed gates, where chapters are lost, line boxes, running heads |
+| 2026-10-13 | [The book's structure without word lists, as a tree, and its layout](experiments/2026-10-13_toc-without-words.md) | Contents pages and the heading word's roles by shape; the structure as a tree read by level, one cut per boundary page; a page layout learned per book; contents rows rejoined or split; parts by numbering and labels learned from the book taken back |
