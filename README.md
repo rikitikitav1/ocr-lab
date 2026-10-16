@@ -263,6 +263,8 @@ scripts/dump_schema.sh    # after a new migration
 Diagrams are `.drawio.svg` files: open them in draw.io (or its VS Code extension), edit, save; the
 picture and its source stay in one file.
 
+The code, docs and measurements are written together with Claude (Opus) in Claude Code.
+
 ## License
 
 [MIT](LICENSE)

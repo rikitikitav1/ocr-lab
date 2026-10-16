@@ -270,6 +270,8 @@ scripts/dump_schema.sh    # after a new migration
 Схемы хранятся в файлах `.drawio.svg`: открываешь в draw.io (или в его расширении для VS Code),
 правишь, сохраняешь; картинка и её исходник остаются в одном файле.
 
+Код, документация и замеры пишутся вместе с Claude (Opus) в Claude Code.
+
 ## Лицензия
 
 [MIT](../LICENSE)
