@@ -116,7 +116,7 @@ def test_the_contents_scan_reads_a_chunk_in_halves_and_places_every_page(monkeyp
     from types import SimpleNamespace
 
     from stages import intake
-    from stages.toc import scan
+    from stages.structure import scan
 
     asked = []
     _stand_in(monkeypatch, _halving(asked, lambda p: {"structure": {"pages": [{"page_idx": p - 1, "blocks": []}]}}))

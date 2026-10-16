@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 
 from assembly import passes
-from document.model import Figure, Heading, PageMarker, Paragraph, Where
+from document.model import Code, Figure, Heading, PageMarker, Paragraph, Where
+from job_handlers import run
 from stages import assemble, intake, running_heads
 
 from tests.fixtures import build, text_page
@@ -23,11 +24,130 @@ def test_cut_pages_split_a_chapter_s_ranges_and_leave_it_out_when_they_are_all_i
     got = [(a, b) for _, a, b in assemble.file_ranges(files, 1, 8, frozenset({2, 3, 4}))]
     assert got == [(1, 1), (5, 8)]
 
-    def row(kind, title, first, last):
-        return {"kind": kind, "title": title, "level": 1, "first_page": first, "last_page": last}
+    def row(ord, kind, title, first, last):
+        return {"ord": ord, "kind": kind, "title": title, "level": 1, "first_page": first, "last_page": last,
+                "parent_ord": None}
 
-    rows = [row("front_matter", "Cover", 1, 1), row("chapter", "Content list", 2, 4), row("chapter", "One", 5, 8)]
-    assert [c["title"] for c in assemble.chapters_of(rows, frozenset({2, 3, 4}))] == ["Cover", "One"]
+    rows = [row(1, "front_matter", "Cover", 1, 1), row(2, "node", "Content list", 2, 4), row(3, "node", "One", 5, 8)]
+    got = assemble.pieces_of(rows, frozenset({2, 3, 4}), 0, reread=False)
+    assert [c["title"] for c in got] == ["Cover", "One"]
+
+
+def test_pieces_go_down_the_tree_by_level_and_length_and_never_cut_a_node_by_pages():
+    def node(ord, title, level, first, last, parent=None):
+        return {"ord": ord, "kind": "node", "title": title, "level": level, "first_page": first, "last_page": last,
+                "parent_ord": parent}
+
+    rows = [node(0, "Part I", 0, 1, 260), node(1, "One", 1, 3, 40, 0), node(2, "1.1", 2, 10, 40, 1),
+            node(3, "Two", 1, 41, 260, 0), node(4, "Index", 0, 261, 400)]
+    got = assemble.pieces_of(rows, frozenset(), 0)
+    pieces = [(c["title"], c["first_page"], c["last_page"], c["shared_start"], c["next_title"]) for c in got]
+    assert pieces == [("Part I", 1, 3, False, "One"), ("One", 3, 41, True, "Two"), ("Two", 41, 261, True, "Index"),
+                      ("Index", 261, 400, True, None)]
+    assert [c.get("reread_start", False) for c in got] == [False, True, True, True]
+    assert [c.get("reread_start", False) for c in assemble.pieces_of(rows, frozenset(), 0, reread=False)] == [
+        False, False, False, False]
+    # the re-read page is the next piece's, less the tail the earlier piece took; that piece measures its tail alone
+    layer = {3: "the end of part i one begins here", 41: "two begins"}
+    cuts = [{"page": 3, "read": True, "tail_text": "The end of Part I"}, {"page": 41, "read": True, "tail_text": ""}]
+    assert run.measured_layer(got[0], layer, cuts)[3] == "The end of Part I"
+    assert run.measured_layer(got[1], layer, cuts) == {3: "one begins here", 41: ""}
+    assert run.measured_layer(got[2], layer, cuts)[41] == "two begins"
+    assert run.measured_layer(got[1], layer, []) == {3: "the end of part i one begins here", 41: ""}
+    assert [n["title"] for n in assemble.pieces_of(rows, frozenset(), 0)[1]["nodes"]] == ["One", "1.1"]
+    by_one = [c["title"] for c in assemble.pieces_of(rows, frozenset(), 2)]
+    assert by_one == ["Part I", "One", "1.1", "Two", "Index"]
+
+
+def test_a_one_page_piece_the_next_opens_on_holds_the_next_one():
+    rows = [{"ord": o, "kind": "node", "title": t, "level": 0, "first_page": a, "last_page": b, "parent_ord": None}
+            for o, t, a, b in ((1, "One", 1, 77), (2, "Chapter 2: Consumption", 78, 78), (3, "Tax", 78, 90))]
+    got = [(c["title"], c["first_page"], c["last_page"], [n["ord"] for n in c["nodes"]])
+           for c in assemble.pieces_of(rows, frozenset(), 0)]
+    assert got == [("One", 1, 78, [1]), ("Chapter 2: Consumption", 78, 90, [2, 3])]
+
+
+def test_a_parent_opening_on_its_first_child_s_page_heads_that_child_s_piece():
+    rows = [{"ord": 0, "kind": "part", "title": "Part I", "level": 0, "first_page": 1, "last_page": 300,
+             "parent_ord": None},
+            {"ord": 1, "kind": "node", "title": "One", "level": 1, "first_page": 1, "last_page": 150,
+             "parent_ord": 0},
+            {"ord": 2, "kind": "node", "title": "Two", "level": 1, "first_page": 151, "last_page": 300,
+             "parent_ord": 0}]
+    got = assemble.pieces_of(rows, frozenset(), 0)
+    assert [(c["title"], [n["title"] for n in c["nodes"]], c["subs"]) for c in got] == [
+        ("Part I", ["Part I", "One"], [("One", 1)]), ("Two", ["Two"], [])]
+
+
+def test_in_a_piece_a_label_opens_its_node_and_an_unpinned_node_opens_at_its_title_or_its_page():
+    def mark(page):
+        return PageMarker(book_page=page, file_ord=0, file_page=page)
+
+    blocks = [mark(1), Paragraph(text="end of the part"), Heading(text="ГЛАВА 2", level=5, level_source="engine"),
+              Heading(text="Types", level=1, level_source="structure"), mark(2), Paragraph(text="Methods"),
+              Paragraph(text="body"), mark(3), Paragraph(text="more")]
+    nodes = [{"ord": 2, "title": "Types", "level": 1, "first_page": 1, "last_page": 1, "parent_ord": 0},
+             {"ord": 3, "title": "Methods", "level": 1, "first_page": 2, "last_page": 2, "parent_ord": 0},
+             {"ord": 4, "title": "Results", "level": 1, "first_page": 3, "last_page": 3, "parent_ord": 0}]
+    out, found = assemble._opened(blocks, [3, None, None], nodes, 0, piece=True)
+    heads = [(b.text, b.level, b.node) for b in out if isinstance(b, Heading)]
+    assert heads == [("ГЛАВА 2", 1, 2), ("Types", 1, None), ("Methods", 1, 3), ("Results", 1, 4)]
+    assert [(n.pinned, n.anchored) for n in found] == [(True, True), (False, True), (False, True)]
+
+
+def test_a_node_on_a_shared_page_opens_at_its_title_printed_with_a_label_word():
+    blocks = [PageMarker(book_page=155, file_ord=0, file_page=155), Heading(text="Solution", level=2, level_source="x"),
+              Paragraph(text="the end of the previous chapter's last section, in a long enough paragraph"),
+              Heading(text="CHAPTER 16 Adapter", level=1, level_source="engine"), Paragraph(text="body")]
+    nodes = [{"ord": 130, "title": "Solution", "level": 3, "first_page": 155, "last_page": 155, "parent_ord": 127},
+             {"ord": 131, "title": "16. Adapter", "level": 2, "first_page": 155, "last_page": 158, "parent_ord": 120}]
+    out, found = assemble._opened(blocks, [1, None], nodes, 1, piece=True, own_first=154)
+    assert [n.anchored for n in found] == [True, True]
+    assert [(b.text, b.node) for b in out if isinstance(b, Heading)] == [("Solution", 130), ("CHAPTER 16 Adapter", 131)]
+
+
+def test_a_title_the_engine_glued_its_label_onto_is_found_on_letters_alone():
+    blocks = [PageMarker(book_page=40, file_ord=0, file_page=40), Paragraph(text="the end of section B, long enough"),
+              Heading(text="Scope of the studyC.", level=2, level_source="engine"), Paragraph(text="body")]
+    nodes = [{"ord": 7, "title": "C. Scope of the study", "level": 2, "first_page": 40, "last_page": 44,
+              "parent_ord": 2}]
+    out, found = assemble._opened(blocks, [None], nodes, 1, piece=True, own_first=30)
+    assert found[0].anchored and [b.text for b in out if isinstance(b, Heading) and b.node] == ["Scope of the studyC."]
+    assert passes.titled_loosely(blocks, 1, 4, "Redis") is None
+    xref = [PageMarker(book_page=9, file_ord=0, file_page=9), Paragraph(text="See the X-Case, p. 323")]
+    assert passes.titled_loosely(xref, 1, 2, "The X-Case") is None
+
+
+def test_a_code_line_reading_as_a_node_s_title_stays_code():
+    blocks = [PageMarker(book_page=12, file_ord=0, file_page=12), Paragraph(text="text before, long enough here"),
+              Code(text="print_report"), Paragraph(text="more")]
+    nodes = [{"ord": 76, "title": "print_report", "level": 2, "first_page": 12, "last_page": 13, "parent_ord": 70}]
+    out, _ = assemble._opened(blocks, [None], nodes, 1, piece=True, own_first=10)
+    assert any(isinstance(b, Code) and b.text == "print_report" for b in out)
+
+
+def test_nodes_placed_on_one_page_keep_their_order_and_a_second_without_a_title_is_not_guessed():
+    blocks = [PageMarker(book_page=4, file_ord=0, file_page=4), Paragraph(text="text"), Paragraph(text="Gamma"),
+              Paragraph(text="more")]
+    nodes = [{"ord": o, "title": t, "level": 1, "first_page": 4, "last_page": 4, "parent_ord": 0}
+             for o, t in ((1, "Alpha"), (2, "Beta"), (3, "Gamma"))]
+    out, found = assemble._opened(blocks, [None, None, None], nodes, 0, piece=True)
+    # the first goes to the page's top; a second opening on that page has no known place and stays in the first
+    assert [b.text for b in out if isinstance(b, Heading)] == ["Alpha", "Gamma"]
+    assert [n.anchored for n in found] == [True, False, True]
+
+
+def test_every_block_belongs_to_the_node_last_opened_before_it_and_a_page_set_node_is_marked():
+    def mark(page):
+        return PageMarker(book_page=page, file_ord=0, file_page=page)
+
+    blocks = [mark(1), Paragraph(text="own"), Heading(text="A", level=1, level_source="structure", node=5), mark(2),
+              Paragraph(text="in A"), Heading(text="B", level=1, level_source="page", node=6), Paragraph(text="in B")]
+    got = [(b.text, b.parent_ord, b.by_page) for b in assemble._owned(blocks, 4, False) if hasattr(b, "text")]
+    assert got == [("own", 4, False), ("A", 5, False), ("in A", 5, False), ("B", 6, True), ("in B", 6, True)]
+    first = [(b.text, b.by_page) for b in assemble._owned(blocks[:2] + [mark(2), Paragraph(text="later")], 4, True)
+             if hasattr(b, "text")]
+    assert first == [("own", True), ("later", False)]
 
 
 def test_a_figure_with_a_box_gets_its_picture_cut_from_the_page_and_named_for_the_bundle(monkeypatch):
@@ -48,34 +168,38 @@ def test_the_first_page_before_the_first_toc_row_is_cut_as_a_cover_but_a_paper_s
     def row(kind, first):
         return {"kind": kind, "first_page": first}
 
-    assert assemble._cover([row("front_matter", 1), row("chapter", 2)]) == {1}
-    assert assemble._cover([row("chapter", 1), row("chapter", 5)]) == frozenset()
+    assert assemble._cover([row("front_matter", 1), row("node", 2)]) == {1}
+    assert assemble._cover([row("node", 1), row("node", 5)]) == frozenset()
+
+
+def _roles(rows: list[dict]) -> list[str]:
+    return assemble.roles(rows, max(r["last_page"] for r in rows))
 
 
 def test_unnumbered_chapters_on_both_edges_of_the_numbered_run_are_service():
     def row(title, first):
-        return {"kind": "chapter", "title": title, "level": 1, "first_page": first, "last_page": first}
+        return {"kind": "node", "title": title, "level": 1, "first_page": first, "last_page": first}
 
     book = [row("Preface", 1), row("Благодарности", 2), {**row("1 Basics", 3), "last_page": 95}, row("Afterword", 96)]
     book[-1]["last_page"] = 100
-    roles = [c["role"] for c in assemble.chapters_of(book)]
+    roles = _roles(book)
     assert roles == ["service", "service", "body", "service"]
-    assert {c["role"] for c in assemble.chapters_of([row("Preface", 1), row("Basics", 2)])} == {"body"}
+    assert set(_roles([row("Preface", 1), row("Basics", 2)])) == {"body"}
     roman = [row("Foreword", 1), row("Глава IV", 2)]
     roman[-1]["last_page"] = 100
-    assert assemble.chapters_of(roman)[0]["role"] == "service"
+    assert _roles(roman)[0] == "service"
     words = [row("What I Learned", 1), row("C Programming", 2), row("1 Basics", 3)]
     words[-1]["last_page"] = 100
-    assert [c["role"] for c in assemble.chapters_of(words)] == ["service", "service", "body"]
+    assert _roles(words) == ["service", "service", "body"]
     parts = [row("Preface", 1), row("Часть I Основы", 3), row("Глава", 4), row("Часть II Дальше", 6)]
     parts[-1]["last_page"] = 100
-    assert [c["role"] for c in assemble.chapters_of(parts)] == ["service", "body", "body", "body"]
+    assert _roles(parts) == ["service", "body", "body", "body"]
     late = [row("Preface", 1), row("Processes", 2)] + [row(f"Topic {n}", 40 + n) for n in range(1, 3)]
     late[-1]["last_page"] = 100
-    assert {c["role"] for c in assemble.chapters_of(late)} == {"body"}
+    assert set(_roles(late)) == {"body"}
     early = [row("1 Basics", 1), row("2 More", 10), row("Appendix", 20)]
     early[-1]["last_page"] = 100
-    assert [c["role"] for c in assemble.chapters_of(early)] == ["body", "body", "body"]
+    assert _roles(early) == ["body", "body", "body"]
 
 
 def test_a_chapter_s_ranges_split_where_pages_turn_from_layer_to_recognition(monkeypatch):
@@ -115,24 +239,12 @@ def test_a_recognised_page_with_too_few_words_is_a_picture_with_no_agreement():
     assert found == {"pages_recognised": 2, "pages_picture": 0} and agreement[2] == 0.0
 
 
-def test_chapters_are_chapter_rows_with_their_sections_and_a_part_s_own_pages():
-    def row(kind, title, level, first, last):
-        return {"kind": kind, "title": title, "level": level, "first_page": first, "last_page": last}
-
-    rows = [row("front_matter", "Front matter", 1, 1, 4), row("part", "Part I", 1, 5, 40),
-            row("chapter", "One", 2, 7, 20), row("section", "1.1", 3, 9, 20), row("chapter", "Two", 2, 21, 40),
-            row("part", "Part II", 1, 41, 60), row("chapter", "Three", 2, 41, 60)]
-    got = [(c["title"], c["first_page"], c["last_page"], c["subs"]) for c in assemble.chapters_of(rows)]
-    assert got == [("Front matter", 1, 4, []), ("Part I", 5, 6, []), ("One", 7, 20, [("1.1", 3)]),
-                   ("Two", 21, 40, []), ("Three", 41, 60, [])]
-
-
 def test_a_heading_deeper_than_the_writer_allows_is_demoted_and_counted_never_raised():
     blocks = [Heading(text="Intro", level=2, level_source="docling"), Heading(text="1.1 Basics", level=3,
               level_source="docling"), Heading(text="deep", level=5, level_source="docling")]
-    out, counts = passes.chapter_levels(blocks, 2, [("1.1 Basics", 3)])
-    assert [(h.level, h.level_source) for h in out] == [(1, "docling"), (1, "toc"), (3, "docling")]
-    assert counts == {"headings_from_toc": 1, "headings_demoted": 1, "headings_flattened": 0}
+    out, counts = passes.piece_levels(blocks, 2, [("1.1 Basics", 3)])
+    assert [(h.level, h.level_source) for h in out] == [(1, "docling"), (1, "structure"), (3, "docling")]
+    assert counts == {"headings_from_structure": 1, "headings_demoted": 1, "headings_flattened": 0}
 
 
 def _docling(page_no, heading, text):
@@ -165,26 +277,13 @@ def test_a_chapter_over_two_files_is_assembled_without_engines(stand, tmp_path, 
 
     monkeypatch.setattr(assemble, "_structure", canned)
     got = assemble.assemble(book, 1, "Chapter", 2, 2, 3, languages=["en"])
-    markers = [(b.file_ord, b.file_page, b.book_page) for b in got.chapter.blocks if isinstance(b, PageMarker)]
+    markers = [(b.file_ord, b.file_page, b.book_page) for b in got.piece.blocks if isinstance(b, PageMarker)]
     assert markers == [(0, 2, 2), (1, 1, 3)]
-    assert any(isinstance(b, Paragraph) and "Second file" in b.text for b in got.chapter.blocks)
-    assert "<!-- chapter ord=1 pages=2-3 role=body -->\n\n### Chapter\n\n#### Deep heading" in got.markdown
+    assert any(isinstance(b, Paragraph) and "Second file" in b.text for b in got.piece.blocks)
+    assert "<!-- node ord=1 level=2 pages=2-3 role=body -->\n\n### Chapter\n\n#### Deep heading" in got.markdown
     assert [name for name, _ in got.steps[0]["steps"]][0] == "referee" and "furniture_docling" in got.counts
     assert set(got.pages) == {2, 3} and all(set(p["scores"]) == {"docling", "mineru"} for p in got.pages.values())
     assert got.counts.get("pages_docling", 0) + got.counts.get("pages_mineru", 0) == 2
-
-
-def test_chapters_under_a_part_come_out_of_the_toc_rows_as_chapters():
-    from stages.toc import collect
-    from stages.toc.sources import Entry
-
-    entries = [Entry("Part One", 1, 5), Entry("What Is Security Engineering?", 2, 7), Entry("Goals", 3, 9),
-               Entry("Protocols", 2, 30), Entry("Part Two", 1, 60), Entry("Cryptography", 2, 62),
-               Entry("Afterword", 1, 90)]
-    chapters = assemble.chapters_of(collect.rows(entries, "bookmarks", 100))
-    assert [(c["title"], c["first_page"], c["last_page"], c["subs"]) for c in chapters] == [
-        ("Part One", 5, 6, []), ("What Is Security Engineering?", 7, 29, [("Goals", 3)]), ("Protocols", 30, 59, []),
-        ("Part Two", 60, 61, []), ("Cryptography", 62, 89, []), ("Afterword", 90, 100, [])]
 
 
 def test_the_chapter_title_set_again_on_its_first_page_goes():
@@ -193,20 +292,24 @@ def test_the_chapter_title_set_again_on_its_first_page_goes():
     out, dropped = passes.without_title(blocks, "Chapter 7: COALESCE")
     assert dropped == 1 and [type(b).__name__ for b in out] == ["PageMarker", "Paragraph"]
     assert passes.without_title(blocks, "Chapter 8: INSERT")[1] == 0
+    labelled = [PageMarker(book_page=3, file_ord=0, file_page=3), Paragraph(text="Chapter 1"),
+                Heading(text="Values, Types, and Operators", level=2, level_source="mineru"), Paragraph(text="Text.")]
+    out, dropped = passes.without_title(labelled, "1 Values, Types, and Operators")
+    assert dropped == 1 and [getattr(b, "text", None) for b in out] == [None, "Chapter 1", "Text."]
 
 
 def test_lettered_appendices_count_as_numbered_and_a_lone_article_does_not():
     def row(title, first, last):
-        return {"kind": "chapter", "title": title, "level": 1, "first_page": first, "last_page": last}
+        return {"kind": "node", "title": title, "level": 1, "first_page": first, "last_page": last}
 
     book = [row("1 Basics", 1, 80), row("Appendix A: Keywords", 81, 90), row("Credits", 91, 92), row("Index", 93, 100)]
-    assert [c["role"] for c in assemble.chapters_of(book)] == ["body", "body", "service", "service"]
+    assert _roles(book) == ["body", "body", "service", "service"]
     bare = [row("1 Basics", 1, 80), row("A Debugging", 81, 85), row("B Analysis", 86, 95), row("Index", 96, 100)]
-    assert [c["role"] for c in assemble.chapters_of(bare)] == ["body", "body", "body", "service"]
+    assert _roles(bare) == ["body", "body", "body", "service"]
     initial = [row("1 Basics", 1, 90), row("Pedro A. de Miguel", 91, 100)]
-    assert [c["role"] for c in assemble.chapters_of(initial)] == ["body", "service"]
+    assert _roles(initial) == ["body", "service"]
     article = [row("1 Basics", 1, 90), row("A Brief Guide", 91, 100)]
-    assert [c["role"] for c in assemble.chapters_of(article)] == ["body", "service"]
+    assert _roles(article) == ["body", "service"]
 
 
 def test_the_book_s_heads_take_its_running_heads_and_rising_folios_but_not_a_number_ending_the_text():
@@ -237,7 +340,35 @@ def test_headings_inside_a_chapter_at_the_deepest_level_stay_paragraphs_and_the_
 
     blocks = [PageMarker(book_page=1, file_ord=0, file_page=1), Heading(text="Inner", level=1, level_source="docling"),
               Paragraph(text="Body.")]
-    out, counts = passes.chapter_levels(blocks, 5, [])
+    out, counts = passes.piece_levels(blocks, 5, [])
     assert counts["headings_flattened"] == 1 and isinstance(out[1], Paragraph) and out[1].text == "Inner"
-    from document.model import Chapter
-    assert "Inner" in markdown.chapter(Chapter(ord=1, title="Deep", level=5, first_page=1, last_page=1, blocks=out))
+    from document.model import Piece
+    assert "Inner" in markdown.piece(Piece(ord=1, title="Deep", level=5, first_page=1, last_page=1, blocks=out))
+
+
+def test_a_node_takes_the_heading_closest_to_its_title_and_a_heading_goes_to_one_node():
+    blocks = [Heading(text="1.4 Description", level=2, level_source="docling"),
+              Heading(text="1.4.1 Description", level=3, level_source="docling")]
+    assert passes.pins(blocks, ["1.4.1 Description", "1.4 Description"]) == [1, 0]
+    counts = {}
+    assert passes.pins(blocks[:1], ["1.4 Description", "1.4 Description"], counts) == [0, None]
+    assert counts == {"pins_contested": 1}
+    out, counts = passes.piece_levels(blocks, 1, [("1.4.1 Description", 3)])
+    assert [(h.level, h.level_source) for h in out] == [(1, "docling"), (2, "structure")]
+
+
+def test_a_tail_counts_as_cut_from_the_own_re_read_only_where_that_re_read_holds_the_boundary_page(monkeypatch):
+    marked = {"docling": [PageMarker(book_page=4, file_ord=0, file_page=4), Paragraph(text="before")],
+              "mineru": [PageMarker(book_page=4, file_ord=0, file_page=4), Paragraph(text="before"),
+                         PageMarker(book_page=5, file_ord=0, file_page=5), Paragraph(text="tail")]}
+    monkeypatch.setattr(assemble, "_kept", lambda book_id, f, a, b, regime, engine, *rest: engine)
+    monkeypatch.setattr(assemble.reading, "adapt",
+                        lambda engine, kept, **kw: SimpleNamespace(blocks=list(marked[kept]), furniture=[]))
+    monkeypatch.setattr(assemble.passes, "conf", lambda: {"scan_engine": "mineru"})
+    monkeypatch.setattr(assemble.passes, "recognised", lambda reads, *rest: ([], {}, {}))
+    monkeypatch.setattr(assemble, "_kept_figures", lambda path, blocks, keep: blocks)
+    got = assemble.Assembled(piece=None, markdown="")
+    f = SimpleNamespace(ord=0, first_page=1, pages=5, file_path="b.pdf")
+    assemble._range_blocks(1, f, 4, 5, "scan", ["en"], got, got.counts, None,
+                           boundaries=[passes.Boundary(page=5, title="Next", tail=True)], neighbour={})
+    assert got.counts["boundary_own_reading"] == 1

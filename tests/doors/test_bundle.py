@@ -7,7 +7,7 @@ from pathlib import Path
 import settings
 from quality import book as book_quality
 from stages import bundle
-from stages.toc import collect
+from stages.structure import collect
 
 from tests.doors.test_runs import TEXT, _drain, engines
 from tests.fixtures import build, text_page
@@ -19,7 +19,7 @@ SCRIPT = Path(__file__).parents[2] / "scripts" / "check_links.py"
 
 
 def _schema() -> dict:
-    return json.loads(re.search(r"## report.json \(schema 2\).*?```json\n(.*?)```", CONTRACT.read_text(), re.S)[1])
+    return json.loads(re.search(r"## report.json \(schema 3\).*?```json\n(.*?)```", CONTRACT.read_text(), re.S)[1])
 
 
 # every key the contract's example names is in the report; an empty example object ({}) is free-form
@@ -67,10 +67,14 @@ def test_a_plain_book_s_bundle_carries_the_contract_s_report_and_survives_a_move
     _drain()
     bundle = settings.DATA_DIR / client.get(f"/v1/runs/{run_id}").json()["bundle_dir"]
     report = json.loads((bundle / "report.json").read_text())
-    assert report["schema"] == 2 and _missing(_schema(), report) == [] and _unnamed(report, _schema()) == []
+    assert report["schema"] == 3 and _missing(_schema(), report) == [] and _unnamed(report, _schema()) == []
     assert report["profile"]["preset"] == "default" and (bundle / "profile.yaml").exists()
-    assert (bundle / "images").is_dir() and report["metadata"]["toc_sources"]["base"] == "bookmarks"
-    assert report["metadata"]["fields"] == {} and report["chapters"][0]["files"][0]["file"] == 0
+    assert (bundle / "images").is_dir() and report["metadata"]["structure_sources"]["base"] == "bookmarks"
+    nodes = json.loads((bundle / "structure.json").read_text())
+    assert nodes and all(n["unit"] is not None for n in nodes if n["pinned"])
+    assert sum(v["nodes"] for v in report["numbers"]["nodes_by_level"].values()) == len(nodes)
+    assert (report["numbers"]["blocks_without_node"], report["numbers"]["blocks_in_two"]) == (0, 0)
+    assert report["metadata"]["fields"] == {} and report["pieces"][0]["files"][0]["file"] == 0
     moved = shutil.copytree(bundle, tmp_path / "moved")
     spec = importlib.util.spec_from_file_location("check_links", SCRIPT)
     links = importlib.util.module_from_spec(spec)
@@ -90,7 +94,7 @@ def test_report_md_reads_lists_as_text_a_book_without_pages_as_n_a_and_names_onl
               "seconds": {"read": {"docling": 0.0}, "readings_untimed": 0, "assemble": 0.0, "pages": 0,
                           "per_page": {}},
               "metadata": {"fields": {"authors": {"value": ["Ann", "Bob"], "source": "isbn", "confidence": 1}}},
-              "chapters": []}
+              "pieces": []}
     text = bundle._summary(report)
     assert "| languages / OCR data / missing | en, ru / eng, rus / none |" in text
     assert "| pages cut: printed contents / cover | 3, 4 / none |" in text

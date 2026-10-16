@@ -9,39 +9,40 @@ import settings
 import yaml
 from engines import ocr_languages
 from knobs import registry
-from orm.catalogue import Artifact, BookFile, Chapter, Profile, Run, TocEntry
+from orm.catalogue import Artifact, BookFile, Piece, Profile, Run, StructureNode
 from orm.db import Session
 from quality import book as book_quality
 from sqlalchemy import select
 from writers import markdown
 
-from stages import assemble, intake, result_run, run_chapters, run_state
+from stages import assemble, intake, result_run, run_pieces, run_state
 from stages.metadata import fields as metadata_fields
-from stages.toc import evidence
+from stages.structure import evidence
 
 
 def _slug(text: str) -> str:
     return re.sub(r"[^\w]+", "-", text.lower()).strip("-")[:80] or "book"
 
 
-def _chapter_text(session, run_id: int, ord: int) -> tuple[str, str | None]:
-    kept = _newest(session, run_id, ord, "chapter.md")
+def _piece_text(session, run_id: int, ord: int) -> tuple[str, str | None]:
+    kept = _newest(session, run_id, ord, "piece.md")
     if kept is None:
-        return f"<!-- chapter ord={ord} missing -->", None
+        return f"<!-- node ord={ord} missing -->", None
     return artifacts.read(kept).decode(), kept.sha256
 
 
 def _newest(session, run_id: int, ord: int, name: str) -> Artifact | None:
     return session.scalar(select(Artifact).where(Artifact.run_id == run_id, Artifact.name == name,
-                                                 Artifact.chapter_ord == ord).order_by(Artifact.id.desc()).limit(1))
+                                                 Artifact.piece_ord == ord, Artifact.removed_at.is_(None))
+                          .order_by(Artifact.id.desc()).limit(1))
 
 
-# the pictures written with the chapter's newest text, by their name in the bundle
-def _chapter_images(session, run_id: int, ord: int) -> dict[str, Artifact]:
-    text = _newest(session, run_id, ord, "chapter.md")
+# the pictures written with the piece's newest text, by their name in the bundle
+def _piece_images(session, run_id: int, ord: int) -> dict[str, Artifact]:
+    text = _newest(session, run_id, ord, "piece.md")
     if text is None:
         return {}
-    rows = session.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.chapter_ord == ord,
+    rows = session.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.piece_ord == ord,
                                                   Artifact.input_hash == text.input_hash,
                                                   Artifact.name.startswith("images/")).order_by(Artifact.id))
     return {row.name: row for row in rows}
@@ -56,17 +57,17 @@ def _image_counts(document: str, images: dict) -> dict:
             "unreferenced_files": len(set(images) - set(links))}
 
 
-# which code and engine builds made which chapters: more than one entry means reruns mixed versions in the bundle
-def _made_by(chapters: list) -> list[dict]:
+# which code and engine builds made which pieces: more than one entry means reruns mixed versions in the bundle
+def _made_by(pieces: list) -> list[dict]:
     groups: dict[str, dict] = {}
-    for c in chapters:
+    for c in pieces:
         made = (c.checks or {}).get("made_by")
         if made is not None:
-            groups.setdefault(json.dumps(made, sort_keys=True), {**made, "chapters": []})["chapters"].append(c.ord)
+            groups.setdefault(json.dumps(made, sort_keys=True), {**made, "pieces": []})["pieces"].append(c.ord)
     return list(groups.values())
 
 
-# a chapter's pages per file, in that file's own numbering, so a split book can be found
+# a piece's pages per file, in that file's own numbering, so a split book can be found
 def _file_pages(files: list[BookFile], row: dict) -> list[dict]:
     if row.get("first_page") is None or row.get("last_page") is None:
         return []
@@ -74,46 +75,47 @@ def _file_pages(files: list[BookFile], row: dict) -> list[dict]:
                                                                                   row["last_page"])]
 
 
-# where the toc came from: the source that gave its base and the sources whose votes its entries carry
-def _toc_sources(session, toc_version_id: int) -> dict:
-    votes = session.scalars(select(TocEntry.votes).where(TocEntry.toc_version_id == toc_version_id))
-    return {"base": evidence.base(session, toc_version_id),
+# where the structure came from: the source that gave its base and the sources whose votes its entries carry
+def _structure_sources(session, structure_version_id: int) -> dict:
+    votes = session.scalars(select(StructureNode.votes)
+                            .where(StructureNode.structure_version_id == structure_version_id))
+    return {"base": evidence.base(session, structure_version_id),
             "voting": sorted({source for v in votes for source in (v or {})})}
 
 
-def _chapter_entry(c: Chapter, row: dict, role: str | None, files: list[BookFile]) -> dict:
+def _piece_entry(c: Piece, row: dict, role: str | None, files: list[BookFile]) -> dict:
     return {"ord": c.ord, "title": row.get("title"), "role": role,
             "pages": f"{row.get('first_page')}-{row.get('last_page')}", "files": _file_pages(files, row),
             "status": c.status, "errors": c.errors, "checks": c.checks}
 
 
 # report.json, every key of it made here
-def _report(session, run: Run, book: dict, files: list[BookFile], rows: dict, chapters: list, numbers: dict,
+def _report(session, run: Run, book: dict, files: list[BookFile], rows: dict, pieces: list, numbers: dict,
             images: dict, doubled: list, fields: dict, profile: Profile | None) -> dict:
-    cut = run_chapters.cut(session, run)
-    roles = {c["ord"]: c["role"] for c in run_chapters.chapters(session, run)}
-    return {"schema": 2, "book": book,
+    cut = run_pieces.cut(session, run)
+    roles = {c["ord"]: c["role"] for c in run_pieces.pieces(session, run)}
+    return {"schema": 3, "book": book,
             "run": {"id": run.id, "dir": run.dir, "code_hash": run.code_hash, "engine_builds": run.engine_builds,
-                    "made_by": _made_by(chapters)},
-            "metadata": {"metadata_version": run.metadata_version_id, "toc_version": run.toc_version_id,
-                         "toc_sources": _toc_sources(session, run.toc_version_id), "fields": fields},
-            "numbers": {**numbers, "toc_entries": len(rows),
+                    "made_by": _made_by(pieces)},
+            "metadata": {"metadata_version": run.metadata_version_id, "structure_version": run.structure_version_id,
+                         "structure_sources": _structure_sources(session, run.structure_version_id), "fields": fields},
+            "numbers": {**numbers, "nodes": len(rows),
                         "pages_cut": {why: sorted(pages) for why, pages in cut.items()}},
             "images": images, "duplicates": doubled, "languages": _languages(run),
-            "seconds": _seconds(session, run.id, chapters, book["pages"]),
+            "seconds": _seconds(session, run.id, pieces, book["pages"]),
             "profile_search": profiles.SEARCH_SKIPPED, "profile": profile_view(profile),
-            "chapters": [_chapter_entry(c, rows.get(c.ord, {}), roles.get(c.ord), files) for c in chapters]}
+            "pieces": [_piece_entry(c, rows.get(c.ord, {}), roles.get(c.ord), files) for c in pieces]}
 
 
 # what the book cost per phase: each reading's own time (kept with it, so a cached one still counts) and the assembly
-def _seconds(session, run_id: int, chapters: list, pages: int) -> dict:
-    ids = {i for c in chapters for i in run_state.round_readings(session, run_id, c.ord)[0].values()}
+def _seconds(session, run_id: int, pieces: list, pages: int) -> dict:
+    ids = {i for c in pieces for i in run_state.round_readings(session, run_id, c.ord)[0].values()}
     rows = list(session.scalars(select(Artifact).where(Artifact.id.in_(ids)))) if ids else []
     # an engine with a reading kept before readings were timed has no honest total, so it reads unknown
     read = {e: None if any("seconds" not in (r.meta or {}) for r in rows if (r.meta or {}).get("engine") == e)
             else round(sum(r.meta["seconds"] for r in rows if (r.meta or {}).get("engine") == e), 1)
             for e in settings.ENGINES}
-    assembly = round(sum(c.seconds or 0 for c in chapters), 1)
+    assembly = round(sum(c.seconds or 0 for c in pieces), 1)
     total = None if None in read.values() else sum(read.values()) + assembly
     per_page = {**{f"read_{e}": None if v is None else round(v / pages, 2) for e, v in read.items()},
                 "assemble": round(assembly / pages, 2),
@@ -122,14 +124,14 @@ def _seconds(session, run_id: int, chapters: list, pages: int) -> dict:
             "pages": pages, "per_page": per_page}
 
 
-# the knobs a run was made with; `applied` is what differs from the registry's defaults, per book and per chapter
+# the knobs a run was made with; `applied` is what differs from the registry's defaults, per book and per piece
 def profile_view(profile: Profile | None) -> dict | None:
     if profile is None:
         return None
     defaults = {path: spec["default"] for path, spec in registry.run_knobs().items()}
     applied = {path: v["value"] for path, v in profile.values.items() if v["value"] != defaults.get(path)}
     return {"id": profile.id, "preset": profile.preset, "sha256": profile.sha256, "knobs_applied": applied,
-            "chapter_overrides": profile.chapter_overrides}
+            "piece_overrides": profile.piece_overrides}
 
 
 # a book language without OCR data is read without it; the report names it so its data can be fetched
@@ -158,16 +160,16 @@ def _reading_cost(report: dict) -> str:
     return f"{named} ({untimed} readings kept before they were timed)" if untimed else named or "none"
 
 
-# the worst-chapter lists report.md shows, in its order: the key in numbers.worst, the heading, how a value reads
+# the worst-piece lists report.md shows, in its order: the key in numbers.worst, the heading, how a value reads
 WORST = (("lost_text", "Most text lost", lambda c: _percent(c["lost_text"])),
          ("extra_text", "Most text not in the layer", lambda c: _percent(c["extra_text"])),
          ("out_of_order", "Most layer word runs out of order", lambda c: _percent(c["out_of_order"])),
-         ("repeated_paragraphs", "Most paragraphs met twice in one chapter", lambda c: c["repeated_paragraphs"]),
+         ("repeated_paragraphs", "Most paragraphs met twice in one piece", lambda c: c["repeated_paragraphs"]),
          ("long_headings", "Most long headings", lambda c: c["long_headings"]),
-         ("max_heading_level", "Headings deeper than a chapter's sub-sections",
+         ("max_heading_level", "Headings deeper than a piece's sub-sections",
           lambda c: f"level {c['max_heading_level']}"),
          ("agreement", "Least agreement on recognised pages", lambda c: c["agreement"]))
-WORST_AFTER = (("subs_missing", "Most toc sub-entries missing", lambda c: c["missing"]),)
+WORST_AFTER = (("subs_missing", "Most structure sub-nodes missing", lambda c: c["missing"]),)
 
 
 def _worst(worst: dict, lists: tuple) -> list[str]:
@@ -178,25 +180,25 @@ def _worst(worst: dict, lists: tuple) -> list[str]:
     return lines
 
 
-# the short human summary: the book's numbers, then the worst chapters by each of them
+# the short human summary: the book's numbers, then the worst pieces by each of them
 def _summary(report: dict) -> str:
     n, i, langs = report["numbers"], report["images"], report["languages"]
     assembly = (report.get("seconds") or {}).get("per_page", {}).get("assemble")
     lines = [f"# {report['book']['title']}", "",
              "| | |", "|---|---|",
-             f"| chapters | {n['chapters_done']} of {n['chapters']}, failed {_listed(n['chapters_failed'])} |",
+             f"| pieces | {n['pieces_done']} of {n['pieces']}, failed {_listed(n['pieces_failed'])} |",
              f"| text lost against the layer | {_percent(n['lost_text'])} on {n['layer_pages']} pages |",
              f"| text not in the layer | {_percent(n['extra_text'])} |",
              f"| layer words an engine set aside beyond the book's heads | {n.get('set_aside_words', 0)} |",
-             f"| toc sub-entries found as headings | {n['subs_found']} of {n['subs']} |",
+             f"| structure sub-nodes found as headings | {n['subs_found']} of {n['subs']} |",
              f"| long or empty headings | {n['long_headings']} / {n['empty_headings']} |",
              f"| headings by where their level came from | "
              f"{', '.join(f'{k} {v}' for k, v in sorted((n.get('heading_sources') or {}).items())) or 'none'} |",
-             f"| deepest heading level / chapters below their own sections | {n.get('max_heading_level', 0)} / "
-             f"{_listed(n.get('chapters_below_sections'))} |",
+             f"| deepest heading level / pieces below their own sections | {n.get('max_heading_level', 0)} / "
+             f"{_listed(n.get('pieces_below_sections'))} |",
              f"| figures / image files / broken links | {i['figures']} / {i['files']} / {i['broken_links']} |",
-             f"| paragraphs met in two chapters | {n['duplicates']} |",
-             f"| paragraphs met twice in one chapter | {n.get('repeated_paragraphs', 0)} |",
+             f"| paragraphs met in two pieces | {n['duplicates']} |",
+             f"| paragraphs met twice in one piece | {n.get('repeated_paragraphs', 0)} |",
              f"| the book's running heads and folios left in the text | {n.get('running_heads_in_text', 0)} |",
              f"| layer word runs out of order | {_percent(n.get('out_of_order'))} |",
              f"| recognised pages, engines' word agreement, words a dictionary knows | {n['recognised_pages']}, "
@@ -215,59 +217,117 @@ def _summary(report: dict) -> str:
         lines += ["", "## Metadata", ""]
         lines += [f"- {name}: {_listed(f['value'])} ({f['source']}{', set by hand' if f['source'] == 'manual' else ''})"
                   for name, f in fields.items() if f["value"] not in (None, "", [])]
-    service = [c for c in report["chapters"] if c["role"] == "service"]
+    service = [c for c in report["pieces"] if c["role"] == "service"]
     if service:
-        lines += ["", "## Service chapters (before the first numbered chapter and after the last; sub-entries)", ""]
+        lines += ["", "## Service pieces (before the first numbered piece and after the last; sub-nodes)", ""]
         lines += [f"- {c['ord']} {c['title']} {c['pages']}: {(c['checks'] or {}).get('subs', 0)}" for c in service]
     lines += _worst(n["worst"], WORST_AFTER)
     return "\n".join(lines) + "\n"
 
 
-# the bundle: the book title, the chapters in toc order, the images, report.json and report.md with the numbers
+# every node of the structure with the unit that holds it and whether its heading was found there
+def _structure(session, run: Run, pieces: list, rows: dict[int, dict]) -> list[dict]:
+    held = {}
+    for c in pieces:
+        kept = _newest(session, run.id, c.ord, "model.json")
+        for node in (json.loads(artifacts.read(kept)) if kept is not None else {}).get("nodes", []):
+            held[node["ord"]] = (c.ord, node["pinned"], node.get("anchored", node["pinned"]))
+    planned = run_pieces.pieces(session, run)
+
+    # a node no piece holds goes with the piece a rerun of it would take, unpinned
+    def unit(ord: int) -> int | None:
+        if ord in held:
+            return held[ord][0]
+        piece = run_pieces.holding(planned, ord, rows[ord]["first_page"])
+        return piece["ord"] if piece is not None else None
+
+    return [{"ord": ord, "title": r["title"], "level": r["level"], "parent_ord": r.get("parent_ord"),
+             "pages": [r["first_page"], r["last_page"]], "unit": unit(ord),
+             "pinned": held.get(ord, (None, False))[1], "anchored": held.get(ord, (None, False, False))[2]}
+            for ord, r in sorted(rows.items())]
+
+
+# every block in exactly one node: blocks no node holds, and engine blocks two pieces both wrote (a page read twice)
+def _ownership(session, run_id: int, pieces: list) -> dict:
+    seen: dict[tuple, int] = {}
+    counts = {"blocks_without_node": 0, "blocks_in_two": 0, "blocks_by_page": 0}
+    for c in pieces:
+        kept = _newest(session, run_id, c.ord, "model.json")
+        page = None
+        for b in (json.loads(artifacts.read(kept)) if kept is not None else {}).get("blocks", []):
+            if b.get("type") == "page":
+                page = b["book_page"]
+                continue
+            counts["blocks_without_node"] += b.get("parent_ord") is None
+            counts["blocks_by_page"] += bool(b.get("by_page"))
+            where = b.get("where")
+            if where:
+                key = (page, where["engine"], tuple(where["box"]))
+                counts["blocks_in_two"] += key in seen and seen[key] != c.ord
+                seen.setdefault(key, c.ord)
+    return counts
+
+
+# nodes and pinned nodes per level, the tree's own count of headings found
+def _pins_by_level(nodes: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for n in nodes:
+        level = out.setdefault(str(n["level"]), {"nodes": 0, "pinned": 0})
+        level["nodes"] += 1
+        level["pinned"] += n["pinned"]
+    return out
+
+
+# the bundle: the book title, the pieces in structure order, the images, report.json and report.md with the numbers
 def write(run_id: int) -> dict:
     with Session() as session:
         run = session.get(Run, run_id)
-        chapters = list(session.scalars(select(Chapter).where(Chapter.run_id == run_id).order_by(Chapter.ord)))
-        rows = {r["ord"]: r for r in run_chapters.rows(session, run.toc_version_id)}
+        pieces = list(session.scalars(select(Piece).where(Piece.run_id == run_id).order_by(Piece.ord)))
+        rows = {r["ord"]: r for r in run_pieces.rows(session, run.structure_version_id)}
         files = intake.files_of(run.book_id)
         stem = Path(files[0].file_name).stem if files else str(run.book_id)
         fields = metadata_fields.of_version(session, run.metadata_version_id)
         title = str((fields.get("title") or {}).get("value") or stem)
         book_id = run.book_id
-        kept = {c.ord: _chapter_text(session, run_id, c.ord) for c in chapters}
+        kept = {c.ord: _piece_text(session, run_id, c.ord) for c in pieces}
         texts = {ord: text for ord, (text, _) in kept.items()}
-        images = {name: row for c in chapters for name, row in _chapter_images(session, run_id, c.ord).items()}
-        document = markdown.book(title, [texts[c.ord] for c in chapters])
+        images = {name: row for c in pieces for name, row in _piece_images(session, run_id, c.ord).items()}
+        document = markdown.book(title, [texts[c.ord] for c in pieces])
         linked = _image_counts(document, images)
         doubled = book_quality.duplicates(texts)
         numbers = book_quality.numbers(
             [{"ord": c.ord, "title": rows.get(c.ord, {}).get("title"), "status": c.status, "checks": c.checks}
-             for c in chapters], doubled)
-        figures = sum((c.checks or {}).get("figures", 0) for c in chapters)
+             for c in pieces], doubled)
+        figures = sum((c.checks or {}).get("figures", 0) for c in pieces)
+        structure = _structure(session, run, pieces, rows)
+        numbers["nodes_by_level"] = _pins_by_level(structure)
+        numbers.update(_ownership(session, run_id, pieces))
+        numbers["reading_level"] = run.reading_level
         book = {"id": book_id, "sha256": [f.sha256 for f in files], "title": title,
                 "pages": sum(f.pages for f in files)}
         profile = session.get(Profile, run.profile_id) if run.profile_id is not None else None
-        report = _report(session, run, book, files, rows, chapters, numbers, {"figures": figures, **linked},
+        report = _report(session, run, book, files, rows, pieces, numbers, {"figures": figures, **linked},
                          doubled, fields, profile)
     owner, base = artifacts.Owner(run_id=run_id), Path("bundles") / str(book_id) / str(run_id)
-    # the bundle names its chapters' content, so a chapter written again makes a new bundle
+    # the bundle names its pieces' content, so a piece written again makes a new bundle
     made_from = artifacts.Inputs({"stage": "bundle", "run": run_id,
-                                  "chapters": {str(ord): sha for ord, (_, sha) in sorted(kept.items())},
+                                  "pieces": {str(ord): sha for ord, (_, sha) in sorted(kept.items())},
                                   "images": {name: row.sha256 for name, row in sorted(images.items())}})
     artifacts.write(owner, base, "", f"{_slug(stem)}.md", document, made_from)
     # images/ is there even for a book without figures, so every bundle has the same layout
     artifacts.directory(base / "images")
     for name, row in images.items():
         artifacts.write(owner, base, "", name, artifacts.read(row), made_from)
+    artifacts.write(owner, base, "", "structure.json", structure, made_from)
     artifacts.write(owner, base, "", "report.json", report, made_from)
     if profile is not None:
         artifacts.write(owner, base, "", "profile.yaml",
                         yaml.safe_dump({"preset": profile.preset, "sha256": profile.sha256, "values": profile.values,
-                                        "chapter_overrides": profile.chapter_overrides}, sort_keys=True), made_from)
+                                        "piece_overrides": profile.piece_overrides}, sort_keys=True), made_from)
     artifacts.write(owner, base, "", "report.md", _summary(report), made_from)
     with Session() as session:
         run = session.get(Run, run_id)
         run_state.to_done(run, str(base))
         session.commit()
     best = result_run.recompute(book_id)
-    return {"bundle": str(base), "chapters": len(chapters), "lost_text": numbers["lost_text"], "result_run": best}
+    return {"bundle": str(base), "pieces": len(pieces), "lost_text": numbers["lost_text"], "result_run": best}

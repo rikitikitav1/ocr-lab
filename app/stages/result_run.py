@@ -2,14 +2,14 @@
 import json
 
 import artifacts
-from orm.catalogue import Artifact, Book, Run, RunStatus, TocVersion
+from orm.catalogue import Artifact, Book, Run, RunStatus, StructureVersion
 from orm.db import Session
 from sqlalchemy import select
 
 from stages import versions
 
 
-# least text lost, then the largest share of toc sections found, then fewest paragraphs met twice, then least text added
+# least text lost, then the largest share of structure nodes found, then fewest repeats, then least text added
 def rank(run_id: int, numbers: dict) -> tuple:
     lost, extra = numbers.get("lost_text"), numbers.get("extra_text")
     subs = numbers.get("subs") or 0
@@ -24,13 +24,13 @@ def _numbers(session, run_id: int) -> dict | None:
     return json.loads(artifacts.read(row)).get("numbers") if row is not None else None
 
 
-# only a run on the book's current toc can be its result: chapters come from it, metadata only names the languages
+# only a run on the book's current structure can be its result: pieces come from it, metadata only names the languages
 def recompute(book_id: int) -> int | None:
     with Session() as session:
-        current = versions.current(session, TocVersion, book_id)
-        toc = current.id if current is not None else None
+        current = versions.current(session, StructureVersion, book_id)
+        structure = current.id if current is not None else None
         runs = session.scalars(select(Run.id).where(Run.book_id == book_id, Run.status == RunStatus.DONE,
-                                                    Run.toc_version_id == toc))
+                                                    Run.structure_version_id == structure))
         rated = [(rank(run_id, numbers), run_id) for run_id in runs if (numbers := _numbers(session, run_id))]
         best = min(rated)[1] if rated else None
         session.get(Book, book_id).result_run_id = best
