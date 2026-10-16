@@ -75,6 +75,12 @@ def subject(title: str | None, contents: str, blurb: str) -> SourceResult:
     out = SourceResult("model", covers=("subject",))
     text = f"Title: {title or 'unknown'}\n\nContents and first pages:\n{contents[:4000]}\n\nBack cover:\n{blurb[:2000]}"
     parsed = model_steps.parse_json(model_steps.call("subject", SUBJECT_PROMPT, text))
+    # a page of bare characters (a kanji key) can drown the title: the second try gets the title and a little text
+    if not parsed.get("field"):
+        shape = (f"Title: {title or 'unknown'}\n\n{contents[:600]}\n\n"
+                 'Answer with this object filled in and nothing else: {"field": "...", "kind": "..."}')
+        parsed = model_steps.parse_json(model_steps.call("subject", SUBJECT_PROMPT, shape,
+                                                         response_format={"type": "json_object"}))
     field, kind = str(parsed.get("field") or "").strip().lower(), str(parsed.get("kind") or "").strip().lower()
     if field and field not in ("field", "what the book is about"):
         model = model_steps.steps()["subject"]["model"]

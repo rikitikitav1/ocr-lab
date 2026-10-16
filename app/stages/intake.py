@@ -11,7 +11,7 @@ from orm.catalogue import Book, BookFile
 from orm.db import Session
 from sqlalchemy import select
 
-from stages.toc.sources import printed_contents
+from stages.structure.sources import printed_contents
 
 STAGE = "intake"
 
@@ -82,18 +82,18 @@ def files_of(book_id: int) -> list[BookFile]:
 
 
 def code_hash() -> str:
-    sources = settings.APP_DIR / "stages" / "toc" / "sources"
+    sources = settings.APP_DIR / "stages" / "structure" / "sources"
     own = [settings.APP_DIR / "stages" / "intake.py", sources / "__init__.py", sources / "printed_contents.py",
            sources / "numbering.py"]
-    return code_version.files_hash(own, ("toc.yaml",)).hexdigest()[:16]
+    return code_version.files_hash(own, ("structure.yaml",)).hexdigest()[:16]
 
 
 def probe(book_id: int) -> dict:
     link_sources(book_id)
     files = files_of(book_id)
-    given = book_knobs.of(book_id)["toc.contents_pages"]
+    given = book_knobs.of(book_id)["structure.contents_pages"]
     inputs = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], "layer_rule": pdf.LAYER_RULE,
-                               "knobs": {"toc.contents_pages": given}, "code": code_hash()})
+                               "knobs": {"structure.contents_pages": given}, "code": code_hash()})
     owner = artifacts.Owner(book_id=book_id)
     done = artifacts.find_done(owner, STAGE, "probe.json", inputs.key)
     if done is not None:
@@ -104,14 +104,14 @@ def probe(book_id: int) -> dict:
         result = _probe(files)
         if given:
             result["has_printed_contents"] = True
-            result["toc_sources"]["contents_pages_given"] = given
+            result["structure_sources"]["contents_pages_given"] = given
         artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "probe.json", result, inputs)
     with Session() as session:
         book = session.get(Book, book_id)
         book.text_layer = result["text_layer"]
         book.has_bookmarks = result["has_bookmarks"]
         book.has_printed_contents = result["has_printed_contents"]
-        book.toc_sources = result["toc_sources"]
+        book.structure_sources = result["structure_sources"]
         session.commit()
     return result
 
@@ -140,7 +140,7 @@ def _probe(files: list[BookFile]) -> dict:
         per_file.append({"ord": f.ord, "pages": f.pages, "pages_without_layer": len(missing),
                          "bookmarks": len(marks)})
     total = sum(f.pages for f in files)
-    # the toc stage's own finder, so the catalogue and the toc never disagree on whether contents exist
+    # the structure stage's own finder, so the catalogue and the structure never disagree on whether contents exist
     contents_pages, _ = printed_contents.find_pages(files, None)
     return {
         "text_layer": {"pages": total, "without_layer": without_layer, "with_layer": total - len(without_layer),
@@ -148,6 +148,6 @@ def _probe(files: list[BookFile]) -> dict:
         "where": located(files, [*without_layer, *garbled, *contents_pages]),
         "has_bookmarks": bookmarks > 0,
         "has_printed_contents": bool(contents_pages),
-        "toc_sources": {"bookmarks": bookmarks, "printed_contents_pages": contents_pages},
+        "structure_sources": {"bookmarks": bookmarks, "printed_contents_pages": contents_pages},
         "files": per_file,
     }

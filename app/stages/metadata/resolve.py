@@ -92,7 +92,7 @@ def _manual(version: MetadataVersion | None) -> SourceResult:
 def inputs(book_id: int, manual: SourceResult) -> artifacts.Inputs:
     files = intake.files_of(book_id)
     parts = {"stage": STAGE, "code": code_hash(), "files": [f.sha256 for f in files],
-             # only the knobs set on the book, as the toc keys: a new knob at its default stales no book
+             # only the knobs set on the book, as the structure keys: a new knob at its default stales no book
              "knobs": {k: v for k, v in book_knobs.overrides(book_id).items() if k.startswith("metadata.")},
              "manual": [(c.field, c.value) for c in manual.candidates]}
     window_text = _title_window(book_id)

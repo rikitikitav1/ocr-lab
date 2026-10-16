@@ -4,4 +4,4 @@ steps:
   # measured on six books: qwen2.5 answered in Chinese on two, llama3.1 misnamed two kinds, gemma2 got all six
   subject: {provider: ollama, model: "gemma2:9b", temperature: 0}
   # reads printed contents the parser could not; not yet measured
-  toc_reader: {provider: ollama, model: "qwen2.5:7b-w16384", temperature: 0}
+  contents_reader: {provider: ollama, model: "qwen2.5:7b-w16384", temperature: 0}

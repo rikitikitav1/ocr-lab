@@ -241,3 +241,21 @@ def test_the_tools_that_wrote_the_files_are_kept_once_each():
     found = file_metadata.read([{"Producer": abbyy, "Creator": abbyy}, {"Producer": gs}], ["a.pdf", "b.pdf"])
     assert [c.value for c in found.candidates if c.field == "made_with"] == [[abbyy, gs]]
     assert not [c for c in file_metadata.read([{}], ["a.pdf"]).candidates if c.field == "made_with"]
+
+
+def test_the_subject_is_asked_again_with_its_shape_when_the_answer_has_none(monkeypatch):
+    import model_steps
+    from stages.metadata import model_reader
+
+    calls = []
+
+    def answer(step, system, user, **extra):
+        calls.append(extra)
+        filled = '{"field": "japanese-russian dictionary", "kind": "reference"}'
+        return filled if extra else "This appears to be a dictionary."
+
+    monkeypatch.setattr(model_steps, "call", answer)
+    monkeypatch.setattr(model_steps, "steps", lambda: {"subject": {"model": "m"}})
+    found = model_reader.subject("Японско-русский словарь", "一 [一, 丁, 七]", "")
+    assert [c.value for c in found.candidates] == ["japanese-russian dictionary, reference"]
+    assert calls == [{}, {"response_format": {"type": "json_object"}}]

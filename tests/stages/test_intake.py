@@ -53,7 +53,7 @@ def test_pages_run_across_files_and_layer_is_per_page(stand, files):
     assert probed["text_layer"]["without_layer"] == [3]
     assert probed["has_bookmarks"] is True
     assert probed["has_printed_contents"] is True
-    assert probed["toc_sources"]["bookmarks"] == 3
+    assert probed["structure_sources"]["bookmarks"] == 3
 
 
 def test_probe_is_reused_when_files_did_not_change(stand, files, monkeypatch):
@@ -71,7 +71,7 @@ def test_contents_at_the_end_of_the_book_count_as_printed_contents(stand, tmp_pa
     path = build(tmp_path / "late.pdf", [*body, contents_page()])
     book, _ = intake.register([(path, "late.pdf")])
     probed = intake.probe(book)
-    assert probed["has_printed_contents"] is True and probed["toc_sources"]["printed_contents_pages"] == [71]
+    assert probed["has_printed_contents"] is True and probed["structure_sources"]["printed_contents_pages"] == [71]
 
 
 def test_a_listed_book_page_names_its_file_and_its_page_in_that_file():
