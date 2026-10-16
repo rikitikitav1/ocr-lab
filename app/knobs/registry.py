@@ -22,9 +22,9 @@ def registry() -> dict:
                                for knob, spec in g["knobs"].items()}}
               for name, g in _groups().items()}
     book_defaults = book_knobs.defaults()
-    groups["book"] = {"question": "what the metadata and toc stages read before any run",
+    groups["book"] = {"question": "what the metadata and structure stages read before any run",
                       "knobs": {path: {"help": help, "default": book_defaults[path], "scope": "book",
-                                       "probe": "the toc and metadata evaluations", "cost": "cpu"}
+                                       "probe": "the structure and metadata evaluations", "cost": "cpu"}
                                 for path, help in book_knobs.KNOBS.items()}}
     return {"groups": groups}
 

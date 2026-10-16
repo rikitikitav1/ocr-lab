@@ -1,6 +1,6 @@
 import logging_setup
 import settings
-from api.v1 import books, eval, jobs, knobs, runs, stand, toc, workbench
+from api.v1 import books, eval, jobs, knobs, layout, runs, stand, structure, workbench
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from mcp_tools import KINDS, kind_of, mcp
@@ -11,7 +11,7 @@ mcp_app = mcp.http_app(path="/", stateless_http=True)
 app = FastAPI(title="ocr-lab", lifespan=mcp_app.lifespan)
 app.mount("/mcp", mcp_app)
 
-for module in (books, eval, jobs, knobs, runs, stand, toc, workbench):
+for module in (books, eval, jobs, knobs, layout, runs, stand, structure, workbench):
     app.include_router(module.router, prefix="/v1")
 
 

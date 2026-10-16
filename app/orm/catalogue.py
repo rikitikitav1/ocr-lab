@@ -16,7 +16,7 @@ class Book(Base):
     text_layer: Mapped[dict | None] = mapped_column(JSONB)
     has_bookmarks: Mapped[bool | None] = mapped_column(Boolean)
     has_printed_contents: Mapped[bool | None] = mapped_column(Boolean)
-    toc_sources: Mapped[dict | None] = mapped_column(JSONB)
+    structure_sources: Mapped[dict | None] = mapped_column(JSONB)
     stage: Mapped[str] = mapped_column(Text, default="uploaded")
     result_run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("runs.id"))
     knobs: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -58,8 +58,8 @@ class MetadataField(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class TocVersion(Base):
-    __tablename__ = "toc_versions"
+class StructureVersion(Base):
+    __tablename__ = "structure_versions"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     book_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("books.id"))
     version: Mapped[int] = mapped_column(Integer)
@@ -67,12 +67,27 @@ class TocVersion(Base):
     job_id: Mapped[int | None] = mapped_column(BigInteger)
     current: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    depth: Mapped[int] = mapped_column(Integer, default=0)
 
 
-class TocEntry(Base):
-    __tablename__ = "toc_entries"
+class LayoutVersion(Base):
+    __tablename__ = "layout_versions"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    toc_version_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("toc_versions.id"))
+    book_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("books.id"))
+    kind: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    input_hash: Mapped[str] = mapped_column(Text)
+    job_id: Mapped[int | None] = mapped_column(BigInteger)
+    current: Mapped[bool] = mapped_column(Boolean, default=False)
+    structure_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("structure_versions.id"))
+    layout: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StructureNode(Base):
+    __tablename__ = "nodes"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    structure_version_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("structure_versions.id"))
     ord: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(Text)
     level: Mapped[int] = mapped_column(Integer)
@@ -81,6 +96,7 @@ class TocEntry(Base):
     last_page: Mapped[int | None] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(Text)
     votes: Mapped[dict] = mapped_column(JSONB, default=dict)
+    parent_ord: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -90,7 +106,7 @@ class Profile(Base):
     book_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("books.id"))
     preset: Mapped[str] = mapped_column(Text)
     values: Mapped[dict] = mapped_column(JSONB)
-    chapter_overrides: Mapped[dict] = mapped_column(JSONB, default=dict)
+    piece_overrides: Mapped[dict] = mapped_column(JSONB, default=dict)
     sha256: Mapped[str] = mapped_column(Text)
     parent_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("profiles.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -119,7 +135,7 @@ class Run(Base):
     book_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("books.id"))
     profile_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("profiles.id"))
     metadata_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("metadata_versions.id"))
-    toc_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("toc_versions.id"))
+    structure_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("structure_versions.id"))
     format: Mapped[str] = mapped_column(Text, default="markdown")
     dir: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, default="queued")
@@ -127,14 +143,15 @@ class Run(Base):
     code_hash: Mapped[str | None] = mapped_column(Text)
     engine_builds: Mapped[dict] = mapped_column(JSONB, default=dict)
     bundle_dir: Mapped[str | None] = mapped_column(Text)
+    reading_level: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class Chapter(Base):
-    __tablename__ = "chapters"
+class Piece(Base):
+    __tablename__ = "pieces"
     run_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("runs.id"), primary_key=True)
     ord: Mapped[int] = mapped_column(Integer, primary_key=True)
-    toc_entry_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("toc_entries.id"))
+    node_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("nodes.id"))
     status: Mapped[str] = mapped_column(Text, default="pending")
     engine: Mapped[str | None] = mapped_column(Text)
     checks: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -149,10 +166,10 @@ class Artifact(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("runs.id"))
     metadata_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("metadata_versions.id"))
-    toc_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("toc_versions.id"))
+    structure_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("structure_versions.id"))
     book_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("books.id"))
     stage: Mapped[str] = mapped_column(Text)
-    chapter_ord: Mapped[int | None] = mapped_column(Integer)
+    piece_ord: Mapped[int | None] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(Text)
     path: Mapped[str] = mapped_column(Text)
     sha256: Mapped[str] = mapped_column(Text)

@@ -14,7 +14,7 @@ from sqlalchemy import select
 class Owner:
     run_id: int | None = None
     metadata_version_id: int | None = None
-    toc_version_id: int | None = None
+    structure_version_id: int | None = None
     book_id: int | None = None
 
     def columns(self) -> dict:
@@ -86,10 +86,10 @@ def atomic_write(path: Path, data) -> str:
 
 
 def write(owner: Owner, base: Path, stage: str, name: str, data, inputs: Inputs,
-          chapter_ord: int | None = None, meta: dict | None = None, heavy: bool = False) -> Artifact:
-    relative = base / stage / (f"{chapter_ord:03d}" if chapter_ord is not None else "") / name
+          piece_ord: int | None = None, meta: dict | None = None, heavy: bool = False) -> Artifact:
+    relative = base / stage / (f"{piece_ord:03d}" if piece_ord is not None else "") / name
     sha = atomic_write(settings.DATA_DIR / relative, data)
-    row = Artifact(**owner.columns(), stage=stage, chapter_ord=chapter_ord, name=name, path=str(relative),
+    row = Artifact(**owner.columns(), stage=stage, piece_ord=piece_ord, name=name, path=str(relative),
                    sha256=sha, input_hash=inputs.key, meta={**(meta or {}), "inputs": inputs.hashed()}, heavy=heavy)
     with Session() as session:
         session.add(row)
@@ -98,12 +98,12 @@ def write(owner: Owner, base: Path, stage: str, name: str, data, inputs: Inputs,
 
 
 # a hit only when the inputs are the same and the file on disk is still the one recorded
-def find_done(owner: Owner, stage: str, name: str, input_hash: str, chapter_ord: int | None = None) -> Artifact | None:
+def find_done(owner: Owner, stage: str, name: str, input_hash: str, piece_ord: int | None = None) -> Artifact | None:
     query = select(Artifact).where(Artifact.stage == stage, Artifact.name == name,
                                    Artifact.input_hash == input_hash, Artifact.removed_at.is_(None))
     for column, value in owner.columns().items():
         query = query.where(getattr(Artifact, column) == value)
-    query = query.where(Artifact.chapter_ord.is_(None) if chapter_ord is None else Artifact.chapter_ord == chapter_ord)
+    query = query.where(Artifact.piece_ord.is_(None) if piece_ord is None else Artifact.piece_ord == piece_ord)
     with Session() as session:
         rows = session.scalars(query.order_by(Artifact.id.desc())).all()
     for row in rows:

@@ -65,7 +65,7 @@ def run_once(lane: str) -> bool:
         with _held_lock:
             _held["running"] -= 1
     if claimed is None:
-        # an idle cpu lane settles runs whose chapters died with a worker or a cancel
+        # an idle cpu lane settles runs whose pieces died with a worker or a cancel
         if lane == "cpu":
             run_state.settle()
         _restart_if_behind()

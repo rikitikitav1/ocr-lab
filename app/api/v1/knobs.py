@@ -22,9 +22,9 @@ def get_profile(id: int):
 
 class Derive(BaseModel):
     set: dict = {}
-    chapters: dict[str, dict] = {}
+    pieces: dict[str, dict] = {}
 
 
 @router.post("/profiles/{id}/derive", status_code=201)
 def derive_profile(id: int, body: Derive):
-    return knobs.derive_profile(id, body.set, body.chapters)
+    return knobs.derive_profile(id, body.set, body.pieces)

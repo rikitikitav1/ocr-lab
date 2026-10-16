@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ZdawWCas73kaPIW94hzyM5CHg10Mov1dKwrnBESkcTlplI2ErKX5FNsPgdeUP58
+\restrict Cs1EXDRvEbGaiC3J2Cso4FqWvKr7oyAnGrS5l583cffWfHfkubuav6snFxi9fFz
 
 -- Dumped from database version 17.10 (Debian 17.10-1.pgdg12+1)
 -- Dumped by pg_dump version 17.10 (Debian 17.10-1.pgdg12+1)
@@ -38,10 +38,10 @@ CREATE TABLE public.artifacts (
     id bigint NOT NULL,
     run_id bigint,
     metadata_version_id bigint,
-    toc_version_id bigint,
+    structure_version_id bigint,
     book_id bigint,
     stage text NOT NULL,
-    chapter_ord integer,
+    piece_ord integer,
     name text NOT NULL,
     path text NOT NULL,
     sha256 text NOT NULL,
@@ -50,8 +50,8 @@ CREATE TABLE public.artifacts (
     heavy boolean DEFAULT false NOT NULL,
     removed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT artifacts_check CHECK ((num_nonnulls(run_id, metadata_version_id, toc_version_id) <= 1)),
-    CONSTRAINT artifacts_check1 CHECK ((num_nonnulls(run_id, metadata_version_id, toc_version_id, book_id) >= 1))
+    CONSTRAINT artifacts_check CHECK ((num_nonnulls(run_id, metadata_version_id, structure_version_id) <= 1)),
+    CONSTRAINT artifacts_check1 CHECK ((num_nonnulls(run_id, metadata_version_id, structure_version_id, book_id) >= 1))
 );
 
 
@@ -96,7 +96,7 @@ CREATE TABLE public.books (
     text_layer jsonb,
     has_bookmarks boolean,
     has_printed_contents boolean,
-    toc_sources jsonb,
+    structure_sources jsonb,
     stage text DEFAULT 'uploaded'::text NOT NULL,
     result_run_id bigint,
     knobs jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -116,25 +116,6 @@ ALTER TABLE public.books ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
-);
-
-
---
--- Name: chapters; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.chapters (
-    run_id bigint NOT NULL,
-    ord integer NOT NULL,
-    toc_entry_id bigint,
-    status text DEFAULT 'pending'::text NOT NULL,
-    engine text,
-    checks jsonb DEFAULT '{}'::jsonb NOT NULL,
-    errors jsonb DEFAULT '[]'::jsonb NOT NULL,
-    seconds real,
-    gpu_seconds real,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chapters_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'failed'::text])))
 );
 
 
@@ -173,6 +154,39 @@ CREATE TABLE public.jobs (
 
 ALTER TABLE public.jobs ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME public.jobs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: layout_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.layout_versions (
+    id bigint NOT NULL,
+    book_id bigint NOT NULL,
+    kind text NOT NULL,
+    version integer NOT NULL,
+    input_hash text NOT NULL,
+    job_id bigint,
+    current boolean DEFAULT false NOT NULL,
+    structure_version_id bigint,
+    layout jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT layout_versions_kind_check CHECK ((kind = ANY (ARRAY['page'::text, 'headings'::text])))
+);
+
+
+--
+-- Name: layout_versions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.layout_versions ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.layout_versions_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -243,6 +257,42 @@ CREATE TABLE public.model_calls (
 
 
 --
+-- Name: nodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.nodes (
+    id bigint NOT NULL,
+    structure_version_id bigint NOT NULL,
+    ord integer NOT NULL,
+    title text NOT NULL,
+    level integer NOT NULL,
+    level_source text NOT NULL,
+    first_page integer,
+    last_page integer,
+    kind text NOT NULL,
+    votes jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    parent_ord integer,
+    CONSTRAINT nodes_kind_check CHECK ((kind = ANY (ARRAY['node'::text, 'front_matter'::text]))),
+    CONSTRAINT nodes_level_check CHECK (((level >= 1) AND (level <= 6)))
+);
+
+
+--
+-- Name: nodes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.nodes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.nodes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: outside_hosts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -255,6 +305,25 @@ CREATE TABLE public.outside_hosts (
 
 
 --
+-- Name: pieces; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pieces (
+    run_id bigint NOT NULL,
+    ord integer NOT NULL,
+    node_id bigint,
+    status text DEFAULT 'pending'::text NOT NULL,
+    engine text,
+    checks jsonb DEFAULT '{}'::jsonb NOT NULL,
+    errors jsonb DEFAULT '[]'::jsonb NOT NULL,
+    seconds real,
+    gpu_seconds real,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT pieces_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: profiles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -263,7 +332,7 @@ CREATE TABLE public.profiles (
     book_id bigint NOT NULL,
     preset text NOT NULL,
     "values" jsonb NOT NULL,
-    chapter_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
+    piece_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
     sha256 text NOT NULL,
     parent_id bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL
@@ -293,7 +362,7 @@ CREATE TABLE public.runs (
     book_id bigint NOT NULL,
     profile_id bigint,
     metadata_version_id bigint,
-    toc_version_id bigint,
+    structure_version_id bigint,
     format text DEFAULT 'markdown'::text NOT NULL,
     dir text NOT NULL,
     status text DEFAULT 'queued'::text NOT NULL,
@@ -302,6 +371,7 @@ CREATE TABLE public.runs (
     engine_builds jsonb DEFAULT '{}'::jsonb NOT NULL,
     bundle_dir text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    reading_level integer,
     CONSTRAINT runs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'needs_attention'::text, 'done'::text, 'failed'::text, 'cancelled'::text])))
 );
 
@@ -330,61 +400,27 @@ CREATE TABLE public.schema_migrations (
 
 
 --
--- Name: toc_entries; Type: TABLE; Schema: public; Owner: -
+-- Name: structure_versions; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.toc_entries (
-    id bigint NOT NULL,
-    toc_version_id bigint NOT NULL,
-    ord integer NOT NULL,
-    title text NOT NULL,
-    level integer NOT NULL,
-    level_source text NOT NULL,
-    first_page integer,
-    last_page integer,
-    kind text NOT NULL,
-    votes jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT toc_entries_kind_check CHECK ((kind = ANY (ARRAY['chapter'::text, 'part'::text, 'section'::text, 'front_matter'::text, 'back_matter'::text]))),
-    CONSTRAINT toc_entries_level_check CHECK (((level >= 1) AND (level <= 6)))
-);
-
-
---
--- Name: toc_entries_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-ALTER TABLE public.toc_entries ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME public.toc_entries_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-
---
--- Name: toc_versions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.toc_versions (
+CREATE TABLE public.structure_versions (
     id bigint NOT NULL,
     book_id bigint NOT NULL,
     version integer NOT NULL,
     input_hash text NOT NULL,
     job_id bigint,
     current boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    depth integer DEFAULT 0 NOT NULL
 );
 
 
 --
--- Name: toc_versions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: structure_versions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-ALTER TABLE public.toc_versions ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME public.toc_versions_id_seq
+ALTER TABLE public.structure_versions ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.structure_versions_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -438,19 +474,27 @@ ALTER TABLE ONLY public.books
 
 
 --
--- Name: chapters chapters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chapters
-    ADD CONSTRAINT chapters_pkey PRIMARY KEY (run_id, ord);
-
-
---
 -- Name: jobs jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.jobs
     ADD CONSTRAINT jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: layout_versions layout_versions_book_id_kind_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.layout_versions
+    ADD CONSTRAINT layout_versions_book_id_kind_version_key UNIQUE (book_id, kind, version);
+
+
+--
+-- Name: layout_versions layout_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.layout_versions
+    ADD CONSTRAINT layout_versions_pkey PRIMARY KEY (id);
 
 
 --
@@ -486,11 +530,35 @@ ALTER TABLE ONLY public.model_calls
 
 
 --
+-- Name: nodes nodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nodes
+    ADD CONSTRAINT nodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: nodes nodes_structure_version_id_ord_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nodes
+    ADD CONSTRAINT nodes_structure_version_id_ord_key UNIQUE (structure_version_id, ord);
+
+
+--
 -- Name: outside_hosts outside_hosts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outside_hosts
     ADD CONSTRAINT outside_hosts_pkey PRIMARY KEY (host);
+
+
+--
+-- Name: pieces pieces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pieces
+    ADD CONSTRAINT pieces_pkey PRIMARY KEY (run_id, ord);
 
 
 --
@@ -518,35 +586,19 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
--- Name: toc_entries toc_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: structure_versions structure_versions_book_id_version_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.toc_entries
-    ADD CONSTRAINT toc_entries_pkey PRIMARY KEY (id);
-
-
---
--- Name: toc_entries toc_entries_toc_version_id_ord_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.toc_entries
-    ADD CONSTRAINT toc_entries_toc_version_id_ord_key UNIQUE (toc_version_id, ord);
+ALTER TABLE ONLY public.structure_versions
+    ADD CONSTRAINT structure_versions_book_id_version_key UNIQUE (book_id, version);
 
 
 --
--- Name: toc_versions toc_versions_book_id_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: structure_versions structure_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.toc_versions
-    ADD CONSTRAINT toc_versions_book_id_version_key UNIQUE (book_id, version);
-
-
---
--- Name: toc_versions toc_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.toc_versions
-    ADD CONSTRAINT toc_versions_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.structure_versions
+    ADD CONSTRAINT structure_versions_pkey PRIMARY KEY (id);
 
 
 --
@@ -586,6 +638,13 @@ CREATE INDEX jobs_run ON public.jobs USING btree (run_id);
 
 
 --
+-- Name: layout_versions_one_current; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX layout_versions_one_current ON public.layout_versions USING btree (book_id, kind) WHERE current;
+
+
+--
 -- Name: metadata_versions_one_current; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -593,10 +652,10 @@ CREATE UNIQUE INDEX metadata_versions_one_current ON public.metadata_versions US
 
 
 --
--- Name: toc_versions_one_current; Type: INDEX; Schema: public; Owner: -
+-- Name: structure_versions_one_current; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX toc_versions_one_current ON public.toc_versions USING btree (book_id) WHERE current;
+CREATE UNIQUE INDEX structure_versions_one_current ON public.structure_versions USING btree (book_id) WHERE current;
 
 
 --
@@ -624,11 +683,11 @@ ALTER TABLE ONLY public.artifacts
 
 
 --
--- Name: artifacts artifacts_toc_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: artifacts artifacts_structure_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.artifacts
-    ADD CONSTRAINT artifacts_toc_version_id_fkey FOREIGN KEY (toc_version_id) REFERENCES public.toc_versions(id) ON DELETE CASCADE;
+    ADD CONSTRAINT artifacts_structure_version_id_fkey FOREIGN KEY (structure_version_id) REFERENCES public.structure_versions(id) ON DELETE CASCADE;
 
 
 --
@@ -645,22 +704,6 @@ ALTER TABLE ONLY public.book_files
 
 ALTER TABLE ONLY public.books
     ADD CONSTRAINT books_result_run FOREIGN KEY (result_run_id) REFERENCES public.runs(id) ON DELETE SET NULL;
-
-
---
--- Name: chapters chapters_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chapters
-    ADD CONSTRAINT chapters_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.runs(id) ON DELETE CASCADE;
-
-
---
--- Name: chapters chapters_toc_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chapters
-    ADD CONSTRAINT chapters_toc_entry_id_fkey FOREIGN KEY (toc_entry_id) REFERENCES public.toc_entries(id);
 
 
 --
@@ -688,6 +731,22 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: layout_versions layout_versions_book_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.layout_versions
+    ADD CONSTRAINT layout_versions_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(id) ON DELETE CASCADE;
+
+
+--
+-- Name: layout_versions layout_versions_structure_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.layout_versions
+    ADD CONSTRAINT layout_versions_structure_version_id_fkey FOREIGN KEY (structure_version_id) REFERENCES public.structure_versions(id) ON DELETE SET NULL;
+
+
+--
 -- Name: metadata_fields metadata_fields_metadata_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -701,6 +760,30 @@ ALTER TABLE ONLY public.metadata_fields
 
 ALTER TABLE ONLY public.metadata_versions
     ADD CONSTRAINT metadata_versions_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(id) ON DELETE CASCADE;
+
+
+--
+-- Name: nodes nodes_structure_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nodes
+    ADD CONSTRAINT nodes_structure_version_id_fkey FOREIGN KEY (structure_version_id) REFERENCES public.structure_versions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: pieces pieces_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pieces
+    ADD CONSTRAINT pieces_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id);
+
+
+--
+-- Name: pieces pieces_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pieces
+    ADD CONSTRAINT pieces_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.runs(id) ON DELETE CASCADE;
 
 
 --
@@ -744,32 +827,24 @@ ALTER TABLE ONLY public.runs
 
 
 --
--- Name: runs runs_toc_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: runs runs_structure_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.runs
-    ADD CONSTRAINT runs_toc_version_id_fkey FOREIGN KEY (toc_version_id) REFERENCES public.toc_versions(id);
+    ADD CONSTRAINT runs_structure_version_id_fkey FOREIGN KEY (structure_version_id) REFERENCES public.structure_versions(id);
 
 
 --
--- Name: toc_entries toc_entries_toc_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: structure_versions structure_versions_book_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.toc_entries
-    ADD CONSTRAINT toc_entries_toc_version_id_fkey FOREIGN KEY (toc_version_id) REFERENCES public.toc_versions(id) ON DELETE CASCADE;
-
-
---
--- Name: toc_versions toc_versions_book_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.toc_versions
-    ADD CONSTRAINT toc_versions_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.structure_versions
+    ADD CONSTRAINT structure_versions_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(id) ON DELETE CASCADE;
 
 
 --
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ZdawWCas73kaPIW94hzyM5CHg10Mov1dKwrnBESkcTlplI2ErKX5FNsPgdeUP58
+\unrestrict Cs1EXDRvEbGaiC3J2Cso4FqWvKr7oyAnGrS5l583cffWfHfkubuav6snFxi9fFz
 

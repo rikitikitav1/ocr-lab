@@ -206,7 +206,7 @@ def _move(ids: list[int], was: str, to: str) -> list[int]:
     return sorted(moved)
 
 
-# a running job learns of its cancel cooperatively, between chapters or page ranges
+# a running job learns of its cancel cooperatively, between pieces or page ranges
 def cancel(ids: list[int]) -> list[int]:
     if not ids:
         return []
