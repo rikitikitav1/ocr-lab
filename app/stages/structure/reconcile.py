@@ -7,7 +7,7 @@ from rapidfuzz import fuzz
 from stages.structure.pages import LABEL, label_of, norm, same_words
 from stages.structure.sources import Entry
 
-RANK = ("printed_contents", "bookmarks", "files", "numbering")
+RANK = ("printed_contents", "bookmarks", "files", "text_headings", "numbering")
 # numbering in running text also hits references and lists, so alone it adds only a labelled part or chapter
 VOTES_ONLY = ("numbering",)
 MIN_ENTRIES = 2
@@ -158,7 +158,7 @@ def _add_missing(merged: list[Entry], unmatched: list[tuple[str, Entry, int]], b
                     if j != i and j not in taken and other != source and _same(e, x)]
         if not partners and not (e.verified and (e.level or top) == top):
             continue
-        level = min((e.level or top) - top + base_top, 6)
+        level = (e.level or top) - top + base_top
         entry = Entry(e.title, level, e.page, e.printed, e.evidence, e.verified, source, {source: _vote(e)})
         for j in partners:
             entry.votes[unmatched[j][0]] = _vote(unmatched[j][1])

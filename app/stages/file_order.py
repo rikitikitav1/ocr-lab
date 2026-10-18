@@ -2,14 +2,14 @@
 import re
 from pathlib import Path
 
-import pdf
+import text_layer
 
 LOOK_PAGES = 4
 NUMBER = re.compile(r"^(?:\d{1,3}|[A-Z])$")
 
 
 def chapter_mark(path: Path) -> str | None:
-    pages = pdf.page_lines(path, list(range(LOOK_PAGES)))
+    pages = text_layer.page_lines(path, list(range(LOOK_PAGES)))
     for index in sorted(pages):
         lines = [x for x in pages[index] if x.text.strip()]
         if not lines:

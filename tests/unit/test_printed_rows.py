@@ -1,9 +1,9 @@
-import pdf
+import text_layer
 from stages.structure.sources import printed_contents
 
 
 def _line(text, x, top, size=10.0):
-    return pdf.Line(text, x, top, size, True)
+    return text_layer.Line(text, x, top, size, True)
 
 
 def test_rows_run_together_after_a_mark_split_when_their_numbers_rise_and_a_dash_between_numbers_is_no_mark():

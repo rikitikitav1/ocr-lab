@@ -7,6 +7,7 @@ import book_knobs
 import code_version
 import pdf
 import settings
+import text_layer
 from orm.catalogue import Book, BookFile
 from orm.db import Session
 from sqlalchemy import select
@@ -92,7 +93,7 @@ def probe(book_id: int) -> dict:
     link_sources(book_id)
     files = files_of(book_id)
     given = book_knobs.of(book_id)["structure.contents_pages"]
-    inputs = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], "layer_rule": pdf.LAYER_RULE,
+    inputs = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], "layer_rule": text_layer.LAYER_RULE,
                                "knobs": {"structure.contents_pages": given}, "code": code_hash()})
     owner = artifacts.Owner(book_id=book_id)
     done = artifacts.find_done(owner, STAGE, "probe.json", inputs.key)
@@ -105,7 +106,7 @@ def probe(book_id: int) -> dict:
         if given:
             result["has_printed_contents"] = True
             result["structure_sources"]["contents_pages_given"] = given
-        artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "probe.json", result, inputs)
+        artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "probe.json", result, inputs, keyed=True)
     with Session() as session:
         book = session.get(Book, book_id)
         book.text_layer = result["text_layer"]
@@ -116,11 +117,16 @@ def probe(book_id: int) -> dict:
     return result
 
 
+# the file a book page lies in, numbered across the book's files
+def file_of(files: list[BookFile], page: int) -> BookFile | None:
+    return next((f for f in files if f.first_page <= page < f.first_page + f.pages), None)
+
+
 # a book page as (file ord, page in that file), so a page named in a report can be opened in its own file
 def located(files: list[BookFile], pages: list[int]) -> dict[int, list[int]]:
     out = {}
     for page in sorted(set(pages)):
-        f = next((f for f in files if f.first_page <= page < f.first_page + f.pages), None)
+        f = file_of(files, page)
         if f is not None:
             out[page] = [f.ord, page - f.first_page + 1]
     return out
@@ -131,10 +137,10 @@ def _probe(files: list[BookFile]) -> dict:
     per_file = []
     for f in files:
         path = settings.DATA_DIR / f.file_path
-        texts = pdf.page_texts(path)
-        missing = [f.first_page + i for i, t in texts.items() if not pdf.has_layer(t)]
+        texts = text_layer.page_texts(path)
+        missing = [f.first_page + i for i, t in texts.items() if not text_layer.has_layer(t)]
         without_layer += missing
-        garbled += [f.first_page + i for i, t in texts.items() if pdf.garbled(t)]
+        garbled += [f.first_page + i for i, t in texts.items() if text_layer.garbled(t)]
         marks = pdf.outline(path)
         bookmarks += len(marks)
         per_file.append({"ord": f.ord, "pages": f.pages, "pages_without_layer": len(missing),

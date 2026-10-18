@@ -56,3 +56,9 @@ def test_a_title_the_bookmarks_split_on_one_page_is_one_entry_and_a_whole_neighb
     _, merged, report = reconcile.reconcile({"printed_contents": printed, "bookmarks": marks})
     assert [e.title for e in merged] == [*(p.title for p in printed), "B"]
     assert merged[0].votes["bookmarks"]["page"] == 521
+
+
+def test_a_contents_deeper_than_six_levels_keeps_every_level_of_the_book():
+    printed = [_e(f"Level {n}", n, 10 + n) for n in range(1, 9)]
+    _, merged, _ = reconcile.reconcile({"printed_contents": printed})
+    assert [e.level for e in merged] == list(range(1, 9))

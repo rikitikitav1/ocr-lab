@@ -1,4 +1,5 @@
 import pytest
+import text_layer
 from job_signals import Final
 from stages import intake
 from stages.structure import collect, pages
@@ -133,6 +134,42 @@ def test_ignored_bookmarks_leave_the_chapters_to_the_label_knob(stand, tmp_path)
     assert "ignored" in evidence["bookmarks"]["failed"]
 
 
+def test_a_book_without_contents_takes_its_chapters_from_the_headings_its_text_layer_sets_apart(stand, tmp_path):
+    names = ["Rivers", "Hills and valleys", "The old town", "A long winter", "Coming home"]
+    pages = [text_page("Plain text") for _ in range(20)]
+    for n, name in enumerate(names):
+        pages[2 + 4 * n] = {"lines": [{"text": name, "size": 18}, FILLER[:90], FILLER[90:180]]}
+    book_id, _ = intake.register([(build(tmp_path / "styled.pdf", pages), "styled.pdf")])
+    source, entries, evidence = collect.choose(book_id)
+    assert source == "text_headings" and [(e.title, e.page) for e in entries] == [
+        (name, 3 + 4 * n) for n, name in enumerate(names)]
+    assert collect.choose(book_id, off=("text_headings", "headings"))[0] != "text_headings"
+
+
+def test_headings_in_letters_the_book_s_languages_do_not_write_are_a_broken_layer(stand):
+    from stages.structure.sources import headings
+
+    def book(names, languages=("en",)):
+        lines = {p: [text_layer.Line(f"{p} plain body text of the page goes on", 50, 100, 10, False)]
+                 for p in range(1, 21)}
+        for n, name in enumerate(names):
+            lines[3 + 4 * n].insert(0, text_layer.Line(name, 50, 60, 18, False))
+        return headings.read_lines(lines, 20, languages=languages)
+
+    broken = book(["I. Fƞơƿƾ ƞƹƢ Fiƨǀƽƣƾ", "II. HiƾƿƺƽǄ", "III. CƺƹƤƣƢƣƽƞƿiƺƹ", "IV. Plain", "V. Ǆƺƹƣ"])
+    assert not broken.entries and broken.failed.startswith("a broken text layer: 4 of 5 headings")
+    private = book(["1 \ue001\ue002\ue003", "2 \ue004\ue005", "3 \ue006\ue007", "4 \ue009\ue00a", "5 \ue00b\ue00c"])
+    assert private.failed and private.failed.startswith("a broken text layer: 5 of 5 headings")
+    romanian = ["Prefață", "Așezarea", "Istoria", "Școala", "Țăranii"]
+    assert [e.title for e in book(romanian, ("ro",)).entries] == romanian
+    vietnamese = ["Lời nói đầu", "Lịch sử", "Thương mại", "Ngôn ngữ", "Kết luận"]
+    assert [e.title for e in book(vietnamese, ("vi",)).entries] == vietnamese
+    assert book(vietnamese).failed.startswith("a broken text layer")
+    # a book whose metadata names no language is not tested against an alphabet guessed for it
+    assert [e.title for e in book(["Глава первая", "Глава вторая", "Глава третья", "Глава четвёртая", "Глава пятая"],
+                                  ()).entries][0] == "Глава первая"
+
+
 def test_bookmarks_win_over_printed_contents(stand, tmp_path):
     path = build(tmp_path / "b.pdf", [text_page("Title"), contents(), text_page("One", bookmark="One"),
                                       text_page("Two", bookmark="Two")])
@@ -168,7 +205,7 @@ def test_a_label_in_running_text_is_not_a_chapter():
 
 
 def test_bold_sets_a_label_apart_only_when_the_body_is_not_bold():
-    from pdf import Line
+    from text_layer import Line
 
     def book(body_bold):
         prose = [Line("ordinary words of the body " * 3, 30, 40 + 14 * i, 10, body_bold) for i in range(1, 6)]
@@ -179,7 +216,7 @@ def test_bold_sets_a_label_apart_only_when_the_body_is_not_bold():
 
 
 def test_running_heads_are_left_out_of_the_text_titles_are_found_in():
-    from pdf import Line
+    from text_layer import Line
 
     def page(*texts):
         return [Line(t, 30, 40 + 14 * i, 10, False) for i, t in enumerate(texts)]
@@ -427,22 +464,28 @@ def test_a_toc_that_needs_the_card_on_the_cpu_lane_goes_to_the_gpu_lane(monkeypa
     assert handed == [("structure_scan", {"book_id": 3, "what": ["structure"], "force": True, "run": False})]
 
 
-def test_a_forced_recollection_forces_every_stage_it_chains_past_a_failed_layout(monkeypatch):
+def test_a_forced_recollection_forces_every_stage_it_chains_and_a_failed_layout_stops_the_chain(monkeypatch):
     import job_queue
     from job_handlers import book
 
     handed = []
     monkeypatch.setattr(job_queue, "enqueue", lambda type, options, **kw: handed.append((type, options)) or 1)
     monkeypatch.setattr(job_queue, "is_cancelled", lambda id: False)
+    monkeypatch.setattr(job_queue, "wake", lambda type, book_id: 0)
     monkeypatch.setattr(book.intake, "probe", lambda book_id: {"text_layer": {"pages": 1, "without_layer": []},
                                                                "structure_sources": []})
     book.run_intake({"book_id": 3, "then": ["metadata", "structure"], "force": True, "_job_id": 1})
     monkeypatch.setattr(book.resolve, "current_version", lambda book_id: None)
     monkeypatch.setattr(book.resolve, "collect", lambda *a, **kw: 9)
     book.run_metadata({"book_id": 3, "what": ["metadata", "structure"], "force": True, "_job_id": 2})
-    monkeypatch.setattr(book.layout, "collect_page", lambda *a, **kw: 1 / 0)
+    monkeypatch.setattr(book.layout, "collect_page", lambda *a, **kw: 1)
     book.run_layout_page({"book_id": 3, "what": ["structure"], "force": True, "_job_id": 3})
     assert [(t, o["force"]) for t, o in handed] == [("metadata", True), ("layout_page", True), ("structure", True)]
+    # runs read the page layout, so its failure is the job's and the structure waits for a layout
+    monkeypatch.setattr(book.layout, "collect_page", lambda *a, **kw: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        book.run_layout_page({"book_id": 3, "what": ["structure"], "force": True, "_job_id": 4})
+    assert len(handed) == 3
 
 
 
@@ -507,6 +550,17 @@ def test_ignored_bookmarks_neither_stop_a_raster_read_nor_serve_as_the_eval_s_go
     ignored, _ = intake.register([(build(tmp_path / "ign.pdf", [*pages, text_page("End")]), "ign.pdf")],
                                  {"structure.ignore_bookmarks": True})
     assert collect.needs_raster(ignored) and structure_run._gold(ignored) == []
+
+
+def test_with_all_contents_off_a_book_is_scored_against_the_structure_its_bookmarks_gave(stand, tmp_path):
+    from evaluation import structure_run
+
+    pages = [text_page("One", bookmark="One"), text_page("Two", bookmark="Two"), text_page("Three", bookmark="Three")]
+    book_id, _ = intake.register([(build(tmp_path / "off.pdf", pages), "off.pdf")])
+    collect.collect(book_id)
+    assert [e.title for e in structure_run._structure_gold(book_id)] == ["One", "Two", "Three"]
+    row = structure_run._member(book_id, "contents_off")
+    assert row["source"] != "bookmarks" and row["entries"] == 3
 
 
 def test_a_root_bookmark_the_knob_drops_does_not_count_as_contents_for_a_raster_read(stand, tmp_path):
@@ -685,10 +739,9 @@ def test_a_contents_is_found_by_its_shape_and_a_list_after_it_keeps_its_pages(st
 
 
 def test_contents_running_heads_and_folio_lines_are_known_by_repeat_and_number_not_by_word():
-    import pdf
 
     def line(text, size=10.0):
-        return pdf.Line(text, 50.0, 100.0, size, False)
+        return text_layer.Line(text, 50.0, 100.0, size, False)
 
     lines = {7: [line("Inhoud 7"), line("Inleiding 9"), line("Deel een 30")],
              8: [line("Inhoud 8"), line("Deel twee 60"), line("Deel drie 90")],

@@ -1,9 +1,10 @@
-# what every table-of-contents source returns: entries in book order, pages numbered across files
+# what every structure source returns: entries in book order, pages numbered across files
+from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
 
-import pdf
 import settings
+import text_layer
 import yaml
 from orm.catalogue import BookFile
 
@@ -49,13 +50,22 @@ def conf() -> dict:
     return yaml.safe_load((settings.CONFIG_DIR / "structure.yaml").read_text())
 
 
-def book_lines(files: list[BookFile], pages: set[int] | None = None) -> dict[int, list[pdf.Line]]:
+def book_lines(files: list[BookFile], pages: set[int] | None = None) -> dict[int, list[text_layer.Line]]:
     out = {}
     for f in files:
         inside = range(f.first_page, f.first_page + f.pages)
         wanted = None if pages is None else [p - f.first_page for p in pages if p in inside]
         if wanted == []:
             continue
-        for index, lines in pdf.page_lines(settings.DATA_DIR / f.file_path, wanted).items():
+        for index, lines in text_layer.page_lines(settings.DATA_DIR / f.file_path, wanted).items():
             out[f.first_page + index] = lines
     return out
+
+
+# the body's size and weight, the style that sets the most characters; a heading is read against it
+def body_style(lines: dict) -> tuple[float, bool]:
+    styles: Counter = Counter()
+    for page_lines in lines.values():
+        for line in page_lines:
+            styles[(line.size, line.bold)] += len(line.text)
+    return styles.most_common(1)[0][0] if styles else (0, False)

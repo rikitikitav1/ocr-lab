@@ -11,6 +11,7 @@ import code_version
 import model_steps
 import pdf
 import settings
+import text_layer
 import yaml
 from babel import Locale
 from babel import languages as cldr
@@ -61,7 +62,7 @@ def _rank(field: str) -> tuple[str, ...]:
 def code_hash() -> str:
     # metadata reads title pages through the layer reader, so the reader is its code too
     digest = code_version.files_hash([*sorted((settings.APP_DIR / "stages" / "metadata").glob("*.py")),
-                                     settings.APP_DIR / "model_steps.py", settings.APP_DIR / "pdf.py"])
+                                     settings.APP_DIR / "model_steps.py"])
     # only the metadata's own model steps: a step another stage adds does not make metadata stale
     steps = model_steps.steps()
     digest.update(json.dumps({k: steps[k] for k in ("metadata_reader", "subject")}, sort_keys=True).encode())
@@ -75,6 +76,32 @@ def code_hash() -> str:
 def current_version(book_id: int) -> MetadataVersion | None:
     with Session() as session:
         return versions.current(session, MetadataVersion, book_id)
+
+
+# the languages of one metadata version, set by hand or detected, in order; a book without them is read as English
+def languages_in(metadata_version_id: int | None) -> list[str]:
+    return known_languages_in(metadata_version_id) or ["en"]
+
+
+# the same with no guess: empty when the metadata names no language
+def known_languages_in(metadata_version_id: int | None) -> list[str]:
+    if metadata_version_id is None:
+        return []
+    with Session() as session:
+        found = session.scalar(select(MetadataField.value).where(
+            MetadataField.metadata_version_id == metadata_version_id, MetadataField.name == "languages"))
+    values = found if isinstance(found, list) else [found] if found else []
+    return list(dict.fromkeys(str(v).lower()[:2] for v in values))
+
+
+# outside a run the book is read with its current metadata; a run reads with the version it pinned
+def languages_of(book_id: int) -> list[str]:
+    return known_languages_of(book_id) or ["en"]
+
+
+def known_languages_of(book_id: int) -> list[str]:
+    version = current_version(book_id)
+    return known_languages_in(version.id if version is not None else None)
 
 
 def _manual(version: MetadataVersion | None) -> SourceResult:
@@ -96,7 +123,7 @@ def inputs(book_id: int, manual: SourceResult) -> artifacts.Inputs:
              "knobs": {k: v for k, v in book_knobs.overrides(book_id).items() if k.startswith("metadata.")},
              "manual": [(c.field, c.value) for c in manual.candidates]}
     window_text = _title_window(book_id)
-    if not pdf.has_layer(window_text) or pdf.garbled(window_text):
+    if not text_layer.has_layer(window_text) or text_layer.garbled(window_text):
         parts["mineru"] = reading.build("mineru")
     return artifacts.Inputs(parts)
 
@@ -105,8 +132,8 @@ def _title_window(book_id: int) -> str:
     files = intake.files_of(book_id)
     first, last = files[0], files[-1]
     head_n, tail_n = window(book_id)
-    head = pdf.page_texts(settings.DATA_DIR / first.file_path, list(range(head_n)))
-    tail = pdf.page_texts(settings.DATA_DIR / last.file_path, list(range(last.pages - tail_n, last.pages)))
+    head = text_layer.page_texts(settings.DATA_DIR / first.file_path, list(range(head_n)))
+    tail = text_layer.page_texts(settings.DATA_DIR / last.file_path, list(range(last.pages - tail_n, last.pages)))
     return "\n".join(head[i] for i in sorted(head)) + "\n" + "\n".join(tail[i] for i in sorted(tail))
 
 
@@ -115,7 +142,7 @@ def _title_and_body(book_id: int) -> tuple[str, str, bool]:
     first, last = files[0], files[-1]
     head_n, tail_n = window(book_id)
     title = _title_window(book_id)
-    scanned = not pdf.has_layer(title) or pdf.garbled(title)
+    scanned = not text_layer.has_layer(title) or text_layer.garbled(title)
     if scanned:
         title = _recognised_title_pages(book_id, first, last)
     body_pages, sampled = [], 0
@@ -124,9 +151,9 @@ def _title_and_body(book_id: int) -> tuple[str, str, bool]:
         step = max(1, f.pages // BODY_SAMPLE_PAGES)
         # a short book is all title window; its body sample starts after the first pages instead
         start = head_n if total > head_n + tail_n + BODY_SAMPLE_PAGES else min(3, f.pages - 1)
-        texts = pdf.page_texts(settings.DATA_DIR / f.file_path, list(range(start, f.pages, step)))
+        texts = text_layer.page_texts(settings.DATA_DIR / f.file_path, list(range(start, f.pages, step)))
         sampled += len(texts)
-        body_pages += [t for t in texts.values() if pdf.has_layer(t) and not pdf.garbled(t)]
+        body_pages += [t for t in texts.values() if text_layer.has_layer(t) and not text_layer.garbled(t)]
     # a book whose layer is mostly broken speaks through its recognised pages, not through the few left over
     if scanned and len(body_pages) * 2 < sampled:
         body_pages = []
@@ -154,7 +181,7 @@ def _recognised_title_pages(book_id: int, first, last) -> str:
     parts = [reading.read_markdown("mineru", settings.DATA_DIR / f.file_path, a, b, OCR_FIELDS, 900, build)
              for f, a, b in ((first, 1, min(head_n, first.pages)), (last, max(1, last.pages - tail_n + 1), last.pages))]
     text = without_images("\n".join(parts))
-    artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "title_pages.md", text, ocr_inputs,
+    artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "title_pages.md", text, ocr_inputs, keyed=True,
                     meta={"engine": "mineru", "build": build, "fields": OCR_FIELDS})
     return text
 

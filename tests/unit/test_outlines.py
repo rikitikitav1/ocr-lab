@@ -1,13 +1,13 @@
-import pdf
+import text_layer
 from stages.structure import outlines
 from stages.structure.sources import Entry
 
 
 def _line(text, x, top, size=10.0):
-    return pdf.Line(text, x, top, size, False)
+    return text_layer.Line(text, x, top, size, False)
 
 
-def _article(first: int, footnote: str) -> list[pdf.Line]:
+def _article(first: int, footnote: str) -> list[text_layer.Line]:
     return [_line("A Paper on Collective Bargaining", 180, 10, 17.0),
             _line(f"I. Introduction ........ {first}", 113, 30),
             _line(f"II. Foundations ........ {first + 2}", 113, 40),
