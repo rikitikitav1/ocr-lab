@@ -10,6 +10,11 @@ def get_stand():
     return stand.stand()
 
 
+@router.post("/stand/worker/reload")
+def reload_worker():
+    return stand.reload_worker()
+
+
 class OcrLanguage(BaseModel):
     language: str
 

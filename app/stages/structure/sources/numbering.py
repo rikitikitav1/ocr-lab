@@ -1,12 +1,11 @@
 # headings found by their numbers in the text: part and chapter labels, Roman chapter numbers, 1.2.3 sections
 import re
-from collections import Counter
 from functools import cache
 
 import numerals
 from orm.catalogue import BookFile
 
-from stages.structure.sources import Entry, SourceEntries, book_lines, conf
+from stages.structure.sources import Entry, SourceEntries, body_style, book_lines, conf
 
 DOTTED = re.compile(r"^(?P<num>\d{1,2}(?:\.\d{1,3}){1,4})\.?\s*(?P<title>[^\W\d_].*)$")
 ROMAN_TITLED = re.compile(rf"^(?P<num>{numerals.ROMAN_LABEL_UPPER})\.\s+(?P<title>[^\W\d_].*)$")
@@ -60,14 +59,6 @@ def _match(text: str, head: bool, set_apart: bool) -> tuple[str, tuple, str] | N
     return None
 
 
-def _body_style(lines: dict) -> tuple[float, bool]:
-    styles = Counter()
-    for page_lines in lines.values():
-        for line in page_lines:
-            styles[(line.size, line.bold)] += len(line.text)
-    return styles.most_common(1)[0][0] if styles else (0, False)
-
-
 # some fonts report every weight as bold, and then bold sets nothing apart from the body
 def _set_apart(line, body: tuple[float, bool]) -> bool:
     size, bold = body
@@ -80,7 +71,7 @@ def _plausible(text: str) -> bool:
 
 def _candidates(lines: dict, skip_pages: set[int]) -> list[tuple[str, tuple, str, int]]:
     head_lines = conf()["text_layer"]["numbering"]["head_lines"]
-    body = _body_style(lines)
+    body = body_style(lines)
     out = []
     for page in sorted(lines):
         if page in skip_pages:
@@ -130,7 +121,7 @@ def read(files: list[BookFile], skip_pages: set[int], lines: dict | None = None)
         # a bare "Chapter 4." alone on a line is a reference or a caption; a heading names itself
         named = len(title.split()) >= 3
         label = "labelled " if has_label and named and kind in ("part", "chapter") else ""
-        out.entries.append(Entry(title, min(level, 6), page,
+        out.entries.append(Entry(title, level, page,
                                  evidence=f"{label}{kind} number {'.'.join(map(str, key))}", verified=True))
     if not out.entries:
         out.failed = "no numbered headings in the text"

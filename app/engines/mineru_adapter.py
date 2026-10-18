@@ -35,6 +35,8 @@ FOOTNOTE_MARK = re.compile(r"^\s*(\d{1,3}|[*†‡§¶]{1,3})\s+(.+)$", re.S)
 class Read:
     blocks: list[Block] = field(default_factory=list)
     furniture: list[str] = field(default_factory=list)
+    # the same, with the file page and the engine's type, for the readers that decide by the page layout
+    furniture_at: list[tuple[int, str, str]] = field(default_factory=list)
     # types the adapter has no block for; their text is kept as prose so nothing is lost
     unknown: Counter = field(default_factory=Counter)
 
@@ -143,6 +145,7 @@ class _Walk:
         kind = block["type"]
         if kind in FURNITURE:
             self.out.furniture.append(_spans(block.get("content")))
+            self.out.furniture_at.append((page, kind, _spans(block.get("content"))))
         elif kind in HEADINGS:
             self.out.blocks.append(Heading(text=_spans(block.get("content")),
                                            level=min(max(block.get("level") or 1, 1), 5), level_source="mineru"))

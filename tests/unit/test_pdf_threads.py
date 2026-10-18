@@ -2,6 +2,7 @@ import io
 import threading
 
 import pdf
+import text_layer
 from PIL import Image
 
 from tests.fixtures import build, text_page
@@ -14,7 +15,7 @@ def test_parallel_reads_do_not_corrupt_each_other(tmp_path):
     def read(path):
         try:
             for _ in range(5):
-                assert len(pdf.page_texts(path)) == 30
+                assert len(text_layer.page_texts(path)) == 30
         except Exception as e:
             errors.append(e)
 

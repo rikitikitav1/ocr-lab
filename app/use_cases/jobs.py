@@ -1,3 +1,4 @@
+import job_costs
 import job_handlers
 import job_queue
 import job_specs
@@ -15,21 +16,29 @@ def _row(job: Job) -> dict:
     return {"id": job.id, "type": job.type, "lane": job.lane, "status": job.status, "parent_id": job.parent_id,
             "run_id": job.run_id, "book_id": job.book_id, "options": job.options, "attempts": job.attempts,
             "waiting_because": job.waiting_because, "result": job.result, "error": job.error,
-            "elapsed": job.elapsed, "code_hash": job.code_hash, "created_at": job.created_at.isoformat()}
+            "elapsed": job.elapsed, "code_hash": job.code_hash, "claimed_by": job.claimed_by,
+            "created_at": job.created_at.isoformat()}
 
 
 @tool("jobs", "GET /v1/jobs",
-      "Lists jobs newest first, filtered by status, type, run_id, lane or book_id (see job_types for types), "
-      "with options, attempts, waiting_because, result and error.")
-def list_jobs(status: str | None = None, type: str | None = None, run_id: int | None = None,
-              lane: str | None = None, book_id: int | None = None, limit: int = 100) -> list[dict]:
+      "Lists jobs newest first, filtered by status, type, run_id, book_id (each one value or a list; see "
+      "job_types for types), lane or parent_id, with options, attempts, waiting_because, result and error; "
+      "`brief` leaves out options and result; the next page takes `before_id`, the last id of this one.")
+def list_jobs(status: str | list[str] | None = None, type: str | list[str] | None = None,
+              run_id: int | list[int] | None = None, lane: str | None = None,
+              book_id: int | list[int] | None = None, limit: int = 100, parent_id: int | None = None,
+              before_id: int | None = None, brief: bool = False) -> list[dict]:
     query = select(Job).order_by(Job.id.desc()).limit(limit)
     for column, value in (("status", status), ("type", type), ("run_id", run_id), ("lane", lane),
-                          ("book_id", book_id)):
-        if value is not None:
+                          ("book_id", book_id), ("parent_id", parent_id)):
+        if isinstance(value, list):
+            query = query.where(getattr(Job, column).in_(value)) if value else query
+        elif value is not None:
             query = query.where(getattr(Job, column) == value)
+    query = query.where(Job.id < before_id) if before_id is not None else query
     with Session() as session:
-        return [_row(j) for j in session.scalars(query)]
+        rows = [_row(j) for j in session.scalars(query)]
+    return [{k: v for k, v in r.items() if k not in ("options", "result")} for r in rows] if brief else rows
 
 
 @tool("job", "GET /v1/jobs/{id}",
@@ -96,13 +105,20 @@ def retry_jobs(ids: list[int]) -> dict:
 
 
 @tool("queue", "GET /v1/queue",
-      "Job counts per lane and status, the oldest waiting job, runs needing attention and who holds the GPU.")
-def queue() -> dict:
-    return {**job_queue.stats(), "gpu_holders": card.holders()}
+      "Job counts per lane and status since the start, the work in flight (new, paused and running jobs by lane and "
+      "type, optionally only for `book_ids` or `types`), the running jobs with their seconds, the seconds left per "
+      "lane priced by each type's median, the oldest waiting job, runs needing attention and who holds the GPU.")
+def queue(book_ids: list[int] | None = None, types: list[str] | None = None) -> dict:
+    return {**job_queue.stats(book_ids, types), "gpu_holders": card.holders()}
 
 
 @tool("job_types", "GET /v1/job_types",
-      "Every job type with its lane, attempt budget, options schema and whether the worker can run it yet.")
+      "Every job type with its lane, attempt budget, options schema, whether the worker can run it yet, and its cost: "
+      "count, median and p90 seconds of its latest done jobs; a read that took kept readings is priced apart in "
+      "cost_kept.")
 def job_types() -> list[dict]:
     job_handlers.load_all()
-    return job_specs.catalogue(set(job_handlers.HANDLERS))
+    priced = job_costs.costs()
+    return [{**row, "cost": priced.get(row["type"]),
+             **({"cost_kept": priced[row["type"] + job_costs.KEPT]} if row["type"] + job_costs.KEPT in priced else {})}
+            for row in job_specs.catalogue(set(job_handlers.HANDLERS))]

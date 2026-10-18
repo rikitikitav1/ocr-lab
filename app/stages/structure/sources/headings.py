@@ -5,9 +5,10 @@ import math
 import re
 import statistics
 
+import alphabets
 import numerals
 
-from stages.structure.sources import Entry, SourceEntries, conf
+from stages.structure.sources import Entry, SourceEntries, body_style, conf
 
 TITLE_TYPES = ("doc_title", "title", "paragraph_title")
 NUMBER = rf"(?:\d{{1,3}}|{numerals.ROMAN_LABEL_UPPER})"
@@ -159,12 +160,63 @@ def front_end(contents: frozenset[int]) -> int:
 
 
 def read(layouts: dict[int, dict], total: int, text_of, contents: frozenset[int] = frozenset()) -> SourceEntries:
-    c = conf()["scan_layer"]["headings"]
-    out = SourceEntries("headings")
     _, cand = candidates(blocks(layouts, text_of), total)
+    return _levels("headings", cand, style_groups, total, contents)
+
+
+# a text layer's lines set apart from the body by size or weight, a wrapped title's lines joined into one block
+def line_blocks(lines: dict[int, list]) -> list[dict]:
+    c = conf()["text_layer"]["headings"]
+    body, body_bold = body_style(lines)
+    out = []
+    for page, ls in sorted(lines.items()):
+        last = None
+        for x in sorted(ls, key=lambda x: x.top):
+            text = " ".join(x.text.split())
+            if not text or not (x.size >= body * c["larger"] or (x.bold and not body_bold and x.size >= body)):
+                last = None
+                continue
+            if last and abs(last["size"] - x.size) < c["same_size"] and last["bold"] == x.bold \
+                    and x.top - last["top"] <= c["row_gap"] * x.size and last["words"] < c["max_words"]:
+                last.update(text=f"{last['text']} {text}", words=last["words"] + len(text.split()), top=x.top)
+                continue
+            last = {"page": page, "type": "title", "text": text, "size": x.size, "bold": x.bold,
+                    "words": len(text.split()), "top": x.top}
+            out.append(last)
+    return out
+
+
+# bold and plain headings of one size are two looks
+def _weighted_groups(cand: list[dict]) -> list[list[dict]]:
+    groups = [g for bold in (True, False) for g in style_groups([b for b in cand if b["bold"] == bold])]
+    return sorted(groups, key=lambda g: (-statistics.median(x["size"] for x in g), not g[0]["bold"]))
+
+
+# a book's top nodes from the headings its text layer sets apart, for a book no contents source holds
+def read_lines(lines: dict[int, list], total: int, contents: frozenset[int] = frozenset(),
+               languages: tuple[str, ...] = ()) -> SourceEntries:
+    c = conf()["scan_layer"]["headings"]
+    bl = [b for b in line_blocks(lines) if b["words"] <= c["max_words"] and not b["text"].startswith(DASHES)]
+    key, repeated = _repeats(bl, total)
+    seen = _levels("text_headings", _glued([b for b in bl if key(b)[1] and not repeated(b)]), _weighted_groups,
+                   total, contents)
+    # headings in letters the book's languages do not write come from a broken layer; with no language known, no test
+    alphabet = alphabets.letters(languages)
+    broken = [e.title for e in seen.entries if any(alphabets.foreign(c, alphabet) for c in e.title)] if languages \
+        else []
+    if seen.entries and len(broken) * 2 >= len(seen.entries):
+        seen.failed = (f"a broken text layer: {len(broken)} of {len(seen.entries)} headings in letters the book's "
+                       f"languages ({', '.join(languages)}) do not write, as {broken[0]!r}")
+        seen.entries = []
+    return seen
+
+
+def _levels(source: str, cand: list[dict], grouped, total: int, contents: frozenset[int]) -> SourceEntries:
+    c = conf()["scan_layer"]["headings"]
+    out = SourceEntries(source)
     cut = front_end(contents)
     cand = [b for b in cand if b["page"] > cut]
-    groups = style_groups(cand)
+    groups = grouped(cand)
 
     def spread(g):
         ps = [b["page"] for b in g]
@@ -194,6 +246,6 @@ def read(layouts: dict[int, dict], total: int, text_of, contents: frozenset[int]
         out.failed = f"{tops} top nodes in {total} pages: more than {c['max_nodes_per_page']} a page"
         return out
     out.entries = [Entry(title, level - top + 1, page, evidence=f"a heading read on page {page}", verified=True,
-                         source="headings") for page, level, title in sorted(entries, key=lambda e: e[0])]
+                         source=source) for page, level, title in sorted(entries, key=lambda e: e[0])]
     out.notes["nodes"] = len(groups[pick])
     return out

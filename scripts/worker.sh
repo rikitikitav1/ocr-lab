@@ -1,5 +1,5 @@
 #!/bin/sh
-# copy the code the worker will run; it restarts itself onto newer code once the queue is empty
+# copy the code this worker will run; it restarts itself onto newer code once its lanes have nothing due
 set -e
 rm -rf /tmp/worker-code.*
 snapshot=$(mktemp -d /tmp/worker-code.XXXXXX)

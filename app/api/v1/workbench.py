@@ -34,7 +34,3 @@ def reassemble(id: int, body: Reassemble):
 def get_artifact(id: int):
     return workbench.get_artifact(id)
 
-
-@router.post("/stand/worker/reload")
-def reload_worker():
-    return workbench.reload_worker()

@@ -24,3 +24,24 @@ def test_every_tool_tells_a_client_what_it_does():
     listed = asyncio.run(mcp.list_tools())
     assert {t.name for t in listed} == set(TOOLS)
     assert [t.name for t in listed if len(t.description or "") < 30] == []
+
+
+def test_a_wait_over_mcp_answers_before_the_client_s_idle_limit(monkeypatch):
+    import asyncio
+
+    from mcp_tools import MCP_WAIT_SECONDS, mcp
+    from use_cases import runs
+
+    seen = {}
+    monkeypatch.setattr(runs, "_settled_runs", lambda ids, until: None)
+    monkeypatch.setattr(runs.job_queue, "listen", lambda check, timeout: seen.update(timeout=timeout))
+    monkeypatch.setattr(runs, "Session", None)
+    # the call fails past the wait for want of a database; only the timeout it waited with matters here
+    try:
+        asyncio.run(mcp.call_tool("wait_runs", {"ids": [1], "timeout": 900}))
+    except Exception:
+        pass
+    assert seen["timeout"] == MCP_WAIT_SECONDS
+    listed = {t.name: t for t in asyncio.run(mcp.list_tools())}
+    assert f"within {MCP_WAIT_SECONDS} s" in listed["wait_runs"].description
+    assert "within" not in listed["queue"].description

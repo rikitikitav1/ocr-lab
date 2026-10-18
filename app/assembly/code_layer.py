@@ -6,7 +6,7 @@ SPREAD = 0.1
 SLACK = 0.002
 _NUMBER = re.compile(r"^(\s*)(\d+)(\s+)(?=\S)")
 
-Glyph = tuple[float, float, float, float, str]
+Glyph = tuple[float, float, float, float, str] | tuple[float, float, float, float, str, bool]
 
 
 # glyphs of one advance as a monospace face sets them: nine in ten near the median, so a number column does not count
@@ -33,11 +33,26 @@ def inside(g: Glyph, box: tuple) -> bool:
     return box[0] - SLACK <= x <= box[2] + SLACK and box[1] - SLACK <= y <= box[3] + SLACK
 
 
+def line_number(line: str) -> int | None:
+    found = _NUMBER.match(line)
+    return int(found.group(2)) if found else None
+
+
+# a listing is numbered when this many of its lines, at least, carry rising numbers
+NUMBERED_MIN_LINES, NUMBERED_SHARE = 3, 0.8
+
+
 # a listing's line-number column is not code; it goes when nearly every row carries one in order
+def line_numbers(lines: list[str]) -> list[int] | None:
+    numbered = [n for n in map(line_number, lines) if n is not None]
+    if len(lines) < NUMBERED_MIN_LINES or len(numbered) < NUMBERED_SHARE * len(lines) or numbered != sorted(numbered):
+        return None
+    return numbered
+
+
 def _without_numbers(lines: list[str]) -> list[str]:
     found = [_NUMBER.match(line) for line in lines]
-    numbered = [int(m.group(2)) for m in found if m]
-    if len(lines) < 3 or len(numbered) < 0.8 * len(lines) or numbered != sorted(numbered):
+    if line_numbers(lines) is None:
         return lines
     rest = [line[m.end(2):] if m else line for line, m in zip(lines, found, strict=True)]
     shift = min((len(r) - len(r.lstrip()) for r in rest if r.strip()), default=0)
@@ -76,8 +91,9 @@ def rebuild(page_glyphs: list[Glyph], box: tuple, taken: set) -> str | None:
             lines += [""] * (round((middles[i] - middles[i - 1]) / step) - 1)
         line = " " * round((row[0][0] - edge) / advance)
         for before, g in zip([None, *row[:-1]], row, strict=True):
+            # a space the layer's own text holds stays, though a bold glyph's box may leave it less than a cell
             if before is not None:
-                line += " " * max(round((g[0] - before[2]) / advance), 0)
+                line += " " * max(round((g[0] - before[2]) / advance), 1 if len(g) > 5 and g[5] else 0)
             line += g[4]
         lines.append(line.rstrip())
     return "\n".join(_without_numbers(lines))

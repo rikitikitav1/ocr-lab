@@ -71,8 +71,9 @@ Where each step stands: [docs/status.md](docs/status.md).
    Two editions are two books. A book split into several files is one submission; volumes of a series
    are separate books linked by the `series` and `volume` fields. A file is stored once by its content
    (`data/files/`); the book's folder links each of its files by order and name in `data/books/<id>/source/`.
-2. **Intake** (CPU lane). Per page: is there a text layer. Per file: bookmarks. In the first pages:
-   printed contents lines with dot leaders. The result is kept as `probe.json` and reused while the
+2. **Intake** (CPU lane). Per page: is there a text layer. Per file: bookmarks. In the first 30 pages, or the
+   last 30 when the first hold none: contents pages, by dot leaders or by numbered lines whose pages rise across
+   the book. The result is kept as `probe.json` and reused while the
    files are unchanged.
 3. **Metadata** (CPU lane; a recognition or a model call not yet cached moves the job to the GPU lane).
    The title and copyright pages (the first 20 and the last 20 by default; a book knob, see below) are
@@ -90,20 +91,31 @@ Where each step stands: [docs/status.md](docs/status.md).
    and metadata; `GET /v1/books/{id}/metadata` shows every field with its value, source, confidence
    and attempts. A field can be set by hand (`PATCH /v1/books/{id}/metadata/{name}`, a new version);
    the book content itself is never edited by hand. `POST /v1/books/{id}/recollect` collects again; with `"run": true` it starts a run once the structure is collected, so `what` must hold `structure`.
-6. **Structure** (CPU lane; GPU only to recognise a raster). The contents printed in the book
+6. **Page layout** (CPU lane). After the metadata (or straight after intake when `then` has no `metadata`), the
+   book's running heads, page numbers, footnote lines and the share of letters set in a monospace face are learned
+   from its text layer (`GET /v1/books/{id}/layout`). The assembly reads them and the run's preset is chosen by them;
+   a run works on the page layout version it started on. The structure job is queued after it, and the heading
+   layout after the structure.
+7. **Structure** (CPU lane; GPU only to recognise a raster). The contents printed in the book
    are found in the text layer, or on the raster when neither the text, the bookmarks nor chapter
    files give one; contents spread over several pages are read as one, and their printed pages are put
    on PDF pages. Reconciled with the bookmarks, chapter files and numbering, the result is a structure
    version, a tree of nodes with every node's level, parent, first and last page (`GET /v1/books/{id}/structure`). When nothing else holds
-   the contents, the labelled chapters in the text ("Chapter N", three or more, numbers rising) are the
-   structure. With none of these, every page is read as a picture and the headings grouped by look give the
+   the contents, a text book's nodes come from the lines its text layer sets apart by size or weight, grouped by
+   look as the headings below are (the numbering votes on them); they are refused as a broken text layer when half
+   of them hold letters the book's languages do not write. Failing that, the chapters opening with the book knob's
+   label `structure.chapter_label` are the structure when it is set (for a scan too; the text-layer headings are then
+   not read), then the labelled chapters in the text ("Chapter N", three or more, numbers rising), then a word the
+   text repeats before its chapters' numbers ("Глава осма"). With none of these, every page is read as a picture and the headings grouped by look give the
    nodes (book knob `structure.from_headings`, on by default); when they give none, or more than one node
    to two pages, a book of at most 100 pages is one node and a longer one fails with "structure not
-   recognised". `POST /v1/eval/structure` with `bookmarks_off` scores it against the bookmarks.
-7. **Run** (`POST /v1/books/{id}/runs`, MCP `start_run`). Every piece is read by Docling and by
+   recognised". `POST /v1/eval/structure` scores the stage on its own: with `bookmarks_off` against the bookmarks,
+   with `contents_off` (bookmarks and printed contents both off) against the structure they gave, so books with
+   contents stand in for books without.
+8. **Run** (`POST /v1/books/{id}/runs`, MCP `start_run`). Every piece is read by Docling and by
    MinerU on the GPU lane, then assembled on the CPU lane page by page; pages without a usable layer
    are read by both engines in OCR mode. A run assembles with a profile: the value of every run knob
-   with where it came from (the default preset's unless a profile is given). The bundle under
+   with where it came from (the preset the book's page layout chooses, see below, unless a profile is given). The bundle under
    `bundles/<book>/<run>/` holds the book's Markdown, images, `profile.yaml` and
    `report.json`/`report.md` with numbers per piece and per book: text lost and added against the
    layer (the book's own running heads and page numbers aside), layer words an engine set aside beyond
@@ -142,6 +154,20 @@ Both engines read every recognised range; the text is MinerU's and Docling's wor
 
 </details>
 
+<details>
+<summary>Diagram: images and captions on a text page, measured on 41 books</summary>
+
+![Images and captions on a text page](docs/diagrams/images.drawio.svg)
+
+</details>
+
+<details>
+<summary>Diagram: spaces PDFium makes up inside words, measured on 46 books</summary>
+
+![Spaces PDFium makes up inside words](docs/diagrams/spacing.drawio.svg)
+
+</details>
+
 Book-level knobs can be given at submission (`"knobs": {...}` in `POST /v1/books`) or changed later
 (`PATCH /v1/books/{id}/knobs`): `metadata.title_pages.head` and `.tail` (20 and 20 by default, in
 `config/metadata.yaml`), `structure.contents_pages`, the printed contents pages as `[[first, last], ...]`
@@ -156,7 +182,9 @@ A change takes effect at the next collection. A submission may also say `"then":
 metadata, and `"order": "by_number"` to order chapter files by the number each prints.
 
 Run knobs are listed with their options, help and defaults at `GET /v1/knobs` (`config/knobs.yaml`,
-defaults in `config/assembly.yaml`), presets at `GET /v1/presets` (`config/presets/`). A profile is read
+defaults in `config/assembly.yaml`), presets at `GET /v1/presets` (`config/presets/`). A run starts on `technical`
+(the code passes that read the layer's glyphs) when the page layout finds a monospace face holding 2% of the letters on 5 pages or more,
+else on `default`; the book knob `run.preset` names one instead. A profile is read
 at `GET /v1/profiles/{id}`; `POST /v1/profiles/{id}/derive` with `{"set": {...}, "pieces": {"<ord>":
 {...}}}` makes a new one to run with (`"profile_id"` in `POST /v1/books/{id}/runs`).
 
@@ -173,9 +201,9 @@ nothing was tried without one.
 | part | what it is | what uses it |
 |---|---|---|
 | GPU | NVIDIA GeForce RTX 4070 Laptop, 8 GB | Docling and MinerU (layout, OCR), ollama with qwen2.5 7B and gemma2 9B; one at a time, the job queue hands the card from one to the next; MinerU's vLLM gets 60% of the card (`MINERU_VIRTUAL_VRAM_SIZE` in docker-compose.yml) |
-| CPU | Intel Core i9-14900HX, 32 threads | the text layer, the structure sources, metadata scripts, the assembly passes, the report |
+| CPU | Intel Core i9-14900HX, 32 threads | the text layer, the structure sources, metadata scripts, the assembly passes, the report; one worker's CPU lane and as many CPU-only workers as wanted |
 | RAM | 64 GB | |
-| disk | the MinerU image 28 GB, the Docling image 11 GB, ollama 5 GB plus its models; the stand's data for 117 books 2.5 GB | |
+| disk | the MinerU image 28 GB, the Docling image 11 GB, ollama 5 GB plus its models; the stand's data for 125 books with their runs 13 GB | |
 
 Without a discrete GPU the catalogue, the text-layer structure (bookmarks, printed contents, numbering), the
 metadata scripts and the report should run, but no book can be read by the engines, so there is no run.
@@ -186,7 +214,8 @@ Time per page and per phase, text-layer books and scans apart: [docs/timing.md](
 
 ## Languages tried
 
-The shelf holds 117 books. A book with two languages counts under both. Full runs are the raw run of 43 books and the books run since, 47 in all
+The shelf holds 125 books; the table counts the 117 it held at the raw run, the dictionaries and phrase books added
+since (120 to 128) are listed in [docs/books.md](docs/books.md). A book with two languages counts under both. Full runs are the raw run of 43 books and the books run since, 47 in all
 ([experiment](docs/experiments/2026-10-11_raw-run.md)).
 
 | language | books | of them scans | what was checked |
@@ -212,8 +241,17 @@ stands share one GPU, so rag-lab's converters must be down while ocr-lab's run.
 ```bash
 cp .env.example .env                      # optional key: a cloud model
 docker compose up -d                      # postgres, migrations, api, worker, ollama, converters
-curl -s localhost:8100/v1/stand | jq      # health, engine builds, who holds the GPU, worker code
+docker compose --profile cpu-workers up -d --scale worker-cpu=2   # optional: workers for the CPU lane only
+curl -s localhost:8100/v1/stand | jq      # health, engine builds, who holds the GPU, every worker and its code
 ```
+
+Jobs run on two lanes. The GPU lane is held by one worker at a time (a Postgres lock), so the engines and the models
+never share the card; the CPU lane (intake, metadata, page layout, structure, assembly, reports, structure evaluations) is taken by any worker; an element evaluation reads on the GPU lane.
+`worker` takes both lanes (`WORKER_LANES`, `cpu,gpu` by default), `worker-cpu` only the CPU one. A worker that dies
+or is killed leaves its jobs to the others: a live worker holds its host's lock, and the jobs of a host whose lock
+is free go back to the queue, so a run carries on without `resume`. A running job no worker names goes back too, a
+worker takes back other hosts' jobs only after it has held its own lock for two beats, and a late outcome from a
+worker whose job was taken back is ignored. A worker silent for a day is dropped from the stand's list.
 
 Submit a book, wait for it and take the result: `then` with `"run"` starts a run once the structure is ready, and
 `"run"` needs `"structure"` in `then` too, and waiting on the intake job waits for the whole chain (leave `"run"` out to stop at the structure and look first):
@@ -229,14 +267,14 @@ A book on the shelf is submitted by path instead: `POST /v1/books` with `{"shelf
 The workbench doors leave runs as they are: `read_range` reads a book's page range through one engine and keeps the
 reading (with `force_raster_only`, MinerU reads every page as a picture, the way a scan is read), `reassemble` puts
 a run's pieces together again from their kept readings with run knobs set and reports each piece's numbers
-before and after, `artifact` reads any kept artifact by id, and `reload_worker` has the worker take newer code once
+before and after, `artifact` reads any kept artifact by id, and `reload_worker` has every live worker take newer code once
 its jobs in hand end, so a run in flight then mixes code.
 
 ## For agents
 
 The stand is meant to be run by an agent as much as by a person. Every operation is a REST route and an MCP tool
 implemented once, and every tool says in its description what it does, what it returns and what it queues. A
-failure names its kind (`refused`, `missing`, `retry_later`, `fault`), so an agent can tell a wrong input from a
+failure names its kind (`refused`, `missing`, `busy`, `retry_later`, `fault`; `busy` is a run still running, to wait for or cancel), so an agent can tell a wrong input from a
 moment to wait. Waiting has doors (`wait_job`, `wait_runs`) that block until the work settles instead of being
 polled, listings are brief by default, and a run shows its reads per engine while it is in flight.
 

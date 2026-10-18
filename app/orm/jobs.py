@@ -23,6 +23,7 @@ class Job(Base):
     apply_since: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     waiting_because: Mapped[dict | None] = mapped_column(JSONB)
     code_hash: Mapped[str | None] = mapped_column(Text)
+    claimed_by: Mapped[str | None] = mapped_column(Text)
     result: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[dict | None] = mapped_column(JSONB)
     elapsed: Mapped[float | None] = mapped_column(Float)

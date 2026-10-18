@@ -143,11 +143,16 @@ publisher), maybe the clean table of contents too, as it turns out." Scanned PDF
   book keeps two numbers: an automatic level, 0 by default, set by the stand when the structure is collected, and
   the owner's level, empty by default, which wins when set.
 
+### Session 2026-10-17
+
+- Q: What are "the knobs that were tried" in User Story 1 before a profile search exists? → A: The knobs the run applied, each with where it came from (preset or manual), and the pieces' own knobs, in report.json `profile` and report.md; the candidates a profile search tries come with that search (User Story 3).
+
 ## User Scenarios & Testing *(mandatory)*
 - Q: Do the code passes run on every book? → A: No, only on technical books. The default preset leaves them off; a
   `technical` preset turns them on. The stand picks it from the book itself: the text layer's share of monospace
   text, and for a scan without a layer the metadata subject. The owner can set or clear it by hand when the book is
-  submitted, and the hand value wins.
+  submitted, and the hand value wins. (Built so far: the page layout's monospace share and the book knob `run.preset`;
+  a scan gets `default` until the subject rule is built.)
 
 ### User Story 0 - Stand up the stand and catalogue a book (Priority: P0)
 
@@ -205,7 +210,8 @@ the worst pieces named.
    every image link in the document still opens.
 3. **Given** a book whose structure the stand could not recover, **When** the run ends, **Then**
    the bundle is still produced and its report's numbers show the loss, naming the pieces and the
-   knobs that were tried.
+   knobs the run applied with where each came from; the candidates a profile search tried come with
+   that search (User Story 3).
 4. **Given** a book, **When** the report is read, **Then** it shows nodes found against the
    reconciled structure, heading levels per structure source, text fidelity against the PDF
    text layer, image and link counts.
@@ -357,13 +363,15 @@ in the group it belongs to.
 - **FR-003**: Every image link in the document MUST resolve inside the bundle, and every file in
   `images/` MUST be referenced at least once; the report MUST count both.
 - **FR-004**: Headings MUST use levels 1 to 6 only, with the book title at level 1 and a structure
-  node of level N at level N + 1; nodes deeper than that stay at level 6 (the cap is still to come;
-  today the writer refuses a level past 6).
+  node of level N at level N + 1; nodes deeper than that stay at level 6 (the assembly demotes a
+  heading past the cap, and flattens a piece whose own level leaves no room below it).
 - **FR-005**: Code blocks, tables and lists MUST keep their type in the output; code MUST be taken
   from the PDF text layer where one exists.
 - **FR-006**: Running heads, footers, sidebars and captions MUST NOT be output as headings;
   duplicate pages MUST be removed and reported. The target: a running head is told by the book's page layout (FR-063),
-  not by an engine's block type alone; today the adapters drop by type and running heads by repeat.
+  not by an engine's block type alone; today the adapters drop by type, running heads go by repeat and by the slot
+  lines the page layout claims (a folio, a repeated line, its side), and the lines the page layout reads as notes come
+  back as the page's footnotes.
 - **FR-007**: Decorative images repeated on many pages (the page count is a threshold in
   configuration) MUST be distinguishable from figures and
   MUST NOT be emitted as figures.
@@ -372,14 +380,18 @@ in the group it belongs to.
 
 - **FR-008**: The structure MUST be gathered from every available source and reconciled into
   one. This feature reads bookmarks, the printed contents pages (from the text layer, or recognised on
-  a scan), the files of a book split into files, and numbering in the text; typography, a model
-  assigning levels and external catalogues are later sources. The printed contents are the base when
-  the text confirms over half of their pages, else bookmarks, else files; titles and pages
+  a scan), the files of a book split into files, the headings a text layer sets apart by size or weight
+  (`text_headings`, read only when no other source holds two placed entries, and refused, as a broken text layer, when
+  half of them hold letters the book's languages do not write; the languages are part of the structure's inputs), and
+  numbering in the text; a model assigning levels and external catalogues are later sources. The base is the first
+  source, in the order printed contents, bookmarks, files, text headings, whose text confirms over half of its
+  entries, else the first of them present; titles and pages
   come from the base, levels from the bookmarks where an entry has one. Other sources vote on the
   base's entries, and an entry the base lacks comes in when two sources have it or when it is a top
   entry of a source whose page was seen holding its title; numbering adds alone only a labelled entry
-  ("PART TWO", "Chapter 3") set as a heading, its label learned from the book or told by shape, never from a
-  word list. The pages before the first entry are a front matter
+  ("PART TWO", "Chapter 3") set as a heading, its label from the per-language part and chapter lists in
+  `config/structure.yaml`; when no source is the base, labelled numbering seen often enough is the structure alone.
+  The pages before the first entry are a front matter
   node, so no page is left out of the structure.
   Entries placed on different pages by two sources are reported.
 - **FR-009**: Each heading MUST record which source decided its level, and the report MUST count
@@ -447,8 +459,9 @@ in the group it belongs to.
   reason, and separately count books whose output changed although the change did not fire on
   them.
 - **FR-029**: The evaluation MUST be able to switch bookmarks off and score the other
-  structure sources against them; the same mode serves the structure measurement
-  of FR-058.
+  structure sources against them, and for a book without bookmarks to switch bookmarks and printed contents
+  off and score the rest against the structure they gave (`contents_off`); the same modes serve the structure
+  measurement of FR-058.
 
 **Formats**
 
@@ -475,7 +488,8 @@ in the group it belongs to.
 - **FR-050**: Shared behaviour MUST NOT assume a genre: rules for code, formulas, verse or
   picture-led pages apply only when the book's profile selects them, and a book with none of these
   goes through the stand with the same guarantees as any other. Code rules belong to a `technical` preset, chosen
-  from the layer's share of monospace text or, for a scan, the metadata subject, and overridable at submission. Keeping running heads, footers,
+  from the page layout's share of monospace text (for a scan, the metadata subject once built; a scan gets `default`
+  today), and overridable by the book knob `run.preset`. Keeping running heads, footers,
   sidebars and captions out of the headings (FR-006) is not a genre rule: it is on for every book,
   in the default preset, and its options only tune how those are recognised.
 
@@ -497,8 +511,8 @@ in the group it belongs to.
   Creator), which tell how a text layer was made. Translators, illustrators and the original's year and ISBN are not
   collected: metadata tells books apart and finds the contents, it does not catalogue (owner's
   decision, 2026-10-09). Every value comes from the book itself (its files, its title pages, the
-  stand's model reading them); outside catalogues and the web are not queried; the words the title-page
-  scripts look for live in a per-language table, not in code.
+  stand's model reading them); outside catalogues and the web are not queried; the title-page
+  scripts read signs and shapes (an ISBN, a year, a catalogue card's punctuation), not words of a language.
 - **FR-038**: Each metadata field MUST record its value, its source (file metadata, title pages,
   model reading the pages) and a confidence. Intake MUST try every
   source before giving up on a field; a field marked unknown MUST list the sources tried, and a
@@ -555,7 +569,9 @@ in the group it belongs to.
 - **FR-058**: The structure stage MUST be measurable on its own, before piece assembly
   exists: against external gold sets (HiPS legal textbooks; a seeded sample of about 50 books of the
   ICDAR/INEX Book Structure Extraction 2013 set, also scored by its own title-based and link-based
-  scorers; LongDocBench once its data is reachable) and against bookmarks with bookmarks switched off (the mode of FR-029). The first score is
+  scorers; LongDocBench once its data is reachable), against bookmarks with bookmarks switched off (the mode of FR-029),
+  and, for books without bookmarks, against the structure the bookmarks or printed contents gave with both switched off
+  (`contents_off`). The first score is
   nodes found starting on the right page; entry recall and precision and level agreement follow,
   per book. Tree similarity (TEDS) is not computed.
 - **FR-059**: Book-level knobs MUST be settable at submission and changed later, each with a default
@@ -563,9 +579,12 @@ in the group it belongs to.
   pages), the printed contents pages given by hand as page ranges, whether the first top bookmark
   is the book itself and its children are the top level (default off), whether the bookmarks are not
   the contents at all (default off), the word a book's chapters open with (none), and whether a book
-  no source holds tries its headings read as pictures before it fails (default on). A change takes
+  no source holds tries its headings read as pictures before it fails (default on), the tree level the engines read
+  (empty: the automatic level), and the preset a run starts from (empty: the one the page layout chooses). A change takes
   effect at the next collection of metadata or the structure.
-- **FR-061**: When no source gives a structure, the nodes MUST be tried from the headings of
+- **FR-061**: When no source gives a structure, the chapter label the book knob names is tried first, then labelled
+  numbering ("Chapter N", seen often enough), then a label word the text repeats before its chapters' numbers (text
+  books); after those, the nodes MUST be tried from the headings of
   every page read as pictures, grouped by look, unless a book knob turns this off; when that gives no
   node level, or more nodes than half the pages, a book of at most a configured number of pages
   (100) MUST become one node, and a longer book MUST fail as "structure not recognised" with the
@@ -587,8 +606,10 @@ in the group it belongs to.
   structure, and the heading layout (each level's size, weight, the share of its pins in that style,
   and its label when one is seen at least three times) collected from the structure's pins after it,
   claiming the page layout's slot and note lines rather than measuring them again. Only shared
-  thresholds are set by hand. A reader (assembly, the adapters, the structure for books without
-  contents) joins one at a time through the evaluation gate (FR-027).
+  thresholds are set by hand. Readers join one at a time through the evaluation gate (FR-027). Joined so far: a run
+  pins the page layout version at its start (collected first when missing or stale) and its pieces' inputs hold it;
+  the assembly reads its slot lines and notes, the preset choice its monospace share, and the report that share.
+  The heading layout has no reader yet.
 - **FR-064**: The structure MUST be a tree: each node has its level (as many levels as the book
   gives, no cap), its parent (the nearest earlier node with a lower level) and its order, with no
   part or chapter kinds; the front matter keeps a service role. The number of heading levels found is
@@ -694,8 +715,8 @@ in the group it belongs to.
 - The single user is the project owner; there are no accounts, roles or sharing in this feature.
 - Submitted PDFs are lawfully obtained by the owner; licensing checks are out of scope.
 - Books are of any genre (technical, fiction, children's, textbooks, poetry) and any language; no
-  stage assumes a language, and language-specific rules (title-page patterns) are tables that grow
-  with the books, not code paths for two languages; an ISBN's languages come from the ISBN agency's
+  stage assumes a language; title pages are read by signs and shapes, the letters a language writes come from CLDR,
+  and the few language-specific lists left (part and chapter labels) are tables that grow with the books, not code paths; an ISBN's languages come from the ISBN agency's
   own ranges and the languages of countries (CLDR), with a table only for agency names CLDR lacks.
 - Input in this feature is PDF only; EPUB, HTML and other formats are later features.
 - Output in this feature is Markdown only; the Docling format for RAG and others are later

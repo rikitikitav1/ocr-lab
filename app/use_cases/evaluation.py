@@ -2,30 +2,20 @@ import job_queue
 import job_specs
 from knobs import registry
 from mcp_tools import tool
-from orm.catalogue import Book
 from orm.db import Session
-from sqlalchemy import select
 
-BUILT_STRUCTURE_SETS = ("bookmarks_off", "hips")
-
-
-# the door's argument is named set, as its contract has it, so the builtin is kept under another name
-set_of = set
+from use_cases import known
 
 
 # scores land in the job's result and in each book's artifacts; the gold sets come with their fetch job
 @tool("structure_eval", "POST /v1/eval/structure",
-      "Queues a structure evaluation job (cpu lane) over a gold set (bookmarks_off or hips), optionally on some "
-      "books; scores land in the job's result and each book's artifacts. Returns {job_id}.")
+      "Queues a structure evaluation job (cpu lane) over a gold set (bookmarks_off, contents_off or hips), "
+      "optionally on some books; scores land in the job's result and each book's artifacts. Returns {job_id}.")
 def structure_eval(set: str, book_ids: list[int] | None = None) -> dict:
     options = job_specs.check("structure_eval", {"set": set, "book_ids": book_ids})
-    if set not in BUILT_STRUCTURE_SETS:
-        raise job_specs.Refused(f"set {set!r} is not built yet; built: {BUILT_STRUCTURE_SETS}")
     if book_ids:
         with Session() as session:
-            known = set_of(session.scalars(select(Book.id).where(Book.id.in_(book_ids))))
-        if missing := sorted(set_of(book_ids) - known):
-            raise LookupError(f"no books {missing}")
+            known.check_books(session, book_ids)
     return {"job_id": job_queue.enqueue("structure_eval", options)}
 
 

@@ -1,5 +1,5 @@
 # a node's own outline printed on its opening page (an article of an edited volume) gives the node its children
-import pdf
+import text_layer
 
 from stages.structure.sources import Entry, conf
 from stages.structure.sources import printed_contents as contents
@@ -21,7 +21,7 @@ def _below(entries: list[Entry], i: int) -> int:
 
 
 # the outline's rows inside the node by the book's offset, mostly rising, up to the first pointing out (a footnote's)
-def _outline(node: Entry, last: int, lines: dict[int, list[pdf.Line]], offset: int, total: int,
+def _outline(node: Entry, last: int, lines: dict[int, list[text_layer.Line]], offset: int, total: int,
              contents_pages: frozenset[int]) -> list[Entry]:
     opening = [p for p in range(node.page, node.page + OPENING_PAGES) if p in lines and p <= last]
     if any(p in contents_pages for p in opening):
@@ -54,7 +54,7 @@ def _levels(rows: list) -> list[int]:
 
 
 # the outline replaces what other sources found under a node only when it lists more; no outline on contents pages
-def fold(entries: list[Entry], lines: dict[int, list[pdf.Line]], offset: int | None, total: int,
+def fold(entries: list[Entry], lines: dict[int, list[text_layer.Line]], offset: int | None, total: int,
          contents_pages: frozenset[int] = frozenset()) -> tuple[list[Entry], list[dict]]:
     if offset is None:
         return entries, []

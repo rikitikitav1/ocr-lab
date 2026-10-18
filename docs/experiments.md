@@ -41,8 +41,9 @@ Books are named by their id on the stand; [books.md](books.md) lists them.
     `POST /v1/eval/elements` (`app/evaluation/element_run.py`). After two gold guards, 91 sections.
   - *Structure*: the shelf of books that have bookmarks, collected with the bookmarks
     switched off and scored against them (`POST /v1/eval/structure` with `bookmarks_off`): the bookmarks
-    are the gold. A second, outside set is HiPS, 49 open English law books with tables of contents
-    written by people (`"set": "hips"`).
+    are the gold. For books without contents, `contents_off` collects with the bookmarks and the printed
+    contents both off and scores against the structure they gave. A third, outside set is HiPS, 49 open
+    English law books with tables of contents written by people (`"set": "hips"`).
   - *Metadata*: `eval/gold/metadata.yaml`, fields checked by hand on the book's own pages; plus every
     changed field over the whole shelf, listed and read.
   - *Refactors and new doors that must not change output*: the bundles of reference books (38,
@@ -54,7 +55,7 @@ Books are named by their id on the stand; [books.md](books.md) lists them.
 
 ## How an entry is written
 
-There is one entry per stage, at most five in all, and each is about 300 lines at most. Entries are read
+There is one entry per stage, and each is about 300 lines at most. Entries are read
 months later, by someone checking whether a number still holds, so every entry uses the same sections in
 the same order:
 
@@ -112,3 +113,4 @@ Each entry also follows these rules:
 | 2026-10-11 | [A raw run of the shelf](experiments/2026-10-11_raw-run.md) | 43 books on the defaults, defects by mechanism, the layer reader, shared pages, GPU memory, the open defects |
 | 2026-10-12 | [A book's structure from its headings](experiments/2026-10-12_scan-structure.md) | Pages read as pictures, the headings grouped by style, two failed gates, where chapters are lost, line boxes, running heads |
 | 2026-10-13 | [The book's structure without word lists, as a tree, and its layout](experiments/2026-10-13_toc-without-words.md) | Contents pages and the heading word's roles by shape; the structure as a tree read by level, one cut per boundary page; a page layout learned per book; contents rows rejoined or split; parts by numbering and labels learned from the book taken back |
+| 2026-10-18 | [Spaces PDFium makes up inside words](experiments/2026-10-18_letter-spacing.md) | Letter-spaced rows and splits inside a word joined by the book's own letter and word gaps, the referee kept on the layer as read; a character tagger tried and not built; splits by an f joined only where the book writes the word solid |

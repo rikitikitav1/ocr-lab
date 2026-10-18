@@ -5,6 +5,7 @@ from html import escape
 from document.model import (
     Caption,
     Code,
+    Contents,
     Document,
     Figure,
     Footnote,
@@ -139,6 +140,9 @@ def _block(block, chapter_level: int, opened: dict[int, str] | None = None) -> s
             return f"*{' '.join(block.text.split())}*"
         case Note():
             return _note(block)
+        case Contents():
+            return "<!-- contents -->\n" + "\n".join(_prose(" ".join(e.split())) for e in block.entries) \
+                + "\n<!-- /contents -->"
         case Footnote():
             return f"[^{block.mark}]: {' '.join(block.text.split())}"
         case Formula():

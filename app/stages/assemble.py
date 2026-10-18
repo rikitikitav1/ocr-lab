@@ -12,18 +12,22 @@ import code_version
 import numerals
 import pdf
 import settings
-from assembly import passes, referee
+import text_layer
+from assembly import caption_series, passes, referee
 from document.model import Code, Figure, Heading, Node, PageMarker, Piece, Table
 from engines import converter_tools, reading
 from job_signals import Final
-from orm.catalogue import Artifact, Book, BookFile, MetadataField
+from orm.catalogue import Artifact, Book, BookFile, LayoutVersion, StructureNode
 from orm.db import Session
 from quality import piece as piece_quality
-from sqlalchemy import select
 from writers import markdown
 
+from stages import captions as layer_captions
 from stages import intake, running_heads
+from stages.layout import collect as layout_collect
+from stages.layout import page as layout_page
 from stages.metadata import resolve
+from stages.structure import collect as structure_collect
 from stages.structure import evidence, scan, sources
 
 STAGE = "assemble"
@@ -52,23 +56,31 @@ class Assembled:
     pages: dict = field(default_factory=dict)
     # how each page this piece meets a neighbour on was cut
     boundaries: list = field(default_factory=list)
+    # the captions the layer sets by the pictures, by book page, for the caption measure
+    captions: dict = field(default_factory=dict)
+    # per file, its letter and word gaps and whether its letter-spaced rows were joined, as this assembly read them
+    spacing: dict = field(default_factory=dict)
 
 
-# the languages of one metadata version, set by hand or detected, in order; a book without them is read as English
-def languages_in(metadata_version_id: int | None) -> list[str]:
-    if metadata_version_id is None:
-        return ["en"]
+# the page layout and structure versions a run started on; a piece assembled outside a run reads the current ones
+@dataclass(frozen=True)
+class Pinned:
+    layout: int | None = None
+    structure: int | None = None
+
+
+CURRENT = Pinned()
+
+
+def _page_layout(book_id: int, versions: Pinned) -> LayoutVersion | None:
+    if versions.layout is None:
+        return layout_collect.current(book_id, layout_collect.PAGE)
     with Session() as session:
-        found = session.scalar(select(MetadataField.value).where(
-            MetadataField.metadata_version_id == metadata_version_id, MetadataField.name == "languages"))
-    values = found if isinstance(found, list) else [found] if found else []
-    return list(dict.fromkeys(str(v).lower()[:2] for v in values)) or ["en"]
+        return session.get(LayoutVersion, versions.layout)
 
 
-# outside a run the book is read with its current metadata; a run reads with the version it pinned
-def languages_of(book_id: int) -> list[str]:
-    version = resolve.current_version(book_id)
-    return languages_in(version.id if version is not None else None)
+# the book's languages live with its metadata, where the structure reads them too
+languages_in, languages_of = resolve.languages_in, resolve.languages_of
 
 
 # a number in any language: digits, a Roman numeral of two letters or more, or one set off ("I.", "Part I:", "Глава V")
@@ -240,14 +252,29 @@ _build = reading.build
 
 
 # a reading is kept per file range, fields and engine build, so a rerun of the piece reads nothing again
-def _reading(book_id: int, f: BookFile, a: int, b: int, engine: str, languages: list[str],
-             regime: str = "text_pdf") -> Artifact:
+def _reading_key(f: BookFile, a: int, b: int, engine: str, languages: list[str], regime: str):
     given = reading.fields(engine, regime, languages)
     build = _build(engine)
     made_from = artifacts.Inputs({"stage": STAGE, "file": f.sha256, "pages": [a, b], "fields": given,
                                   "build": build})
-    owner = artifacts.Owner(book_id=f.book_id)
     name = f"reading.{engine}.{f.ord}.{a}-{b}{'' if regime == 'text_pdf' else '.' + regime}.json"
+    return artifacts.Owner(book_id=f.book_id), name, made_from, given, build
+
+
+# every range of the pages is read already, so reading them again costs a lookup, not an engine call
+def readings_kept(book_id: int, engine: str, first_page: int, last_page: int, languages: list[str] | None = None,
+                  cut: frozenset[int] = frozenset()) -> bool:
+    languages = languages or languages_of(book_id)
+    for f, a, b, regime in ranges(book_id, first_page, last_page, cut):
+        owner, name, made_from, _, _ = _reading_key(f, a, b, engine, languages, regime)
+        if artifacts.find_done(owner, STAGE, name, made_from.key) is None:
+            return False
+    return True
+
+
+def _reading(book_id: int, f: BookFile, a: int, b: int, engine: str, languages: list[str],
+             regime: str = "text_pdf") -> Artifact:
+    owner, name, made_from, given, build = _reading_key(f, a, b, engine, languages, regime)
     done = artifacts.find_done(owner, STAGE, name, made_from.key)
     if done is not None:
         return done
@@ -255,7 +282,7 @@ def _reading(book_id: int, f: BookFile, a: int, b: int, engine: str, languages: 
     structure = reading.read(engine, settings.DATA_DIR / f.file_path, a, b, given, READ_CEILING, build)
     # the reading's own cost, so a run that takes it from the cache still reports what the book took to read
     return artifacts.write(owner, artifacts.book_dir(book_id), STAGE, name, structure, made_from, heavy=True,
-                           meta={"engine": engine, "seconds": round(time.perf_counter() - started, 2)})
+                           keyed=True, meta={"engine": engine, "seconds": round(time.perf_counter() - started, 2)})
 
 
 def _structure(book_id: int, f: BookFile, a: int, b: int, engine: str, languages: list[str],
@@ -281,19 +308,117 @@ def read(book_id: int, engine: str, first_page: int, last_page: int, languages: 
             for f, a, b, regime in ranges(book_id, first_page, last_page, cut)}
 
 
-# the book's running heads by book page, read once from the whole text layer and kept for every piece
-def running(book_id: int) -> dict[int, list[str]]:
+# the page layout read from (the run's, else the current) and what it holds; a scan's skipped layout holds nothing
+def _layout(book_id: int, versions: Pinned) -> tuple[LayoutVersion | None, dict]:
+    kept = _page_layout(book_id, versions)
+    return kept, kept.layout if kept is not None and "skipped" not in kept.layout else {}
+
+
+# a book-level list by page kept under its inputs: made once, read back with its page keys as numbers again
+def _by_page(book_id: int, name: str, parts: dict, code: list[Path], make: Callable,
+             row: Callable = lambda v: v) -> dict:
     files = intake.files_of(book_id)
-    made_from = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files],
-                                  "code": code_version.files_hash([Path(running_heads.__file__)]).hexdigest()[:16]})
+    made_from = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], **parts,
+                                  "code": code_version.files_hash(code).hexdigest()[:16]})
     owner = artifacts.Owner(book_id=book_id)
-    done = artifacts.find_done(owner, STAGE, "running_heads.json", made_from.key)
+    done = artifacts.find_done(owner, STAGE, name, made_from.key)
     if done is not None:
-        return {int(k): v for k, v in json.loads(artifacts.read(done)).items()}
-    lines = sources.book_lines(files)
-    heads = running_heads.layer_heads(lines)
-    artifacts.write(owner, artifacts.book_dir(book_id), STAGE, "running_heads.json", heads, made_from)
-    return heads
+        return {int(k): row(v) for k, v in json.loads(artifacts.read(done)).items()}
+    out = make(files)
+    artifacts.write(owner, artifacts.book_dir(book_id), STAGE, name, out, made_from, keyed=True)
+    return out
+
+
+# the book's running heads by page: lines repeated at a page's edge, and the slot lines its page layout claims by reason
+def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
+    kept, layout = _layout(book_id, versions)
+
+    def make(files) -> dict:
+        lines = sources.book_lines(files)
+        heads = running_heads.layer_heads(lines)
+        page_of = {id(x): p for p, ls in lines.items() for x in ls}
+        for key, (line, _) in layout_page.claimed_reasons(lines, layout).items() if layout else ():
+            on_page = heads.setdefault(page_of[key], [])
+            if line.text not in on_page:
+                on_page.append(line.text)
+        return heads
+
+    return _by_page(book_id, "running_heads.json", {"layout": kept.id if kept is not None else None},
+                    [Path(running_heads.__file__), Path(layout_page.__file__)], make)
+
+
+# the slot lines the page layout claims by reason (folio, repeat, side), by book page, for the slot reader
+def slot_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[tuple[str, str, float]]]:
+    kept, layout = _layout(book_id, versions)
+    if not layout:
+        return {}
+
+    def make(files) -> dict:
+        lines = sources.book_lines(files)
+        page_of = {id(x): p for p, ls in lines.items() for x in ls}
+        heights = {f.first_page + i: h for f in files
+                   for i, (_, h) in enumerate(pdf.page_sizes(settings.DATA_DIR / f.file_path))}
+        out: dict[int, list[tuple[str, str, float]]] = {}
+        for key, (line, reason) in layout_page.claimed_reasons(lines, layout).items():
+            page = page_of[key]
+            out.setdefault(page, []).append((line.text, reason, round(line.top / heights[page], 4)))
+        return out
+
+    return _by_page(book_id, "slot_lines.json", {"layout": kept.id, "with": "top"}, [Path(layout_page.__file__)],
+                    make, lambda v: [tuple(x) for x in v])
+
+
+# the lines the page layout reads as notes, per book page, joined and spaced for a word-bounded search
+def note_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, str]:
+    kept, layout = _layout(book_id, versions)
+    if not layout.get("notes"):
+        return {}
+
+    def make(files) -> dict:
+        lines = sources.book_lines(files)
+        notes = layout_page.claimed(lines, layout) - layout_page.claimed(lines, {**layout, "notes": None})
+        return {p: " " + " ".join(" ".join(x.text for x in ls if id(x) in notes).split()).casefold() + " "
+                for p, ls in lines.items() if any(id(x) in notes for x in ls)}
+
+    return _by_page(book_id, "note_lines.json", {"layout": kept.id}, [Path(layout_page.__file__)], make)
+
+
+# the book's picture captions by page, read from the PDF's pictures and the layer's lines beside them
+def captions(book_id: int) -> dict[int, list[str]]:
+    def make(files) -> dict:
+        found = {}
+        # the body size is a file's own: a book bound from several files may set them in different sizes
+        for f in files:
+            pictures = {f.first_page + i: b for i, b in pdf.page_pictures(settings.DATA_DIR / f.file_path).items() if b}
+            if pictures:
+                found |= layer_captions.by_page(pictures, sources.book_lines([f], set(pictures)))
+        return found
+
+    return _by_page(book_id, "captions.json", {},
+                    [Path(layer_captions.__file__), Path(caption_series.__file__), Path(sources.__file__)], make)
+
+
+# the book's captions in its own numbered series, by book page, read from the layer's lines alone
+def series_captions(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
+    version = versions.structure
+    if version is None and (current := structure_collect.current_version(book_id)) is not None:
+        version = current.id
+    with Session() as session:
+        titles = frozenset(n.title for n in session.query(StructureNode).filter_by(
+            structure_version_id=version)) if version is not None else frozenset()
+
+    def make(files) -> dict:
+        def drawings(page: int) -> list:
+            f = intake.file_of(files, page)
+            if f is None:
+                return []
+            index = page - f.first_page
+            return text_layer.page_drawings(settings.DATA_DIR / f.file_path, [index]).get(index, [])
+
+        return caption_series.learn(sources.book_lines(files), titles, cache(drawings))
+
+    return _by_page(book_id, "series_captions.json", {"structure": version},
+                    [Path(caption_series.__file__), Path(sources.__file__)], make)
 
 
 def builds() -> dict:
@@ -366,9 +491,10 @@ def _borrowed(book_id: int, f: BookFile, page: int, regime: str, engine: str, la
 
 
 def _range_blocks(book_id: int, f: BookFile, a: int, b: int, regime: str, languages: list[str], got: Assembled,
-                  counts: dict, keep: Callable[[bytes], str], knobs: dict | None = None,
+                  counts: dict, keep: Callable[[bytes], str], knobs: dict,
                   readings: dict[str, int] | None = None, boundaries: list[passes.Boundary] = (),
-                  neighbour: dict[str, int] | None = None, tail_page: int | None = None) -> list:
+                  neighbour: dict[str, int] | None = None, tail_page: int | None = None,
+                  versions: Pinned = CURRENT) -> list:
     path = settings.DATA_DIR / f.file_path
     lent = tail_page == f.first_page + b - 1 and neighbour is not None and not _read_whole(readings, f, a, b, regime)
     own = b - 1 if lent else b
@@ -400,7 +526,7 @@ def _range_blocks(book_id: int, f: BookFile, a: int, b: int, regime: str, langua
                 counts["boundary_own_reading"] = counts.get("boundary_own_reading", 0) + 1
     ranged: list = []
     if regime == "scan":
-        scan_engine = {**passes.conf(), **(knobs or {})}["scan_engine"]
+        scan_engine = knobs["scan_engine"]
         blocks, found, agreement = passes.recognised(reads, scan_engine, ranged,
                                                      piece_quality.conf()["layer_min_words"], here,
                                                      got.boundaries)
@@ -408,11 +534,24 @@ def _range_blocks(book_id: int, f: BookFile, a: int, b: int, regime: str, langua
         got.pages.update({f.first_page + page - 1: {"picked": scan_engine, "agreement": share}
                           for page, share in agreement.items()})
     else:
-        layer = {i + 1: t for i, t in pdf.page_texts(path, list(range(a - 1, b))).items()}
-        got.layer.update({f.first_page + page - 1: text for page, text in layer.items()})
+        # the referee compares the engines with the layer as read, so the joined rows cannot move its picks
+        read = text_layer.page_layers(path, list(range(a - 1, b)))
+        layer = {i + 1: r.as_read for i, r in read.items()}
+        got.layer.update({f.first_page + i: r.joined for i, r in read.items()})
         glyphs = cache(lambda page: pdf.page_glyphs(path, page - 1))
         picks: dict = {}
-        blocks, found = passes.apply(reads, layer, glyphs, ENGINES, ranged, knobs, picks, here, got.boundaries)
+        gaps = text_layer.spacing_gaps(path)
+        got.spacing[f.ord] = {"letters_p90": gaps[0] if gaps else None, "words_p10": gaps[1] if gaps else None,
+                              "joined": text_layer.spacing_fits(path)}
+        claimed = slot_lines(book_id, versions)
+        slots = {p - f.first_page + 1: claimed[p] for p in range(f.first_page + a - 1, f.first_page + b)
+                 if p in claimed}
+        joined = {i + 1: r.rows for i, r in read.items() if r.rows}
+        noted = note_lines(book_id, versions) if knobs.get("notes_from_furniture") else {}
+        notes = {p - f.first_page + 1: noted[p] for p in range(f.first_page + a - 1, f.first_page + b) if p in noted}
+        captions = series_captions(book_id, versions) if knobs.get("caption_series") else {}
+        blocks, found = passes.apply(reads, layer, glyphs, ENGINES, ranged, knobs, picks, here, got.boundaries,
+                                     slots=slots, joined_rows=joined, notes=notes, captions=captions)
         got.pages.update({f.first_page + page - 1: picked for page, picked in picks.items()})
     got.steps.append({"file": f.ord, "pages": [a, b], "regime": regime, "steps": ranged})
     for key, n in found.items():
@@ -532,7 +671,7 @@ def assemble(book_id: int, ord: int, title: str, level: int, first_page: int, la
              readings: dict[str, int] | None = None, shared_start: bool = False,
              next_title: str | None = None, nodes: list[dict] = (), piece: bool = False,
              reread_end: bool = False, boundaries: list[passes.Boundary] | None = None,
-             neighbour: dict[str, int] | None = None) -> Assembled:
+             neighbour: dict[str, int] | None = None, versions: Pinned = CURRENT) -> Assembled:
     got = Assembled(None, "")
     counts = got.counts
 
@@ -542,31 +681,56 @@ def assemble(book_id: int, ord: int, title: str, level: int, first_page: int, la
         return name
 
     languages = languages or languages_of(book_id)
+    # the profile's knobs over the passes' defaults, read once for the whole piece
+    knobs = {**passes.conf(), **(knobs or {})}
     blocks = []
     for f, a, b, regime in ranges(book_id, first_page, last_page, cut):
         blocks += _range_blocks(book_id, f, a, b, regime, languages, got, counts, keep, knobs, readings,
-                                boundaries or (), neighbour, last_page if reread_end else None)
+                                boundaries or (), neighbour, last_page if reread_end else None, versions)
     counts["pages_cut"] = sum(first_page <= p <= last_page for p in cut)
-    heads = running(book_id)
+    heads = running(book_id, versions)
     got.furniture["layer"] = [text for page in got.layer for text in heads.get(page, [])]
+    got.captions = {p: c for p, c in captions(book_id).items() if first_page <= p <= last_page}
     node_level = min(max(level, 1), 5)
+    # the piece passes after the range passes, each snapshot taken as it stood, since later passes edit blocks in place
+    piece_steps: list = []
+    got.steps.append({"file": "piece", "pages": [first_page, last_page], "regime": None, "steps": piece_steps})
+
+    def step(name: str) -> None:
+        piece_steps.append((name, [b.model_copy(deep=True) for b in blocks]))
+
     if boundaries is None:
         blocks, shared = passes.shared_pages(blocks, title, shared_start, next_title,
                                              last_page if reread_end else None)
     else:
         shared = _boundary_counts(got.boundaries)
     counts.update(shared)
+    step("shared_pages")
     title_found = passes.title_on_first_page(blocks, title)
     blocks, counts["title_dropped"] = passes.without_title(blocks, title)
-    pinned = passes.pins(blocks, [t for t, _ in subs], counts)
+    step("without_title")
+    # a chapter's own section list is set apart before the pins, so no node is pinned to its line in it
+    if nodes and knobs.get("chapter_contents"):
+        blocks, counts["chapter_contents"] = passes.chapter_contents(blocks, list(nodes), got.layer)
+    step("chapter_contents")
+    own_pages = [(r["first_page"], r["last_page"]) for r in list(nodes)[1:]] if nodes else None
+    pinned = passes.pins(blocks, [t for t, _ in subs], counts, own_pages)
     blocks, levelled = passes.piece_levels(blocks, node_level, list(subs), pinned)
     counts.update(levelled)
+    step("piece_levels")
     fired = {k: 0 for k in ("label_opened", "placed_title", "placed_number", "placed_loose", "placed_top")}
     blocks, inner = (_opened(blocks, pinned, list(nodes)[1:], node_level, piece, nodes[0]["first_page"], fired)
                      if nodes else (blocks, []))
     counts.update(fired)
+    step("opened")
+    if knobs.get("caption_series"):
+        blocks, counts["series_captions"] = passes.series_captions(blocks, series_captions(book_id, versions))
+    step("series_captions")
+    blocks, counts["slot_dropped"] = passes.drop_slots(blocks)
+    step("slots_dropped")
     counts["reread_cut"] = int(reread_end and bool(counts.get("shared_cut_end")))
     blocks = _owned(blocks, nodes[0]["ord"] if nodes else ord, shared_start and not counts["shared_cut_start"])
+    step("owned")
     counts["blocks"] = sum(not isinstance(b, PageMarker) for b in blocks)
     counts["blocks_by_page"] = sum(getattr(b, "by_page", False) for b in blocks)
     own = [Node(**_node(n), pinned=title_found, anchored=True) for n in list(nodes)[:1]]

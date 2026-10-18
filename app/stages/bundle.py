@@ -7,11 +7,15 @@ import artifacts
 import profiles
 import settings
 import yaml
+from assembly import referee
+from document.model import PageMarker
+from document.model import Piece as Model
 from engines import ocr_languages
 from knobs import registry
-from orm.catalogue import Artifact, BookFile, Piece, Profile, Run, StructureNode
+from orm.catalogue import Artifact, BookFile, LayoutVersion, Piece, Profile, Run, StructureNode
 from orm.db import Session
 from quality import book as book_quality
+from quality import piece as piece_quality
 from sqlalchemy import select
 from writers import markdown
 
@@ -104,7 +108,64 @@ def _report(session, run: Run, book: dict, files: list[BookFile], rows: dict, pi
             "images": images, "duplicates": doubled, "languages": _languages(run),
             "seconds": _seconds(session, run.id, pieces, book["pages"]),
             "profile_search": profiles.SEARCH_SKIPPED, "profile": profile_view(profile),
+            "scans": _scans(session, run, pieces, files, assemble.languages_in(run.metadata_version_id)),
+            "layer_spacing": [_spacing(f, pieces) for f in files], "monospace": _monospace(run, profile),
             "pieces": [_piece_entry(c, rows.get(c.ord, {}), roles.get(c.ord), files) for c in pieces]}
+
+
+# per file, the letter and word gaps and whether spaced rows were joined, as the pieces' assemblies read them
+def _spacing(f: BookFile, pieces: list) -> dict:
+    seen = [((c.checks or {}).get("spacing") or {}).get(str(f.ord)) for c in pieces]
+    kept = next((s for s in seen if s), None) or {"letters_p90": None, "words_p10": None, "joined": None}
+    return {"file": f.ord, **kept}
+
+
+# the monospace share of the page layout the run started on, and the preset of the run's own profile
+def _monospace(run: Run, profile: Profile | None) -> dict:
+    unmeasured = {"share": None, "pages": 0, "sampled": 0, "faces": []}
+    with Session() as session:
+        layout = session.get(LayoutVersion, run.layout_version_id) if run.layout_version_id is not None else None
+    measured = (layout.layout if layout else {}).get("monospace") or unmeasured
+    return {**measured, "preset": profile.preset if profile is not None else None}
+
+
+# recognised pages in runs of one engine: book and file pages, the engines' agreement, words a dictionary knows
+def _scans(session, run: Run, pieces: list, files: list[BookFile], languages: list[str]) -> list[dict]:
+    picked, words = {}, {}
+    for c in pieces:
+        kept_pages = _newest(session, run.id, c.ord, "pages.json")
+        kept_model = _newest(session, run.id, c.ord, "model.json")
+        recognised = {int(p): v for p, v in (json.loads(artifacts.read(kept_pages)) if kept_pages else {}).items()
+                      if "agreement" in v}
+        picked.update(recognised)
+        if recognised and kept_model is not None:
+            page = None
+            for b in Model.model_validate(json.loads(artifacts.read(kept_model))).blocks:
+                if isinstance(b, PageMarker):
+                    page = b.book_page
+                elif page in recognised:
+                    words.setdefault(page, []).extend(piece_quality.dictionary_words(referee.block_text(b)))
+    out: list[dict] = []
+    for page in sorted(picked):
+        last = out[-1] if out else None
+        if last and last["pages"][1] == page - 1 and last["engine"] == picked[page]["picked"]:
+            last["pages"][1] = page
+        else:
+            out.append({"pages": [page, page], "engine": picked[page]["picked"]})
+    for scan in out:
+        pages = range(scan["pages"][0], scan["pages"][1] + 1)
+        shares = [picked[p]["agreement"] for p in pages if picked[p]["agreement"] is not None]
+        found = [w for p in pages for w in words.get(p, [])]
+        f = intake.file_of(files, scan["pages"][0])
+        scan.update({"file": f.ord if f else None,
+                     "file_pages": [scan["pages"][0] - f.first_page + 1, scan["pages"][1] - f.first_page + 1]
+                     if f else None,
+                     "agreement": round(sum(shares) / len(shares), 3) if shares else None,
+                     "agreement_min": min(shares) if shares else None, "dictionary_words": len(found),
+                     "dictionary_share": piece_quality.dictionary_share(found, languages),
+                     # neither engine gives a confidence of its own, so the range has none to report
+                     "engine_confidence": None})
+    return out
 
 
 # what the book cost per phase: each reading's own time (kept with it, so a cached one still counts) and the assembly
@@ -129,8 +190,10 @@ def profile_view(profile: Profile | None) -> dict | None:
     if profile is None:
         return None
     defaults = {path: spec["default"] for path, spec in registry.run_knobs().items()}
-    applied = {path: v["value"] for path, v in profile.values.items() if v["value"] != defaults.get(path)}
-    return {"id": profile.id, "preset": profile.preset, "sha256": profile.sha256, "knobs_applied": applied,
+    differing = {path: v for path, v in profile.values.items() if v["value"] != defaults.get(path)}
+    return {"id": profile.id, "preset": profile.preset, "sha256": profile.sha256,
+            "knobs_applied": {path: v["value"] for path, v in differing.items()},
+            "knob_sources": {path: v.get("source") for path, v in differing.items()},
             "piece_overrides": profile.piece_overrides}
 
 
@@ -181,6 +244,15 @@ def _worst(worst: dict, lists: tuple) -> list[str]:
 
 
 # the short human summary: the book's numbers, then the worst pieces by each of them
+def _profile_line(report: dict) -> str:
+    profile = report.get("profile")
+    if not profile:
+        return "no profile"
+    sources = profile.get("knob_sources") or {}
+    knobs = ", ".join(f"{path} ({sources.get(path) or 'unknown'})" for path in sorted(profile["knobs_applied"]))
+    return f"{knobs or 'none'} / {_listed(sorted(profile.get('piece_overrides') or {}, key=int))}"
+
+
 def _summary(report: dict) -> str:
     n, i, langs = report["numbers"], report["images"], report["languages"]
     assembly = (report.get("seconds") or {}).get("per_page", {}).get("assemble")
@@ -196,10 +268,16 @@ def _summary(report: dict) -> str:
              f"{', '.join(f'{k} {v}' for k, v in sorted((n.get('heading_sources') or {}).items())) or 'none'} |",
              f"| deepest heading level / pieces below their own sections | {n.get('max_heading_level', 0)} / "
              f"{_listed(n.get('pieces_below_sections'))} |",
-             f"| figures / image files / broken links | {i['figures']} / {i['files']} / {i['broken_links']} |",
+             f"| figures / not kept / image files / broken links | {i['figures']} / {n.get('figures_not_kept', 0)} / "
+             f"{i['files']} / {i['broken_links']} |",
+             f"| picture captions in the layer: as a caption / in a paragraph / as a heading / lost | "
+             f"{n.get('captions', 0)}: {n.get('captions_in_caption', 0)} / {n.get('captions_in_paragraph', 0)} / "
+             f"{n.get('captions_in_heading', 0)} / {n.get('captions_lost', 0)} |",
+             f"| structure nodes whose headings stand out of order | {n.get('nodes_out_of_order', 0)} |",
              f"| paragraphs met in two pieces | {n['duplicates']} |",
              f"| paragraphs met twice in one piece | {n.get('repeated_paragraphs', 0)} |",
-             f"| the book's running heads and folios left in the text | {n.get('running_heads_in_text', 0)} |",
+             f"| the book's running heads and folios left in the text / glued to a paragraph | "
+             f"{n.get('running_heads_in_text', 0)} / {n.get('running_heads_glued', 0)} |",
              f"| layer word runs out of order | {_percent(n.get('out_of_order'))} |",
              f"| recognised pages, engines' word agreement, words a dictionary knows | {n['recognised_pages']}, "
              f"{'n/a' if n['agreement'] is None else n['agreement']}, {_percent(n.get('dictionary_share'))} |",
@@ -210,7 +288,8 @@ def _summary(report: dict) -> str:
              f"| languages / OCR data / missing | {_listed(langs['book'])} / {_listed(langs['ocr'])} / "
              f"{_listed(langs['missing'])} |",
              f"| pages cut: printed contents / cover | {_listed(n['pages_cut']['contents'])} / "
-             f"{_listed(n['pages_cut']['cover'])} |"]
+             f"{_listed(n['pages_cut']['cover'])} |",
+             f"| profile: knobs off the default (source) / pieces with their own knobs | {_profile_line(report)} |"]
     lines += _worst(n["worst"], WORST)
     fields = report["metadata"].get("fields") or {}
     if fields:
@@ -310,21 +389,26 @@ def write(run_id: int) -> dict:
                          doubled, fields, profile)
     owner, base = artifacts.Owner(run_id=run_id), Path("bundles") / str(book_id) / str(run_id)
     # the bundle names its pieces' content, so a piece written again makes a new bundle
+    builds = {engine: build for c in pieces for engine, build in
+              ((c.checks or {}).get("made_by", {}).get("builds") or {}).items()}
     made_from = artifacts.Inputs({"stage": "bundle", "run": run_id,
                                   "pieces": {str(ord): sha for ord, (_, sha) in sorted(kept.items())},
-                                  "images": {name: row.sha256 for name, row in sorted(images.items())}})
-    artifacts.write(owner, base, "", f"{_slug(stem)}.md", document, made_from)
+                                  "images": {name: row.sha256 for name, row in sorted(images.items())},
+                                  "profile": profile.sha256 if profile is not None else None,
+                                  "builds": dict(sorted(builds.items()))})
+    artifacts.write(owner, base, "bundle", f"{_slug(stem)}.md", document, made_from, folder="")
     # images/ is there even for a book without figures, so every bundle has the same layout
     artifacts.directory(base / "images")
     for name, row in images.items():
-        artifacts.write(owner, base, "", name, artifacts.read(row), made_from)
-    artifacts.write(owner, base, "", "structure.json", structure, made_from)
-    artifacts.write(owner, base, "", "report.json", report, made_from)
+        artifacts.write(owner, base, "bundle", name, artifacts.read(row), made_from, folder="")
+    artifacts.write(owner, base, "bundle", "structure.json", structure, made_from, folder="")
+    artifacts.write(owner, base, "bundle", "report.json", report, made_from, folder="")
     if profile is not None:
-        artifacts.write(owner, base, "", "profile.yaml",
-                        yaml.safe_dump({"preset": profile.preset, "sha256": profile.sha256, "values": profile.values,
-                                        "piece_overrides": profile.piece_overrides}, sort_keys=True), made_from)
-    artifacts.write(owner, base, "", "report.md", _summary(report), made_from)
+        kept_profile = {"preset": profile.preset, "sha256": profile.sha256, "values": profile.values,
+                        "piece_overrides": profile.piece_overrides}
+        artifacts.write(owner, base, "bundle", "profile.yaml", yaml.safe_dump(kept_profile, sort_keys=True), made_from,
+                        folder="")
+    artifacts.write(owner, base, "bundle", "report.md", _summary(report), made_from, folder="")
     with Session() as session:
         run = session.get(Run, run_id)
         run_state.to_done(run, str(base))

@@ -50,6 +50,7 @@ chapter labels learned from the book (the gate failed); the label word lists sta
 | 19 | a piece's read job leaves its tail page to the next piece, the assembly takes it from that reading | kept runs 199 to 222 reassembled; live runs 223 to 226 (38, 68, 73, 49) | old runs: every piece's numbers and text as before; live: lost, extra and layer words, blocks and sections equal on every piece, the tail page never missing; set-aside furniture lower (the page no longer read twice) | kept |
 | 20 | a re-read boundary page measured as the next piece's own, less the tail the earlier piece took | 112, 10 (chapters open mid-page) and 20, 31, 38 (they do not), then all 47 runs | lost 112 0.089 to 0.009, 10 0.099 to 0.015; 20, 31, 38 unchanged or lower; bundle text byte-identical | kept |
 | 21 | a short line over the next title that ends no sentence ("Chapter 7", "ЧАСТЬ I") stays below the cut, and the title an engine reads again under it is dropped | 47 runs against step 20's; movers registered: 4, 5, 11, 15, 20, 23, 45, 48, 49, 54, 65, 118; tails of 112, 10, 111 to stay | the registered twelve moved, tails stayed; 50, 80, 110 also lost a title read twice; lost, extra, subs, duplicates equal on all 47; out of order 4 0.001 to 0.005 (the raw run's), 15 0.016 to 0.015 | kept |
+| 22 | a node keeps every level the book gives it; only the Markdown caps headings at 6 | snapshot 20 after a recollection on the code before; may move: 71, 85, 87 to 92, 103, 104, 106 (a node at 6 or a source deeper), levels only | 87, 88, 90, 103, 104 moved, each only its level-6 nodes to 7 (3, 15, 5, 18, 60), titles, pages and rows the same; nothing else moved; run 422 of 87 writes them as `######` with `level=7` in the node comment | kept |
 
 ### Reading by tree level
 
@@ -170,9 +171,43 @@ a rarer one before them parts. It moved 18 books, covered ones among them; a sec
 | a part after the first chapter | 21, 44, 103 | the rule wanted parts before the first chapter and dropped them |
 | a label met once or twice, or a number in words | 14, 15, 62, 64, 67, 95, 100 | "ЧАСТИНА I", "CHAPITRE", "Part One": nothing to learn from without a list |
 
+## Books without contents: headings from the text layer (2026-10-18)
+
+The shelf has almost no ordinary book without contents, so books with contents were made into books without:
+`POST /v1/eval/structure` with set `contents_off` switches off the bookmarks, the printed contents and the headings
+read as pictures (which would put the whole shelf on the GPU), and scores what the other sources give against the
+structure the contents gave. 106 text books are scored.
+
+The new source `text_headings` takes the lines the text layer sets apart by size (1.15 of the body) or by weight,
+joins a wrapped title's rows, and groups them by look the way the headings read as pictures are grouped: repeats on
+many pages are running heads, a bare "Chapter 3" takes the line after it, the larger looks go above, a group running
+a number is the top level, more top nodes than half the pages is no structure. It is read only when no bookmarks,
+printed contents or chapter files hold the book, and it ranks before numbering, which votes on it.
+
+| | the defaults (numbering, labels) | text headings | after the review |
+|---|---|---|---|
+| top nodes found, of 2736 | 1098 (40%) | 2161 (81%) | 2167 |
+| entries matched at every level | 6372 | 21902 | 21856 |
+| extra top nodes | 189 | 645 | 573 |
+| books without a structure | 30 | 7 | |
+
+No book found fewer top nodes than on the defaults, and the books with contents gave the same structure byte for
+byte. The extra nodes come in classes: a preface's subheads at the top, a title repeated in every chapter, adverts,
+a chapter number alone on its line, numbered footnote lines, diagram labels. A rule taking a title set three times
+or more for no node was measured and taken back: it cut 96 extras but lost 621 matched entries, and on 2 the
+contents itself puts five "Резюме" at the top.
+
+A broken text layer is told apart rather than read: headings written in letters the book's languages do not write
+(the languages from its metadata, their letters from CLDR) make the source refuse, so the pages are read as
+pictures. On 89 (a font mapped to Latin Extended-B, "I. Fƞơƿƾ ƞƹƢ Fiƨǀƽƣƾ") 281 of 335 headings are refused this
+way, and the Persian dictionary 116 gets "a broken text layer" instead of 3596 entries in a garbled encoding.
+Romanian, Vietnamese and Azerbaijani letters pass, as their languages write them.
+
 ## Open
 
 - Labels from the book, one measured piece per mechanism above; the label lists stay until then.
+- Books without contents: the extra nodes by class, each measured alone; dictionaries, whose letters belong at the
+  top and whose entries below, as their own step.
 - "Глава 1." above "1.1." in a contents without indents (2, 11, 53): kept by the label lists today, it comes back
   with labels learned from the book.
 - Book 8: a contents heading below imprint lines told from a part title by shape.

@@ -1,19 +1,25 @@
-# what the table-of-contents sources read; words are matched case-insensitively at the start of a line
+# what the structure sources read; words are matched case-insensitively at the start of a line
 
-whole_book_max_pages: 100   # a book this short without any contents is one chapter; a longer one fails as structure not recognised
+whole_book_max_pages: 100   # a book this short without any contents is one node; a longer one fails as structure not recognised
 contents:
   scan_head: 30          # book pages from the start searched for printed contents
   scan_tail: 30          # and from the end: many Russian books print the contents last
   min_lines: 3           # lines ending in a page number that make a page a contents page
 
 text_layer:
-  # labelled parts and chapters ("Chapter 3", "ГЛАВА 3") numbering must find to be a toc when nothing else is
+  # labelled parts and chapters ("Chapter 3", "ГЛАВА 3") numbering must find to be the structure when nothing else is
   numbering_base_min: 3
   numbering:
     head_lines: 8          # a part or chapter label counts only among the first lines of a page (an epigraph may come first)
     max_chars: 120         # a numbered line longer than this is prose, not a heading
     part: [part, часть, частина, teil, partie, parte, część]
     chapter: [chapter, глава, розділ, kapitel, chapitre, capítulo, capitolo, rozdział]
+  # headings told by type when no contents source holds the book; grouped and levelled as scan_layer.headings
+  headings:
+    larger: 1.15           # a line this much larger than the body's commonest size, or bold over a plain body, is a heading
+    same_size: 0.3         # a wrapped title's next row is set within this many points of its first
+    row_gap: 1.8           # and no further below it than this many of its sizes
+    max_words: 15          # a title stops taking rows at this many words
 scan_layer:
   labels:
     top_share: 0.2         # a chapter label (book knob structure.chapter_label) starts in this top share of a recognised page
@@ -27,7 +33,7 @@ scan_layer:
     head_min: 3            # repeated header blocks needed to know the running heads' size
     head_larger: 1.15      # a header block no larger than the running heads' size times this is one of them
     style_step: 1.15       # headings of one look split where the size steps up by this
-    min_nodes: 5        # a chapter level holds at least this many headings
+    min_nodes: 5        # a heading level holds at least this many headings
     max_nodes_per_page: 0.5  # and at most this many a page, or the headings are no structure
     node_spread: 0.4    # spread over at least this share of the book
     numbered_share: 0.6    # a group runs a number when this share of its titles carry one

@@ -10,6 +10,7 @@ import code_version
 import job_queue
 import pdf
 import settings
+import text_layer
 from assembly import code_layer, passes
 from document.model import Table
 from engines import converter_tools, reading
@@ -70,13 +71,13 @@ GOLD_IN_CLIPS = 0.6
 def gold_in_layer(gold_md: str, cut: Path) -> float:
     words = re.compile(r"\w+")
     gold = Counter(words.findall(element_gold.plain(gold_md).lower()))
-    layer = Counter(words.findall(" ".join(pdf.page_texts(cut).values()).lower()))
+    layer = Counter(words.findall(" ".join(text_layer.page_texts(cut).values()).lower()))
     return round(sum((gold & layer).values()) / max(1, sum(gold.values())), 2)
 
 
 def _assembled(cut: Path, language: str, builds: dict, knobs: dict) -> tuple[list, Counter, list, Counter]:
     reads = {e: reading.adapt(e, _structure(e, cut, language, builds[e])) for e in ENGINES}
-    layer = {i + 1: t for i, t in pdf.page_texts(cut).items()}
+    layer = {i + 1: t for i, t in text_layer.page_texts(cut).items()}
     blocks, counts = passes.apply(reads, layer, cache(lambda page: pdf.page_glyphs(cut, page - 1)), ENGINES,
                                   knobs=knobs)
     counts = Counter(counts)
@@ -96,7 +97,7 @@ def _member(engine: str, entry: dict, build, knobs: dict) -> dict:
         all_blocks, furniture, unknown = read.blocks, read.furniture, read.unknown
     blocks, unplaced = element_gold.section(all_blocks, _clips(entry, cut))
     got_md = markdown.body(blocks, 1)
-    running = element_gold.running_lines(pdf.page_lines(cut))
+    running = element_gold.running_lines(text_layer.page_lines(cut))
     marks = _marks(blocks, cut)
     return {"id": entry["id"], "doc": entry["doc"], "lang": entry["lang"], "kind": entry["kind"], "engine": engine,
             "unplaced": unplaced, "furniture": len(furniture), "unknown": dict(unknown),
@@ -149,7 +150,7 @@ def run(engines: list[str], ids: list[str] | None, job_id: int | None, knobs: di
         cut = gold_dir() / "files" / "sections" / f"{s['id']}.pdf"
         text = gold.read_text()
         check = {"gold_words_in_layer": gold_in_layer(text, cut),
-                 **element_gold.gold_in_clips(text, pdf.page_lines(cut), _clips(s, cut), pdf.page_sizes(cut))}
+                 **element_gold.gold_in_clips(text, text_layer.page_lines(cut), _clips(s, cut), pdf.page_sizes(cut))}
         gold_checks[s["id"]] = check
         if check["gold_words_in_layer"] < GOLD_IN_LAYER or check["gold_clip_f1"] < GOLD_IN_CLIPS:
             mismatch.append({"id": s["id"], **check})

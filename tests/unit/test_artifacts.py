@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -70,3 +71,13 @@ def test_crash_before_rename_leaves_no_file_and_no_row(stand, book, monkeypatch)
     target = Path(settings.DATA_DIR) / artifacts.book_dir(book) / "intake" / "probe.json"
     assert not target.exists()
     assert artifacts.find_done(owner, "intake", "probe.json", made_from.key) is None
+
+
+def test_a_keyed_file_written_from_other_inputs_leaves_the_earlier_one_whole(stand, book):
+    owner = artifacts.Owner(book_id=book)
+    first = artifacts.write(owner, artifacts.book_dir(book), "assemble", "reading.x.json", {"words": 1},
+                            artifacts.Inputs({"build": "a"}), keyed=True)
+    second = artifacts.write(owner, artifacts.book_dir(book), "assemble", "reading.x.json", {"words": 2},
+                             artifacts.Inputs({"build": "b"}), keyed=True)
+    assert first.path != second.path and json.loads(artifacts.read(first)) == {"words": 1}
+    assert artifacts.find_done(owner, "assemble", "reading.x.json", artifacts.Inputs({"build": "a"}).key).id == first.id

@@ -85,9 +85,12 @@ def atomic_write(path: Path, data) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
+# keyed files go under their inputs' key, so other inputs never replace a file a row vouches for; folder overrides stage
 def write(owner: Owner, base: Path, stage: str, name: str, data, inputs: Inputs,
-          piece_ord: int | None = None, meta: dict | None = None, heavy: bool = False) -> Artifact:
-    relative = base / stage / (f"{piece_ord:03d}" if piece_ord is not None else "") / name
+          piece_ord: int | None = None, meta: dict | None = None, heavy: bool = False,
+          folder: str | None = None, keyed: bool = False) -> Artifact:
+    piece = f"{piece_ord:03d}" if piece_ord is not None else ""
+    relative = base / (stage if folder is None else folder) / piece / (inputs.key[:16] if keyed else "") / name
     sha = atomic_write(settings.DATA_DIR / relative, data)
     row = Artifact(**owner.columns(), stage=stage, piece_ord=piece_ord, name=name, path=str(relative),
                    sha256=sha, input_hash=inputs.key, meta={**(meta or {}), "inputs": inputs.hashed()}, heavy=heavy)

@@ -12,7 +12,7 @@ output. The measurements ask, change by change, which numbers move and on which 
   gate set is the reference pair, not the shelf.
 - **Scan verdict**: checked over the whole shelf.
 - Gates were written before each run; byte identity is checked with `cmp` and `diff -rq` on the bundles.
-  What every report number means is in [measurement.md](measurement.md).
+  What every report number means is in [measurement.md](../measurement.md).
 
 ## How the numbers moved
 

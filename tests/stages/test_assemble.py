@@ -2,8 +2,7 @@ from types import SimpleNamespace
 
 from assembly import passes
 from document.model import Code, Figure, Heading, PageMarker, Paragraph, Where
-from job_handlers import run
-from stages import assemble, intake, running_heads
+from stages import assemble, intake, piece_assembly, running_heads
 
 from tests.fixtures import build, text_page
 from tests.real_db import needs_db
@@ -50,10 +49,10 @@ def test_pieces_go_down_the_tree_by_level_and_length_and_never_cut_a_node_by_pag
     # the re-read page is the next piece's, less the tail the earlier piece took; that piece measures its tail alone
     layer = {3: "the end of part i one begins here", 41: "two begins"}
     cuts = [{"page": 3, "read": True, "tail_text": "The end of Part I"}, {"page": 41, "read": True, "tail_text": ""}]
-    assert run.measured_layer(got[0], layer, cuts)[3] == "The end of Part I"
-    assert run.measured_layer(got[1], layer, cuts) == {3: "one begins here", 41: ""}
-    assert run.measured_layer(got[2], layer, cuts)[41] == "two begins"
-    assert run.measured_layer(got[1], layer, []) == {3: "the end of part i one begins here", 41: ""}
+    assert piece_assembly.measured_layer(got[0], layer, cuts)[3] == "The end of Part I"
+    assert piece_assembly.measured_layer(got[1], layer, cuts) == {3: "one begins here", 41: ""}
+    assert piece_assembly.measured_layer(got[2], layer, cuts)[41] == "two begins"
+    assert piece_assembly.measured_layer(got[1], layer, []) == {3: "the end of part i one begins here", 41: ""}
     assert [n["title"] for n in assemble.pieces_of(rows, frozenset(), 0)[1]["nodes"]] == ["One", "1.1"]
     by_one = [c["title"] for c in assemble.pieces_of(rows, frozenset(), 2)]
     assert by_one == ["Part I", "One", "1.1", "Two", "Index"]
@@ -282,6 +281,12 @@ def test_a_chapter_over_two_files_is_assembled_without_engines(stand, tmp_path, 
     assert any(isinstance(b, Paragraph) and "Second file" in b.text for b in got.piece.blocks)
     assert "<!-- node ord=1 level=2 pages=2-3 role=body -->\n\n### Chapter\n\n#### Deep heading" in got.markdown
     assert [name for name, _ in got.steps[0]["steps"]][0] == "referee" and "furniture_docling" in got.counts
+    # after the range passes come the piece passes, the last snapshot being the piece as written
+    piece = got.steps[-1]
+    assert (piece["file"], [name for name, _ in piece["steps"]]) == (
+        "piece", ["shared_pages", "without_title", "chapter_contents", "piece_levels", "opened", "series_captions",
+                  "slots_dropped", "owned"])
+    assert piece["steps"][-1][1] == got.piece.blocks
     assert set(got.pages) == {2, 3} and all(set(p["scores"]) == {"docling", "mineru"} for p in got.pages.values())
     assert got.counts.get("pages_docling", 0) + got.counts.get("pages_mineru", 0) == 2
 
@@ -364,11 +369,24 @@ def test_a_tail_counts_as_cut_from_the_own_re_read_only_where_that_re_read_holds
     monkeypatch.setattr(assemble, "_kept", lambda book_id, f, a, b, regime, engine, *rest: engine)
     monkeypatch.setattr(assemble.reading, "adapt",
                         lambda engine, kept, **kw: SimpleNamespace(blocks=list(marked[kept]), furniture=[]))
-    monkeypatch.setattr(assemble.passes, "conf", lambda: {"scan_engine": "mineru"})
     monkeypatch.setattr(assemble.passes, "recognised", lambda reads, *rest: ([], {}, {}))
     monkeypatch.setattr(assemble, "_kept_figures", lambda path, blocks, keep: blocks)
     got = assemble.Assembled(piece=None, markdown="")
     f = SimpleNamespace(ord=0, first_page=1, pages=5, file_path="b.pdf")
-    assemble._range_blocks(1, f, 4, 5, "scan", ["en"], got, got.counts, None,
+    assemble._range_blocks(1, f, 4, 5, "scan", ["en"], got, got.counts, None, {"scan_engine": "mineru"},
                            boundaries=[passes.Boundary(page=5, title="Next", tail=True)], neighbour={})
     assert got.counts["boundary_own_reading"] == 1
+
+
+def test_a_title_every_chapter_repeats_is_pinned_on_its_node_s_own_pages_never_a_namesake_s():
+    def page(n):
+        return PageMarker(book_page=n, file_ord=0, file_page=n)
+
+    quiz = "Контрольные вопросы"
+    head = Heading(text=quiz, level=2, level_source="docling")
+    blocks = [page(27), Paragraph(text="text"), page(35), head, page(68), head]
+    spans = [(27, 27), (35, 35), (68, 68)]
+    assert passes.pins(blocks, [quiz] * 3, None, spans) == [None, 3, 5]
+    assert passes.pins(blocks, [quiz] * 3) == [3, 5, None]
+    nested = [page(5), head, page(6), head]
+    assert passes.pins(nested, [quiz] * 2, None, [(5, 7), (5, 5)]) == [1, 3]

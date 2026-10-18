@@ -5,9 +5,11 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+import job_costs
 import job_specs
 import psycopg
 import settings
+import worker_registry
 from orm.catalogue import Run, RunStatus
 from orm.db import Session
 from orm.jobs import Job
@@ -48,6 +50,15 @@ def enqueue(type: str, options: dict | None = None, parent_id: int | None = None
         return id
 
 
+# a bulk door's parent: done at once, so waiting on it waits for exactly the jobs queued under it
+def batch(session, door: str, books: int) -> int:
+    options = job_specs.check("batch", {"door": door, "books": books})
+    job = Job(type="batch", lane=job_specs.lane("batch"), options=options, status="done", result=options)
+    session.add(job)
+    session.flush()
+    return job.id
+
+
 # the parent row is locked, so a cancel either sees this child or this child sees the cancel
 def _add(session, job: Job) -> int:
     if job.parent_id is not None:
@@ -60,7 +71,7 @@ def _add(session, job: Job) -> int:
     return job.id
 
 
-def claim_next(lane: str, code_hash: str | None = None) -> ClaimedJob | None:
+def claim_next(lane: str, code_hash: str | None = None, host: str | None = None) -> ClaimedJob | None:
     with Session() as session:
         job = session.scalars(
             select(Job)
@@ -73,6 +84,7 @@ def claim_next(lane: str, code_hash: str | None = None) -> ClaimedJob | None:
             return None
         job.status = "running"
         job.code_hash = code_hash
+        job.claimed_by = host
         _notify(session, job)
         claimed = ClaimedJob(job.id, job.type, dict(job.options), job.attempts, job.deferred_seconds, job.run_id,
                              job.book_id)
@@ -80,19 +92,30 @@ def claim_next(lane: str, code_hash: str | None = None) -> ClaimedJob | None:
         return claimed
 
 
-# a job in any lane that could start now; one waiting out a deferral does not count
-def has_due() -> bool:
+# a job in these lanes that could start now, a deferral's wait aside; no lanes (a worker serving none yet) has none
+def has_due(lanes: list[str] | None = None) -> bool:
     with Session() as session:
-        return session.scalar(select(Job.id).where(Job.status == "new", Job.apply_since <= func.now()).limit(1)) \
+        where = [Job.status == "new", Job.apply_since <= func.now()]
+        where += [Job.lane.in_(lanes)] if lanes is not None else []
+        return session.scalar(select(Job.id).where(*where).limit(1)) \
             is not None
 
 
-# single worker by design: anything still running belongs to a process that died
-def requeue_stale(lanes: list[str]) -> list[int]:
+# jobs left running by a worker whose session is gone, by this host's last life when it starts, and by old code
+def requeue_stale(lanes: list[str], host: str | None = None, starting: bool = True, foreign: bool = True) -> list[int]:
     requeued = []
     with Session() as session:
-        for job in session.scalars(select(Job).where(Job.status == "running", Job.lane.in_(lanes))):
+        rows = list(session.scalars(select(Job).where(Job.status == "running", Job.lane.in_(lanes))
+                                    .with_for_update(skip_locked=True)))
+        claimers = {j.claimed_by for j in rows} - {None, host}
+        gone = {h for h in claimers if not worker_registry.host_alive(h)} if foreign else set()
+        for job in rows:
+            # every claim names its worker, so a running job naming none has no one to finish it
+            mine, ownerless = job.claimed_by == host, foreign and job.claimed_by is None
+            if mine and not starting or not mine and job.claimed_by not in gone and not ownerless:
+                continue
             job.reclaims += 1
+            job.claimed_by = None
             if job.reclaims > MAX_RECLAIMS:
                 job.status = "error"
                 job.error = {"error": f"the worker stopped under this job {job.reclaims} times", "kind": "worker_died"}
@@ -104,39 +127,42 @@ def requeue_stale(lanes: list[str]) -> list[int]:
     return requeued
 
 
-def complete(id: int, elapsed: float | None = None, result: dict | None = None) -> None:
-    _set(id, status="done", elapsed=elapsed, result=result)
+# a worker's outcome names it as the claimant: a job another worker took back since is no longer its to settle
+def complete(id: int, elapsed: float | None = None, result: dict | None = None, claimant: str | None = None) -> bool:
+    return _set(id, claimant, status="done", elapsed=elapsed, result=result)
 
 
-def fail(id: int, error: dict, kind: str, elapsed: float | None = None) -> None:
-    _set(id, status="error", error={**error, "kind": kind}, elapsed=elapsed)
+def fail(id: int, error: dict, kind: str, elapsed: float | None = None, claimant: str | None = None) -> bool:
+    return _set(id, claimant, status="error", error={**error, "kind": kind}, elapsed=elapsed)
 
 
 def reschedule(id: int, delay: timedelta, because: str, kind: str = "retry", attempts: int | None = None,
-               deferred_seconds: int | None = None, elapsed: float | None = None) -> None:
+               deferred_seconds: int | None = None, elapsed: float | None = None, claimant: str | None = None) -> bool:
     retry_at = datetime.now(timezone.utc) + delay
-    fields = {"status": "new", "apply_since": retry_at, "elapsed": elapsed,
+    fields = {"status": "new", "apply_since": retry_at, "elapsed": elapsed, "claimed_by": None,
               "waiting_because": {"kind": kind, "error": because, "retry_at": retry_at.isoformat()}}
     if attempts is not None:
         fields["attempts"] = attempts
     if deferred_seconds is not None:
         fields["deferred_seconds"] = deferred_seconds
-    _set(id, **fields)
+    return _set(id, claimant, **fields)
 
 
-def _set(id: int, **fields) -> None:
+def _set(id: int, claimant: str | None = None, **fields) -> bool:
     with Session() as session:
-        job = session.get(Job, id)
-        if job is None:
-            return
+        # the row is held, so a claim committing meanwhile is seen before a late outcome overwrites it
+        job = session.scalar(select(Job).where(Job.id == id).with_for_update())
+        if job is None or claimant is not None and job.claimed_by not in (None, claimant):
+            return False
         # a cancel is final; only how long the job ran is still recorded
         if job.status == "cancelled":
             fields = {k: v for k, v in fields.items() if k == "elapsed"}
         for key, value in fields.items():
-            if value is not None or key in ("result", "error"):
+            if value is not None or key in ("result", "error", "claimed_by"):
                 setattr(job, key, value)
         _notify(session, job)
         session.commit()
+    return True
 
 
 def get(id: int) -> Job | None:
@@ -147,6 +173,18 @@ def get(id: int) -> Job | None:
 def is_cancelled(id: int) -> bool:
     job = get(id)
     return job is not None and job.status == "cancelled"
+
+
+# jobs of a book waiting on a timer for what another job just finished are due at once; the timer stays the fallback
+def wake(type: str, book_id: int) -> int:
+    with Session() as session:
+        jobs = list(session.scalars(select(Job).where(Job.type == type, Job.book_id == book_id, Job.status == "new",
+                                                      Job.apply_since > func.now())))
+        for job in jobs:
+            job.apply_since = func.now()
+            _notify(session, job)
+        session.commit()
+    return len(jobs)
 
 
 def live_ids(statuses=None, type: str | None = None, run_id: int | None = None, ids=None) -> list[int]:
@@ -238,11 +276,11 @@ def _notify_raw(session, payload: dict) -> None:
 
 TREE = text("""
     WITH RECURSIVE tree AS (
-        SELECT id, type, status, run_id FROM jobs WHERE id = :id
+        SELECT id, type, status, run_id, book_id FROM jobs WHERE id = :id
         UNION ALL
-        SELECT j.id, j.type, j.status, j.run_id FROM jobs j JOIN tree t ON j.parent_id = t.id
+        SELECT j.id, j.type, j.status, j.run_id, j.book_id FROM jobs j JOIN tree t ON j.parent_id = t.id
     )
-    SELECT id, type, status, run_id FROM tree
+    SELECT id, type, status, run_id, book_id FROM tree
 """)
 
 
@@ -292,21 +330,25 @@ def wait(id: int, timeout: float = 600) -> dict:
     return {**state, "tree": tree(id)}
 
 
-# the worker says which code it runs and that it is alive, idle or not, so the stand never guesses from old jobs
-def heartbeat(host: str, code: str, started: bool = False) -> None:
-    with Session() as session:
-        session.execute(text("INSERT INTO workers (host, code) VALUES (:host, :code) ON CONFLICT (host) DO UPDATE "
-                             "SET code = :code, seen_at = now()" + (", started_at = now()" if started else "")),
-                        {"host": host, "code": code})
-        session.commit()
-
-
-def stats() -> dict:
+def stats(book_ids: list[int] | None = None, types: list[str] | None = None) -> dict:
     with Session() as session:
         counts = session.execute(select(Job.lane, Job.status, func.count()).group_by(Job.lane, Job.status)).all()
         oldest = session.scalar(select(func.min(Job.apply_since)).where(Job.status == "new"))
         attention = session.scalars(select(Run.id).where(Run.status == RunStatus.ATTENTION)).all()
+        live = select(Job).where(Job.status.in_(ACTIVE))
+        live = live.where(Job.book_id.in_(book_ids)) if book_ids else live
+        live = live.where(Job.type.in_(types)) if types else live
+        active = list(session.scalars(live.order_by(Job.id)))
+        now = session.scalar(select(func.now()))
     out: dict = {}
     for lane, status, n in counts:
         out.setdefault(lane, {})[status] = n
-    return {"lanes": out, "oldest_waiting": oldest.isoformat() if oldest else None, "needs_attention": attention}
+    in_flight: dict = {}
+    for job in active:
+        lane = in_flight.setdefault(job.lane, {})
+        lane.setdefault(job.type, {}).setdefault(job.status, 0)
+        lane[job.type][job.status] += 1
+    running = [{"id": j.id, "type": j.type, "lane": j.lane, "book_id": j.book_id, "run_id": j.run_id,
+                "seconds": round((now - j.updated_at).total_seconds(), 1)} for j in active if j.status == "running"]
+    return {"lanes": out, "oldest_waiting": oldest.isoformat() if oldest else None, "needs_attention": attention,
+            "in_flight": in_flight, "running": running, "seconds_left": job_costs.seconds_left(active, running)}

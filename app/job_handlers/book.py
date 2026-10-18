@@ -1,13 +1,12 @@
-# book-level stages, chained: intake, metadata, the page layout, the table of contents, the heading layout
+# book-level stages, chained: intake, metadata, the page layout, the structure, the heading layout
 import job_queue
 import job_specs
 import logging_setup
 from engines import card
-from stages import intake
+from stages import intake, run_start
 from stages.layout import collect as layout
 from stages.metadata import resolve
 from stages.structure import collect
-from use_cases import runs
 
 from job_handlers import register
 
@@ -23,12 +22,14 @@ def _next_after_metadata(book_id: int, options: dict) -> None:
 
 # a submission that asked for a run gets it under the structure job, so waiting on the intake waits for the whole book
 def _run_after_structure(options: dict, version_id: int) -> dict:
-    out = {"structure_version_id": version_id}
+    out = {"structure_version_id": version_id, "runs_woken": job_queue.wake("book_run", options["book_id"])}
+    # the heading layout is made again when the structure under it moved; it is forced only when layout is asked
+    forced = options["force"] and "layout" in options.get("what", [])
     out["layout_headings_job_id"] = job_queue.enqueue("layout_headings", {"book_id": options["book_id"],
-                                                                          "force": options["force"]},
+                                                                          "force": forced},
                                                       book_id=options["book_id"])
     if options.get("run") and not job_queue.is_cancelled(options["_job_id"]):
-        out["run_id"] = runs.start_run(options["book_id"], search=False)["run"]["id"]
+        out["run_id"] = run_start.start_one(options["book_id"])
     return out
 
 
@@ -57,7 +58,7 @@ def _collect_metadata(options: dict) -> dict:
         version_id = current.id
     if not job_queue.is_cancelled(options["_job_id"]):
         _next_after_metadata(book_id, options)
-    return {"metadata_version_id": version_id}
+    return {"metadata_version_id": version_id, "runs_woken": job_queue.wake("book_run", book_id)}
 
 
 # a cached model answer or a text layer needs no card; a model call or a recognition that does goes to the GPU lane
@@ -81,7 +82,7 @@ def run_structure(options: dict) -> dict:
     book_id = options["book_id"]
     # a scan, or a text book whose text layer gave no contents, is read from the raster on the GPU lane
     def to_gpu(because: str) -> dict:
-        handed = job_queue.enqueue("structure_scan", {"book_id": book_id, "what": ["structure"],
+        handed = job_queue.enqueue("structure_scan", {"book_id": book_id, "what": options.get("what", ["structure"]),
                                                       "force": options["force"], "run": options.get("run", False)},
                                    book_id=book_id)
         return {"structure_scan_job_id": handed, "because": because}
@@ -100,26 +101,24 @@ def run_structure_scan(options: dict) -> dict:
                                                    raster=True))
 
 
-# the layout changes nothing yet: a failure is kept in the job's result and the structure is collected all the same
+# runs read the page layout, so a failure is the job's like any other collection's, retried within its budget
 @register("layout_page")
 def run_layout_page(options: dict) -> dict:
     book_id = options["book_id"]
-    try:
-        out = {"layout_version_id": layout.collect_page(book_id, options["_job_id"],
-                                                        force=options["force"] and "layout" in options["what"])}
-    except Exception as e:
-        log.exception("layout.page.failed", book_id=book_id, error=str(e))
-        out = {"layout_failed": f"{type(e).__name__}: {e}"}
+    out = {"layout_version_id": layout.collect_page(book_id, options["_job_id"],
+                                                    force=options["force"] and "layout" in options["what"]),
+           "runs_woken": job_queue.wake("book_run", book_id)}
     if job_queue.is_cancelled(options["_job_id"]):
         return out
     if "structure" in options["what"]:
-        out["structure_job_id"] = job_queue.enqueue("structure", {"book_id": book_id, "what": ["structure"],
+        # the structure job carries layout on, so the heading layout after it is forced when asked
+        asked = [w for w in options["what"] if w in ("structure", "layout")]
+        out["structure_job_id"] = job_queue.enqueue("structure", {"book_id": book_id, "what": asked,
                                                       "force": options["force"], "run": options.get("run", False)},
                                               book_id=book_id)
     else:
-        out["layout_headings_job_id"] = job_queue.enqueue("layout_headings", {"book_id": book_id,
-                                                                              "force": options["force"]},
-                                                          book_id=book_id)
+        out["layout_headings_job_id"] = job_queue.enqueue("layout_headings", {
+            "book_id": book_id, "force": options["force"] and "layout" in options["what"]}, book_id=book_id)
     return out
 
 

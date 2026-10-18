@@ -16,6 +16,8 @@ class Placed(BaseModel):
     # the structure node the block belongs to; by_page when its node was set by the page, no title being found
     parent_ord: int | None = None
     by_page: bool = False
+    # a running head or folio the page layout claims (folio, repeat, side); dropped once the nodes are pinned
+    slot: str | None = None
 
 
 class Heading(Placed):
@@ -53,6 +55,7 @@ class Table(Placed):
 
 class ListItem(BaseModel):
     text: str
+    slot: str | None = None
     children: list["ListBlock"] = []
 
 
@@ -81,6 +84,12 @@ class Note(Placed):
     text: str
 
 
+# a chapter's own list of its sections on its opening page, kept apart so a reader can leave it out
+class Contents(Placed):
+    type: Literal["contents"] = "contents"
+    entries: list[str]
+
+
 class Footnote(Placed):
     type: Literal["footnote"] = "footnote"
     mark: str
@@ -99,8 +108,8 @@ class PageMarker(BaseModel):
     file_page: int
 
 
-Block = Annotated[Heading | Paragraph | Code | Table | ListBlock | Figure | Caption | Note | Footnote | Formula
-                  | PageMarker, Field(discriminator="type")]
+Block = Annotated[Heading | Paragraph | Code | Table | ListBlock | Figure | Caption | Note | Contents | Footnote
+                  | Formula | PageMarker, Field(discriminator="type")]
 
 
 # a node of the book's structure as a unit holds it: its level in the book, its parent and whether its heading was found

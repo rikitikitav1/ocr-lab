@@ -4,6 +4,7 @@ import code_version
 import settings
 from orm.db import Session
 from sqlalchemy import text
+from stages import intake
 from stages.structure import collect
 
 from tests.doors.test_runs import TEXT, _drain, engines
@@ -58,12 +59,19 @@ def test_a_raster_reading_takes_every_page_as_a_picture_and_is_kept_with_the_sca
 def test_reassembly_with_a_knob_reports_each_chapter_before_and_after_and_leaves_the_run_alone(client, inbox,
                                                                                              monkeypatch):
     book = _book(client, inbox, "reassemble.pdf")
+    intake.probe(book)
     collect.collect(book)
     engines(monkeypatch)
     run_id = client.post(f"/v1/books/{book}/runs", json={}).json()["run"]["id"]
     _drain()
     kept = client.get(f"/v1/runs/{run_id}/artifacts").json()
     pieces = client.get(f"/v1/runs/{run_id}/nodes").json()
+    # the book's artifacts the run was made from are listed beside its own and read through the run's door
+    made_from = [a for a in client.get(f"/v1/runs/{run_id}/artifacts", params={"used": True}).json() if a.get("used")]
+    assert {"probe.json", "nodes.json"} <= {a["name"] for a in made_from}
+    readings = [a for a in made_from if a["name"].startswith("reading.")]
+    assert readings and all(a["piece"] is not None for a in readings)
+    assert client.get(f"/v1/runs/{run_id}/artifacts/{readings[0]['id']}").status_code == 200
     assert client.post(f"/v1/runs/{run_id}/reassemble", json={"knobs": {"assembly.nope": True}}).status_code == 400
     same = client.post(f"/v1/runs/{run_id}/reassemble", json={"knobs": {}})
     assert same.status_code == 202
@@ -108,9 +116,9 @@ def test_a_worker_reload_is_asked_only_when_the_worker_runs_older_code(client):
                         {"code": code_version.tree_hash()})
         session.commit()
     assert client.post("/v1/stand/worker/reload").json()["requested"] is False
-    assert not code_version.reload_requested()
+    assert not code_version.reload_requested("w")
     with Session() as session:
         session.execute(text("UPDATE workers SET code = 'older', seen_at = now()"))
         session.commit()
     assert client.post("/v1/stand/worker/reload").json()["requested"] is True
-    assert code_version.reload_requested()
+    assert code_version.reload_requested("w")

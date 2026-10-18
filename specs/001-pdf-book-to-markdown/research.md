@@ -269,8 +269,9 @@ from `~/working_docs/projects/ocr-lab/notes/rag-lab-intake/`.
     deep nesting: a genre and a language our shelf does not have.
   - LongDocBench (arXiv 2608.15064, CC BY 4.0): 85 documents (18 textbooks, finance reports,
     papers) up to 105 pages, human-verified TOC trees, scored by tree edit distance (TEDS). The paper
-    says it is released, but no data link was found on 2026-10-05; the fetch script records its
-    absence until a link appears.
+    says it is released, but no data link was found on 2026-10-05 nor on 2026-10-17 (the arXiv page
+    and a web search name no repository or dataset); the structure eval refuses the set as not built
+    until a link appears.
 - **Scores**: chapters starting on the right page first (the toc exists for chapter ranges); then
   entry recall and precision (fuzzy title plus page) and level agreement on matched entries. TEDS
   over the TOC tree is dropped (owner, 2026-10-09): it would only put our numbers on LongDocBench's

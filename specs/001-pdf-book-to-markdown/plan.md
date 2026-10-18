@@ -21,7 +21,7 @@ rag-lab already holds. Decisions and their reasons: [research.md](research.md).
 **Language/Version**: Python 3.12, uv with a frozen lock
 
 **Primary Dependencies**: FastAPI, uvicorn, fastmcp, SQLAlchemy 2 with psycopg, pydantic 2,
-pypdfium2, rapidfuzz, lingua-language-detector, wordfreq, httpx, openai SDK (OpenAI-compatible
+pypdfium2, rapidfuzz, lingua-language-detector, wordfreq, gflanguages (CLDR letters per language), httpx, openai SDK (OpenAI-compatible
 providers: ollama, DeepSeek and similar); engines Docling
 (docling-serve 1.35.0) and MinerU 4.0.7 in the reused rag-lab images; reportlab for test fixtures
 
@@ -101,35 +101,45 @@ specs/001-pdf-book-to-markdown/
 app/
 ├── server.py                 # FastAPI app, mounts MCP at /mcp
 ├── mcp_tools.py              # one tool per use case
-├── api/v1/                   # books, runs, profiles, jobs, eval, stand routers
+├── api/v1/                   # books, runs, knobs, jobs, eval, stand, structure, layout, workbench routers
 ├── use_cases/                # what routes and tools call; no HTTP inside
-├── worker.py                 # lanes gpu and cpu, code hash stamp
-├── job_handlers/             # book.py (intake, metadata, layout, structure chain), run.py, evaluation.py
+├── worker.py                 # lanes gpu and cpu, code hash stamp, taking back the jobs of dead hosts
+├── worker_registry.py        # worker beats, liveness, the GPU and host locks, threads per lane
+├── job_handlers/             # book.py (intake, metadata, layout, structure chain), run.py, evaluation.py,
+│                             # preview.py, workbench.py (read_range, reassemble), builtin.py (batch, cleanup, noop)
 ├── job_queue.py              # claim, retry, defer, notify, wait
 ├── job_specs.py              # pydantic option specs per job type
+├── job_costs.py              # job prices from their latest done jobs, the time left per lane
 ├── stages/
 │   ├── intake.py             # sha, pages, text layer map, bookmarks, contents probe
 │   ├── metadata/             # resolve.py, file_metadata.py, title_pages.py,
 │   │                         # model_reader.py, language.py, candidates.py (field list)
-│   ├── structure/            # the structure: sources/*.py, pages.py (printed pages to book pages), scan.py, reconcile.py, collect.py
+│   ├── structure/            # the structure: sources/*.py, pages.py (printed pages to book pages), scan.py, reconcile.py, collect.py,
+│   │                         # outlines.py, compare.py (structure diffs for every door)
 │   ├── layout/               # page.py (body, slots, notes), headings.py (level styles from pins), collect.py
-│   ├── profile_search.py     # probes, presets, sampled coordinate search
+│   ├── profile_search.py     # probes, presets, sampled coordinate search (planned)
 │   ├── assemble.py           # one piece: engine, adapter, rules, checks
+│   ├── run_start.py          # a run created on the book's current versions, its book_run queued
+│   ├── cleanup.py            # a run deleted, and the heavy intermediates removed
 │   ├── run_pieces.py         # the run's pieces cut from the structure at the reading level
 │   ├── run_state.py          # piece jobs and statuses of a run
 │   └── bundle.py             # whole-book numbers, report, bundle
 ├── engines/                  # borrowed from rag-lab and adapted: converter client, card handover, adapters, model client
 ├── document/                 # document model (pydantic blocks)
-├── rules/                    # knob option implementations that transform the model
-├── probes/                   # knob probes
+├── assembly/                 # passes.py (knob options that transform the model), referee.py (per-page engine pick), code_layer.py
+├── structure/tree.py         # parents and depth of a node list
+├── knobs/registry.py         # the knob registry and its checks
+├── probes/                   # knob probes (planned)
 ├── writers/markdown.py
 ├── quality/                  # piece checks, scan measures, book numbers
-├── evaluation/               # sets, gates, comparison
+├── evaluation/               # element and structure evaluations, their golds, HiPS; sets and gates planned
 ├── artifacts.py              # atomic write, manifest, input hash, resume lookup
 ├── models_client.py          # OpenAI-compatible model client with cache
 ├── net.py                    # one wrapper for outside calls: retries, hosts set aside (FR-060)
 ├── book_knobs.py             # book-level knobs and their defaults (FR-059)
-├── pdf.py                    # pypdfium2 helpers: pages, text layer, garbled pages
+├── pdf.py                    # thin pypdfium2 access: pages, glyphs, crops, pictures, outline, file info
+├── text_layer.py             # the text layer read: joins, lines with style, monospace, drawings, letters, garbled pages
+├── alphabets.py              # the letters a book's languages write (CLDR via gflanguages) plus ASCII
 ├── settings.py, code_version.py, logging_setup.py
 └── orm/                      # SQLAlchemy tables
 config/
@@ -146,7 +156,7 @@ config/
 ├── models.yaml               # model provider per step
 └── isbn_agencies.yaml        # ISBN agency names CLDR does not know, to languages
 db/
-├── migrations/*.sql          # 20261009000001_init (the first five squashed), then profile_candidates and evaluation
+├── migrations/*.sql          # 20261009000001_init (the first five squashed), layout_versions, structure_tree, run_reading_level, structure_names, node_kind, structure_depth, workers, run_layout
 └── schema.sql
 eval/gold/metadata.yaml       # owner-checked metadata, the SC-010 reference
 scripts/

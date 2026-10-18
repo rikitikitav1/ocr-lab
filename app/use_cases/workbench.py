@@ -1,12 +1,10 @@
 import artifacts
-import code_version
 import job_queue
 import job_specs
 from knobs import registry
 from mcp_tools import tool
 from orm.catalogue import Artifact, Book, Run
 from orm.db import Session
-from sqlalchemy import text
 
 
 # the reading lands in the job's result by range key and artifact id, which the artifact door reads
@@ -51,7 +49,8 @@ def reassemble(id: int, knobs: dict, ords: list[int] | None = None, reading_leve
 
 # any kept artifact by id, a book's readings included; a tool cannot carry bytes, so it gets the file as text
 @tool("artifact", "GET /v1/artifacts/{id}",
-      "Any artifact by id: its stage, name, path, owner and inputs, for a reading, a piece file or a pages.json.")
+      "Any artifact by id: its stage, name, path, owner, inputs and its file content as text, for a reading, a "
+      "piece file or a pages.json.")
 def get_artifact(id: int) -> dict:
     with Session() as session:
         row = session.get(Artifact, id)
@@ -61,20 +60,3 @@ def get_artifact(id: int) -> dict:
             "run_id": row.run_id, "piece": row.piece_ord, "meta": row.meta,
             "text": artifacts.read(row).decode(errors="replace")}
 
-
-def _worker_code() -> str | None:
-    with Session() as session:
-        return session.scalar(text("SELECT code FROM workers ORDER BY seen_at DESC LIMIT 1"))
-
-
-# the worker stops claiming and restarts on newer code once its jobs in hand end; a run in flight then mixes code
-@tool("reload_worker", "POST /v1/stand/worker/reload",
-      "Ask the worker to take the code on disk once its jobs in hand end, instead of waiting for an empty queue;"
-      " a run in flight then mixes code across its pieces.")
-def reload_worker() -> dict:
-    worker, disk = _worker_code(), code_version.tree_hash()
-    if worker in (None, disk):
-        return {"requested": False, "worker_code": worker, "on_disk": disk,
-                "because": "no worker seen" if worker is None else "the worker already runs the code on disk"}
-    code_version.request_reload()
-    return {"requested": True, "worker_code": worker, "on_disk": disk}

@@ -1,4 +1,5 @@
 import pytest
+import text_layer
 from stages.metadata import file_metadata, resolve, title_pages
 from stages.metadata.candidates import SourceResult
 
@@ -115,14 +116,13 @@ def test_isbn_with_dashes_and_spaces_from_recognition():
 
 
 def test_garbled_layer_is_not_a_layer():
-    import pdf
 
     junk = "!\n, . \xad\n“ “ “\n, , ,\n. . / . . . .— .:\n“ \", - “ \", 1992.—336 .: 130 .\n" * 3
-    assert not pdf.has_layer(junk) and pdf.garbled(junk)
-    assert pdf.has_layer("Обычный текст страницы с достаточным количеством букв для слоя.")
+    assert not text_layer.has_layer(junk) and text_layer.garbled(junk)
+    assert text_layer.has_layer("Обычный текст страницы с достаточным количеством букв для слоя.")
     shifted = "ɨɛɟɫɱɟɫɬɢɬɶɫɟɛɹ, ɨɩɨɡɨɪɢɬɶɫɹ Ɉɬɫɢɥɶɧɨɝɨɠɚɪɚ ɨɧɫɬɚɥɤɪɚɫɧɵɦ ɤɚɤɦɟɞɧɚɹɦɨɧɟɬɚ"
-    assert pdf.has_layer(shifted) and pdf.garbled(shifted)
-    assert not pdf.garbled("A dictionary line: cat [kæt] n. a small animal kept as a pet in many homes")
+    assert text_layer.has_layer(shifted) and text_layer.garbled(shifted)
+    assert not text_layer.garbled("A dictionary line: cat [kæt] n. a small animal kept as a pet in many homes")
 
 
 def test_russian_catalogue_card():

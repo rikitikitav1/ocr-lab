@@ -6,7 +6,7 @@ numbers are read from the assembled piece and from the book's own PDF, never fro
 says how each one is computed. The schema is in
 [contracts/bundle.md](../specs/001-pdf-book-to-markdown/contracts/bundle.md); the code is
 `app/quality/piece.py` (a piece's checks), `app/quality/book.py` (the book's totals) and
-`app/job_handlers/run.py` (the bundle and `report.md`). Thresholds are in `config/quality.yaml`.
+`app/stages/bundle.py` (the bundle and `report.md`). Thresholds are in `config/quality.yaml`.
 
 ## Words
 
@@ -39,10 +39,12 @@ furniture are taken off the layer side, read from the layer alone (`app/stages/a
   it appears is a piece's opening title, not a head;
 - a **folio** is a page's top or bottom line that is a bare number of 1 to 4 digits (dashes and other
   marks around it allowed) whose page minus number gives the same shift on 3 or more pages. A "5" in a
-  query's output does not rise with the pages and stays text.
+  query's output does not rise with the pages and stays text;
+- a **slot line** is a page's edge line that the book's page layout (the version the run started on) claims for
+  one of its running slots, by folio, repeat or side (`app/stages/layout/page.py`).
 
 What an engine set aside as furniture is not subtracted. See
-[lost text against the book's own heads](experiments/2026-10-10_lost-text-against-the-books-own-heads.md).
+[lost text against the book's own heads](experiments/2026-10-10_run-and-report.md#lost-text-against-the-books-own-running-heads-and-folios).
 
 ## `lost_text` and `extra_text`
 
@@ -76,6 +78,13 @@ beyond the book's own heads and folios. It is a part of `lost_words`, not an add
 much of the lost text an engine dropped on purpose. A caption or a section line an engine wrongly took
 for a footer shows up here. `report.md`: "layer words an engine set aside beyond the book's heads".
 
+## `listing_numbers`, `lost_words_no_listing`
+
+A listing's line numbers, by the code pass's own test: runs of three or more layer rows, 80% of them opening with an
+integer and the integers never going down.
+They are not the book's text, and the code pass drops them on purpose, so `lost_words_no_listing` is `lost_words`
+less the listing numbers among them; `lost_words` and `lost_text` stay as they were.
+
 ## `layerless_words`
 
 Words written into the piece from pages that are not layer pages: pages whose layer has fewer than 20
@@ -97,6 +106,21 @@ engine's words on that page.
   measure of recognition. One engine failing alone stays an agreement of 0 and stays visible. The book's
   figure is the sum of each piece's `pages_picture` pass count.
 
+- `layer_spacing` (per file): the text layer's letter gaps (90th percentile of adjacent letters inside a word) and
+  word gaps (10th percentile of spaces between letters), in em on advance boxes over 25 pages of the file's first
+  quarter, and `joined`: whether the reader joined the file's letter-spaced rows and split words. It does when the
+  letter gaps stay under half the word gaps; an OCR layer with loose boxes, where the two overlap, is read as it is.
+  The values are the ones the run's assemblies read, kept with each piece; a run assembled before pieces kept them
+  shows them empty.
+- `monospace` (book level): the letters the text layer sets in a monospace face over all its letters, on 40 pages
+  sampled across the book, with the faces and the pages holding them. A face is monospace when its letters keep one
+  advance per size (the spread of advance over size, 90th less 10th percentile over the median, at most 0.12, with 50
+  letters or more); invisible (an OCR layer), turned and East Asian wide letters are left out. The share is the one
+  of the page layout the run started on, and `preset` is the run's own profile's (a run starts on `technical` at a
+  share of 0.02 on 5 pages or more, as `config/presets/technical.yaml` says).
+- `scans` (book level): the recognised pages in runs of one engine, each with its book and file pages, the engines'
+  word agreement (mean and least), its own `dictionary_share`, and `engine_confidence`, null since neither engine
+  gives a score of its own.
 - `dictionary_share`: on recognised pages, the share of the bundle's words of two or more letters that a word list
   of the book's languages knows (`wordfreq`); `dictionary_words` is how many were counted. It needs no gold and no
   second engine: it falls where recognition writes words that do not exist ("уменышаться", "asezarilor" for
@@ -107,7 +131,7 @@ engine's words on that page.
   reads 0.95 to 0.99 (book 9 0.988, where agreement is 0.385 because Docling returned empty pages).
 
 `report.md` lists the pieces with the least agreement. See
-[picture pages on recognised ranges](experiments/2026-10-10_picture-pages-on-recognised-ranges.md).
+[picture pages on recognised ranges](experiments/2026-10-10_run-and-report.md#picture-pages-on-recognised-ranges).
 
 ## Sections: `subs` and `subs_found`
 
@@ -133,6 +157,20 @@ and the pieces with the most missing.
 - `running_heads_in_text`: paragraphs that are the book's own running heads or bare page numbers (compared the way
   the running heads are found, a page number at either end ignored). Headings are left out, since a section title is
   often its page's running head too.
+- `running_heads_glued`: paragraphs that open or end with a running head of two words or more and hold more besides,
+  a head glued to the text; `report.md` shows it next to `running_heads_in_text`.
+- `heading_sources`: the piece's headings counted by where their level came from: `structure` (a node's heading
+  found on the page), `page` (a node's title put at the top of its page when its heading was not found), or the
+  engine (`docling`, `mineru`) for a heading inside a node.
+
+## Nodes and blocks
+
+- `nodes_by_level` (book level): per structure level, the nodes and how many of them were pinned to a heading.
+- `blocks_without_node`: blocks of the assembled pieces that no node holds; 0 when the text is cut cleanly.
+- `blocks_in_two`: engine blocks (one engine's box on one page) that two pieces both wrote, a page read twice;
+  0 when the text is cut cleanly.
+- `blocks_by_page`: blocks held by a node whose title was put at the top of a page because its heading was not
+  found, so the node holds them by page rather than by a heading.
 
 ## Duplicates
 
@@ -157,10 +195,19 @@ taken in layer order; those off the longest run that rises in the piece are out 
 (`out_of_order_anchors`), and `out_of_order` is their share, null with no anchors. The book divides the
 summed counts. A swapped paragraph and a footnote set before its text both show here.
 
+`nodes_out_of_order` counts, per piece and summed for the book, the structure nodes whose pinned headings stand off
+the longest run in the structure's order: a section set before the one the contents puts first.
+
 ## Images and links
 
 - `figures`: figure blocks over all pieces; per piece, `figures_not_kept` counts figures whose image
-  is not a file yet (written as a comment, not a broken link).
+  is not a file yet (written as a comment, not a broken link), summed for the book in the numbers.
+- `captions`: the captions the text layer sets by a picture, per piece and summed for the book. A picture is an image
+  or form object of the PDF page covering at least 2% of it, touching tiles taken as one; its caption is the layer's
+  line within 30 pt under it (else over it), with the rows it runs on over as the caption series joins them (its own
+  size, close below, 3 rows at most), up to 60 words, set apart from the body size by more than 5%. Each caption is counted where most of its words went (60% at least) among the blocks of its
+  page: `captions_in_caption`, `captions_in_paragraph`, `captions_in_heading`, else `captions_lost`. A shared page is
+  measured by neither piece. Vector drawings are path objects and are not seen.
 - `files`: image files written with the pieces' current text.
 - `links`: image links (`![...](images/...)`) in the document.
 - `broken_links`: distinct linked names with no file behind them.
@@ -181,7 +228,7 @@ rest. A letter counts as a number ("Appendix A"). Nothing is marked when numberi
 first 15% of the book's pages, and nothing after the last numbered piece when more than 15% of the
 pages follow it. Service pieces stay in the document, with `role=service` in the comment that opens
 each node, so a later reader can drop them. `report.md` lists them with their structure sub-node counts.
-See [service chapters on both edges](experiments/2026-10-10_service-chapters-on-both-edges.md).
+See [service chapters on both edges](experiments/2026-10-10_toc.md#change-e-service-chapters-on-both-edges-of-the-numbered-run).
 
 ## Worst pieces
 
@@ -196,12 +243,20 @@ not listed), lowest agreement, most sub-nodes missing.
 `shared_cut_blocks`, and `furniture_<engine>`, the furniture blocks each engine set aside. These are counts of actions, not
 quality numbers; they show which passes fired on a piece.
 
+## Time
+
+`seconds` holds what the run cost per phase: each engine's reading time (`read`, kept with each reading, so a cached
+one still counts; null for an engine with a reading kept before readings were timed, counted in
+`readings_untimed`), the assembly's time (`assemble`), and the same per page (`per_page`). See
+[timing.md](timing.md).
+
 ## Versions
 
 - `run.made_by` groups the pieces by the code version, engine builds and languages that made them. More than
   one group means piece reruns mixed versions in one bundle.
 - `profile` names the profile the run was made with: `knobs_applied` lists run knobs whose value differs
-  from the registry's default, `piece_overrides` a piece's own values from a rerun.
+  from the registry's default, `knob_sources` where each came from (preset, manual), `piece_overrides` a piece's own
+  values from a rerun, each with source manual; report.md shows them in its profile row.
 
 ## Which run is the book's result
 

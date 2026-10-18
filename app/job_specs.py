@@ -10,6 +10,13 @@ class Refused(ValueError):
     pass
 
 
+# refused because something still runs: wait for it rather than change the input
+class Busy(Refused):
+    def __init__(self, run_id: int):
+        super().__init__(f"run {run_id} is still running; wait with wait_runs([{run_id}]) or cancel it first")
+        self.run_id = run_id
+
+
 # a book's chain opens with metadata when it is asked for, else with the page layout, which chains the rest
 def chain_head(what: list[str]) -> str:
     return "metadata" if "metadata" in what else "layout_page"
@@ -54,8 +61,12 @@ class LayoutOptions(BookOptions):
     force: bool = False
 
 
+# the structure's gold sets that are built; every door and the evaluation read this one list
+STRUCTURE_SETS = ("bookmarks_off", "contents_off", "hips")
+
+
 class StructureEvalOptions(_Spec):
-    set: Literal["bookmarks_off", "hips", "longdocbench"]
+    set: Literal[STRUCTURE_SETS]
     book_ids: list[int] | None = None
 
 
@@ -119,6 +130,17 @@ class EmptyOptions(_Spec):
     pass
 
 
+class PreviewOptions(_Spec):
+    book_ids: list[int]
+    knobs: dict = {}
+
+
+# the parent a bulk door hangs its jobs under, so one wait covers them all
+class BatchOptions(_Spec):
+    door: str
+    books: int = 0
+
+
 # the lane is a property of the type, so a GPU job never lands where two could run at once
 SPECS: dict[str, tuple[type[_Spec], str]] = {
     "intake": (IntakeOptions, "cpu"),
@@ -144,6 +166,8 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     # the engines read on the card, so the measurement runs on the GPU lane
     "element_eval": (ElementEvalOptions, "gpu"),
     "cleanup": (CleanupOptions, "cpu"),
+    "structure_preview": (PreviewOptions, "cpu"),
+    "batch": (BatchOptions, "cpu"),
     "noop": (EmptyOptions, "cpu"),
     "noop_gpu": (EmptyOptions, "gpu"),
 }
@@ -173,6 +197,9 @@ def budgets() -> dict[str, int]:
     wrong = {k: v for k, v in loaded.items() if not BUDGET_MIN <= v <= BUDGET_MAX}
     if wrong:
         raise ValueError(f"budgets.yaml: attempts must be {BUDGET_MIN} to {BUDGET_MAX}, got {wrong}")
+    # a job type without a budget would fall silently to the floor
+    if missing := sorted(set(SPECS) - set(loaded)):
+        raise ValueError(f"budgets.yaml: no attempts for {missing}")
     return loaded
 
 

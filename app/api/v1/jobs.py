@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from use_cases import jobs
 
@@ -10,9 +12,11 @@ class Ids(BaseModel):
 
 
 @router.get("/jobs")
-def list_jobs(status: str | None = None, type: str | None = None, run_id: int | None = None, lane: str | None = None,
-              book_id: int | None = None, limit: int = 100):
-    return jobs.list_jobs(status, type, run_id, lane, book_id, limit)
+def list_jobs(status: Annotated[list[str] | None, Query()] = None, type: Annotated[list[str] | None, Query()] = None,
+              run_id: Annotated[list[int] | None, Query()] = None, lane: str | None = None,
+              book_id: Annotated[list[int] | None, Query()] = None, limit: int = 100, parent_id: int | None = None,
+              before_id: int | None = None, brief: bool = False):
+    return jobs.list_jobs(status, type, run_id, lane, book_id, limit, parent_id, before_id, brief)
 
 
 @router.get("/jobs/{id}")
@@ -46,8 +50,8 @@ def retry_jobs(body: Ids):
 
 
 @router.get("/queue")
-def queue():
-    return jobs.queue()
+def queue(book_ids: Annotated[list[int] | None, Query()] = None, types: Annotated[list[str] | None, Query()] = None):
+    return jobs.queue(book_ids, types)
 
 
 @router.get("/job_types")

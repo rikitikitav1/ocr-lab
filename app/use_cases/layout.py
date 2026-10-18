@@ -8,9 +8,11 @@ KINDS = ("page", "headings")
 
 @tool("layout", "GET /v1/books/{id}/layout",
       "A book's layout learned from its text layer, current or a given `version`: `kind` page (gathered before the "
-      "structure: body size, running slots at the top and bottom with their folio, notes) "
+      "structure: body size, running slots at the top and bottom with their folio, notes, the monospace share) "
       "or headings (gathered after it: "
-      "each structure level's style at its nodes and the label above them). Nothing reads it yet.")
+      "each structure level's style at its nodes and the label above them). A run pins the page layout version it "
+      "starts on: the assembly reads its running slots and notes, the preset choice and the report its monospace "
+      "share. Nothing reads the headings layout yet.")
 def get_layout(id: int, kind: str = "page", version: int | None = None) -> dict:
     if kind not in KINDS:
         raise LookupError(f"unknown layout kind {kind!r}; known: {', '.join(KINDS)}")

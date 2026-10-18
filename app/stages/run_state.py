@@ -1,5 +1,6 @@
 # a run's state from its pieces and their jobs: when to assemble a piece, when the run moves on
 import job_queue
+import job_specs
 import settings
 from orm.catalogue import Piece, Run, RunStage, RunStatus
 from orm.db import Session
@@ -185,7 +186,7 @@ def _locked(session, run_id: int) -> Run:
 def _reopen(session, run_id: int) -> Run:
     run = _locked(session, run_id)
     if busy(run):
-        raise ValueError(f"run {run_id} is still running")
+        raise job_specs.Busy(run_id)
     start(run)
     return run
 
@@ -203,15 +204,16 @@ def rerun_piece(run_id: int, ord: int, profile_id: int | None = None) -> None:
         session.commit()
 
 
-# a stopped run goes on with the pieces that are not done; the done ones keep their artifacts
-def resume(run_id: int) -> list[int]:
+# a stopped run goes on with the pieces not done, and the done ones `changed` says were made from other inputs
+def resume(run_id: int, changed=None) -> list[int]:
     with Session() as session:
         run = _reopen(session, run_id)
         # with no piece taken from the structure there is nothing to resume, and the metrics would bundle an empty book
         if session.scalar(select(Piece.ord).where(Piece.run_id == run_id).limit(1)) is None:
             raise ValueError(f"run {run_id} has no pieces: it stopped before taking them from its structure; "
                              f"start a new run")
-        pieces = list(session.scalars(select(Piece).where(Piece.run_id == run_id, Piece.status != "done")))
+        pieces = [p for p in session.scalars(select(Piece).where(Piece.run_id == run_id).order_by(Piece.ord))
+                  if p.status != "done" or (changed is not None and changed(session, run, p.ord))]
         for piece in pieces:
             _restart(session, run, piece)
         if not pieces:

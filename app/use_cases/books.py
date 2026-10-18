@@ -2,22 +2,27 @@ import re
 from pathlib import Path
 
 import book_knobs
+import job_costs
 import job_queue
 import job_specs
 import numerals
 import pdf
 import pypdfium2 as pdfium
 import settings
+import worker_registry
 from job_signals import Deferred
 from mcp_tools import tool
-from orm.catalogue import Book, BookFile, MetadataField, MetadataVersion, Run, StructureVersion
+from orm.catalogue import Book, BookFile, MetadataField, MetadataVersion, Run, StructureNode, StructureVersion
 from orm.db import Session
 from orm.jobs import Job
-from sqlalchemy import select
+from sqlalchemy import func, select
 from stages import eta, file_order, intake, versions
+from stages.layout import collect as layout_collect
 from stages.metadata import fields, resolve
 from stages.metadata.candidates import REQUIRED, SOUGHT
 from stages.structure import collect, evidence
+
+from use_cases import known
 
 
 def _allowed(path: Path) -> Path:
@@ -78,8 +83,8 @@ def submit(sources: list[tuple[Path, str]], knobs: dict | None = None, then: lis
 @tool("add_book", "POST /v1/books",
       "Registers a book from PDF files on the shelf (shelf_paths, under books/) or in data/inbox (file_paths), "
       "ordered as given or by_number, and queues its intake job (cpu lane), which chains metadata and structure "
-      "unless `then` says otherwise. Returns the book view with `created`; a known file set returns the "
-      "existing book.")
+      "unless `then` says otherwise. Returns the book view with `created` and the intake `job_id` (wait_job on it "
+      "waits for the whole chain); a known file set returns the existing book with job_id null.")
 def add_book(shelf_paths: list[str] | None = None, file_paths: list[str] | None = None,
              knobs: dict | None = None, then: list[str] | None = None, order: str = "given") -> dict:
     paths = [_allowed(settings.SHELF_DIR / "books" / p) for p in shelf_paths or []]
@@ -87,7 +92,7 @@ def add_book(shelf_paths: list[str] | None = None, file_paths: list[str] | None 
     return submit([(p, p.name) for p in paths], knobs, then, order)
 
 
-# a knob change takes effect at the next collection of metadata or the table of contents
+# a knob change takes effect at the next collection of metadata or the structure
 @tool("set_book_knobs", "PATCH /v1/books/{id}/knobs",
       "Sets or unsets a book's own knobs (see `knobs`, group book) and returns its overrides and effective "
       "values; they take effect at the next metadata or structure collection.")
@@ -115,7 +120,22 @@ def _fields(session, book_id: int) -> dict:
 # the current structure version and the source its base came from; structure_sources are intake's counts per source
 def _structure(session, book_id: int) -> dict | None:
     version = versions.current(session, StructureVersion, book_id)
-    return {"version": version.version, "base": evidence.base(session, version.id)} if version else None
+    if version is None:
+        return None
+    nodes = session.scalar(select(func.count()).select_from(StructureNode)
+                           .where(StructureNode.structure_version_id == version.id))
+    return {"version": version.version, "depth": version.depth, "nodes": nodes,
+            "base": evidence.base(session, version.id)}
+
+
+# every book's current structure in one query, for the brief rows: version, depth and node count, no evidence read
+def _structures(session, book_ids: list[int]) -> dict[int, dict]:
+    rows = session.execute(select(StructureVersion.book_id, StructureVersion.version, StructureVersion.depth,
+                                  func.count(StructureNode.id))
+                           .join(StructureNode, StructureNode.structure_version_id == StructureVersion.id, isouter=True)
+                           .where(StructureVersion.current, StructureVersion.book_id.in_(book_ids))
+                           .group_by(StructureVersion.id))
+    return {book: {"version": version, "depth": depth, "nodes": nodes} for book, version, depth, nodes in rows}
 
 
 def _view(session, book: Book) -> dict:
@@ -151,7 +171,8 @@ def _stages(session, book_id: int) -> dict:
 
 @tool("book", "GET /v1/books/{id}",
       "One book: files, text layer, structure sources, current metadata, knobs, runs, the result run, the newest job "
-      "of each book stage with its error, and whether metadata and structure are stale.")
+      "of each book stage with its error, the current structure (version, depth, nodes, base), whether metadata, "
+      "structure and the two layouts are stale, and the eta of work queued for it.")
 def get_book(id: int) -> dict:
     with Session() as session:
         book = session.get(Book, id)
@@ -164,7 +185,11 @@ def get_book(id: int) -> dict:
 # whether the current versions were made from other inputs than today's; a run collects stale ones again first
 def _stale(book_id: int) -> dict:
     out = {}
-    for what, check in (("metadata", resolve.stale), ("structure", collect.stale)):
+    # a run collects a stale page layout itself at its start; the heading layout is read by no run yet
+    checks = (("metadata", resolve.stale), ("structure", collect.stale),
+              ("layout_page", lambda b: layout_collect.stale(b, layout_collect.PAGE)),
+              ("layout_headings", lambda b: layout_collect.stale(b, layout_collect.HEADINGS)))
+    for what, check in checks:
         try:
             out[what] = check(book_id)
         except Deferred as e:
@@ -201,10 +226,11 @@ def _last_runs(session, book_ids: list[int]) -> dict[int, dict]:
 
 # brief rows by default: the full view of every book on the shelf is too much to read at once
 @tool("books", "GET /v1/books",
-      "Lists books as brief rows (id, title, stage, pages, languages, result run, last run) by default, or the full"
-      " `book` view with brief=false; filtered by stage, a title substring `q` or a series (then sorted by volume).")
+      "Lists books as brief rows (id, title, stage, pages, languages, result run, last run, the structure's version, "
+      "depth and node count) by default, or the full `book` view with brief=false; filtered by stage, a title "
+      "substring `q`, a series (then sorted by volume) or `min_depth` of the structure.")
 def list_books(stage: str | None = None, q: str | None = None, series: str | None = None,
-               limit: int = 100, offset: int = 0, brief: bool = True) -> list[dict]:
+               limit: int = 100, offset: int = 0, brief: bool = True, min_depth: int | None = None) -> list[dict]:
     with Session() as session:
         query = select(Book).order_by(Book.id)
         if stage:
@@ -218,13 +244,16 @@ def list_books(stage: str | None = None, q: str | None = None, series: str | Non
         if series:
             books = [b for b in books if str(value(b, "series") or "").lower() == series.lower()]
             books.sort(key=lambda b: (volume_order(value(b, "volume")), b.id))
+        structures = _structures(session, [b.id for b in books])
+        if min_depth is not None:
+            books = [b for b in books if (structures.get(b.id) or {}).get("depth", 0) >= min_depth]
         books = books[offset:offset + limit]
         if not brief:
             return [_view(session, b) for b in books]
         last = _last_runs(session, [b.id for b in books])
         return [{"id": b.id, "title": value(b, "title"), "stage": b.stage, "pages": b.pages,
-                 "languages": value(b, "languages"), "result_run_id": b.result_run_id, "last_run": last.get(b.id)}
-                for b in books]
+                 "languages": value(b, "languages"), "result_run_id": b.result_run_id, "last_run": last.get(b.id),
+                 "structure": structures.get(b.id)} for b in books]
 
 
 def _checked_what(what: list[str] | None) -> list[str]:
@@ -244,27 +273,59 @@ def _checked_run(what: list[str], run: bool) -> None:
         raise job_specs.Refused("run starts once the structure is collected; add structure to what")
 
 
-def _enqueue_recollect(session, book_id: int, what: list[str], run: bool = False) -> int:
+def _enqueue_recollect(session, book_id: int, what: list[str], run: bool = False, parent_id: int | None = None) -> int:
     # intake again re-reads the files, then chains the stages asked for, or both as on submission
     if "intake" in what:
         then = [w for w in what if w != "intake"] or ["metadata", "structure"]
         return job_queue.enqueue("intake", {"book_id": book_id, "then": then + ["run"] * run, "force": True},
-                                 book_id=book_id, session=session)
+                                 book_id=book_id, session=session, parent_id=parent_id)
     return job_queue.enqueue(job_specs.chain_head(what), {"book_id": book_id, "what": what, "force": True, "run": run},
-                             book_id=book_id, session=session)
+                             book_id=book_id, session=session, parent_id=parent_id)
+
+
+# what a recollection would queue for a book, in order, which of it is stale today, and what the chain costs
+def _plan(book_id: int, what: list[str], run: bool, priced: dict) -> dict:
+    stages = ([w for w in what if w != "intake"] or ["metadata", "structure"]) if "intake" in what else what
+    # from the CPU lane a scan's metadata and a raster structure go on to the GPU; an uncached model call can't be seen
+    chain = ["intake"] * ("intake" in what)
+    if "metadata" in stages:
+        chain += ["metadata"] + ["metadata_gpu"] * collect.scanned(book_id)
+    if {"structure", "layout"} & set(stages):
+        chain.append("layout_page")
+        if "structure" in stages:
+            chain += ["structure"] + ["structure_scan"] * collect.wants_raster(book_id)
+        chain.append("layout_headings")
+    chain += ["book_run"] * run
+    seconds = [(priced.get(t) or {}).get("median") for t in chain]
+    return {"chain": [{"type": t, "lane": job_specs.lane(t)} for t in chain], "stale": _stale(book_id),
+            "forced": stages, "seconds": None if None in seconds else round(sum(seconds), 1)}
+
+
+# a batch's plans priced per lane: the gpu lane runs one job at a time, the cpu lane shares its threads
+def _batch_seconds(plans: dict, priced: dict) -> dict[str, float | None]:
+    out: dict[str, float | None] = {}
+    for plan in plans.values():
+        for step in plan["chain"]:
+            cost = (priced.get(step["type"]) or {}).get("median")
+            lane = step["lane"]
+            out[lane] = None if cost is None or out.get(lane, 0) is None else out.get(lane, 0) + cost
+    threads = worker_registry.lane_threads()
+    return {lane: None if total is None else round(total / threads[lane]) for lane, total in out.items()}
 
 
 @tool("recollect", "POST /v1/books/{id}/recollect",
       "Queues one job that collects a book's stages again (`what` from intake, metadata, structure, layout; default "
       "metadata), forced even when nothing is stale; `run` starts a run once the structure is collected. "
-      "Returns {job_id}; "
-      "follow it with wait_job.")
-def recollect(id: int, what: list[str] | None = None, run: bool = False) -> dict:
+      "Returns {job_id}; follow it with wait_job. `dry_run` queues nothing and answers the plan: the job chain in "
+      "order with lanes, which stages are stale, which are forced, and the chain's seconds by each type's median.")
+def recollect(id: int, what: list[str] | None = None, run: bool = False, dry_run: bool = False) -> dict:
     what = _checked_what(what)
     _checked_run(what, run)
     with Session() as session:
         if session.get(Book, id) is None:
             raise LookupError(f"no book {id}")
+        if dry_run:
+            return {"dry_run": True, **_plan(id, what, run, job_costs.costs())}
         job_id = _enqueue_recollect(session, id, what, run)
         session.commit()
     return {"job_id": job_id}
@@ -275,16 +336,21 @@ def recollect(id: int, what: list[str] | None = None, run: bool = False) -> dict
       "Like recollect for many books at once (all books when `ids` is empty); every id and stage is checked "
       "before any job is queued. `run` starts a run for every book once its structure is collected, "
       "so with empty `ids` "
-      "it runs the whole shelf on the GPU. Returns {jobs: {book_id: job_id}}.")
-def recollect_books(ids: list[int] | None = None, what: list[str] | None = None, run: bool = False) -> dict:
+      "it runs the whole shelf on the GPU. Returns {jobs: {book_id: job_id}, batch_job_id}: wait_job on the batch "
+      "waits for every book's chain. `dry_run` queues nothing and "
+      "answers each book's plan as recollect does, with the seconds per lane for the whole batch.")
+def recollect_books(ids: list[int] | None = None, what: list[str] | None = None, run: bool = False,
+                    dry_run: bool = False) -> dict:
     what = _checked_what(what)
     _checked_run(what, run)
     with Session() as session:
-        known = set(session.scalars(select(Book.id)))
-        ids = ids or sorted(known)
-        unknown = [i for i in ids if i not in known]
-        if unknown:
-            raise LookupError(f"no books {unknown}")
-        jobs = {book_id: _enqueue_recollect(session, book_id, what, run) for book_id in ids}
+        ids = ids or sorted(session.scalars(select(Book.id)))
+        known.check_books(session, ids)
+        if dry_run:
+            priced = job_costs.costs()
+            plans = {book_id: _plan(book_id, what, run, priced) for book_id in ids}
+            return {"dry_run": True, "books": plans, "seconds_per_lane": _batch_seconds(plans, priced)}
+        batch = job_queue.batch(session, "recollect_books", len(ids))
+        jobs = {book_id: _enqueue_recollect(session, book_id, what, run, batch) for book_id in ids}
         session.commit()
-    return {"jobs": jobs}
+    return {"jobs": jobs, "batch_job_id": batch}

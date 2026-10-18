@@ -1,8 +1,9 @@
-# the structure stage measured on its own: with bookmarks switched off against the bookmarks, or against HiPS
+# the structure stage measured on its own: with bookmarks or all contents switched off against them, or against HiPS
 import artifacts
 import book_knobs
 import code_version
 import job_queue
+import job_specs
 import settings
 from engines import card
 from job_signals import Final
@@ -10,12 +11,16 @@ from orm.catalogue import Book, StructureNode
 from orm.db import Session
 from sqlalchemy import select
 from stages import assemble, intake, run_pieces
-from stages.structure import collect, scan
+from stages.structure import collect, evidence, scan
 from stages.structure.sources import Entry
 
 from evaluation import hips, structure_gold
 
-SETS = ("bookmarks_off", "hips")
+SETS = job_specs.STRUCTURE_SETS
+# the sources a book without contents lacks; the structure they gave is the gold its other sources are scored against
+CONTENTS = ("bookmarks", "printed_contents")
+# headings read from every page as a picture would put the whole shelf on the GPU lane
+CONTENTS_OFF = (*CONTENTS, "headings")
 
 
 # the bookmarks as the stage reads them: a book whose bookmarks the owner marked as not its contents has no gold
@@ -24,23 +29,40 @@ def _gold(book_id: int) -> list:
     return [e for e in marks if e.page is not None]
 
 
-def _member(book_id: int) -> dict:
+# the book's current structure when its bookmarks or printed contents gave it
+def _structure_gold(book_id: int) -> list:
+    version = collect.current_version(book_id)
+    if version is None:
+        return []
+    with Session() as session:
+        if evidence.base(session, version.id) not in CONTENTS:
+            return []
+        query = (select(StructureNode).where(StructureNode.structure_version_id == version.id)
+                 .order_by(StructureNode.ord))
+        # a node with no page is placed nowhere, so it can be neither found nor missed
+        return [Entry(e.title, e.level, e.first_page) for e in session.scalars(query)
+                if e.kind != "front_matter" and e.first_page is not None]
+
+
+def _member(book_id: int, set_name: str = "bookmarks_off") -> dict:
     with Session() as session:
         if scan.is_scan(session.get(Book, book_id)):
             return {"book_id": book_id, "skipped": "a scan: its contents are recognised on the GPU lane"}
-    gold = _gold(book_id)
+    contents_off = set_name == "contents_off"
+    gold = _structure_gold(book_id) if contents_off else _gold(book_id)
     if len(gold) < 2:
-        return {"book_id": book_id, "skipped": "no bookmarks to score against"}
+        return {"book_id": book_id, "skipped": "no structure from contents to score against" if contents_off
+                else "no bookmarks to score against"}
     try:
-        source, got, evidence = collect.choose(book_id, off=("bookmarks",))
-        contents_pages = evidence["printed_contents"]["notes"].get("pages") or []
+        source, got, found = collect.choose(book_id, off=CONTENTS_OFF if contents_off else ("bookmarks",))
+        contents_pages = found["printed_contents"]["notes"].get("pages") or []
     except card.WrongLane as e:
         return {"book_id": book_id, "skipped": f"needs the GPU lane: {e}"}
     except Final as e:
-        got, source, contents_pages, evidence = [], f"none: {e}", [], {}
+        got, source, contents_pages, found = [], f"none: {e}", [], {}
     # a book with no contents of its own is a case for other ways (the web, computed headings), not a miss
     printed = "contents" if contents_pages else "no printed contents"
-    service = _service(got, source, evidence.get("pages", 0), frozenset(contents_pages), intake.files_of(book_id),
+    service = _service(got, source, found.get("pages", 0), frozenset(contents_pages), intake.files_of(book_id),
                        book_knobs.of(book_id)["structure.reading_level"])
     return {"book_id": book_id, "source": source, "printed": printed,
             **structure_gold.score(gold, got, max(contents_pages) if contents_pages else None, service)}
@@ -103,14 +125,16 @@ def run(set_name: str, book_ids: list[int] | None, job_id: int | None) -> dict:
             _keep(row["book_id"], set_name, row)
         return _summary(set_name, rows, [r for r in rows if "skipped" not in r])
     with Session() as session:
-        ids = book_ids or list(session.scalars(select(Book.id).where(Book.has_bookmarks).order_by(Book.id)))
+        books = select(Book.id) if set_name == "contents_off" else select(Book.id).where(Book.has_bookmarks)
+        ids = book_ids or list(session.scalars(books.order_by(Book.id)))
     for book_id in ids:
         if job_id is not None and job_queue.is_cancelled(job_id):
             break
-        row = _member(book_id)
+        row = _member(book_id, set_name)
         rows.append(row)
         _keep(book_id, set_name, row)
-    scored = [r for r in rows if "skipped" not in r and r["printed"] == "contents"]
+    # with all contents off a book's own contents pages are no reason to leave it out
+    scored = [r for r in rows if "skipped" not in r and (set_name == "contents_off" or r["printed"] == "contents")]
     return _summary(set_name, rows, scored)
 
 

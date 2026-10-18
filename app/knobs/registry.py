@@ -29,6 +29,27 @@ def registry() -> dict:
     return {"groups": groups}
 
 
+# a bad entry in knobs.yaml fails the start, named, instead of the first run that reads it
+def validate() -> dict:
+    passes_known = passes.conf()
+    bad = []
+    for group, g in _groups().items():
+        if not g.get("question"):
+            bad.append(f"{group}: no question")
+        for knob, spec in g["knobs"].items():
+            missing = [k for k in ("options", "help", "probe", "cost") if not spec.get(k)]
+            if missing:
+                bad.append(f"{group}.{knob}: no {', '.join(missing)}")
+            if knob not in passes_known:
+                bad.append(f"{group}.{knob}: no pass reads it (not in assembly.yaml passes)")
+            elif passes_known[knob] not in (spec.get("options") or []):
+                bad.append(f"{group}.{knob}: the default {passes_known[knob]!r} is not among {spec.get('options')}")
+    if bad:
+        raise ValueError("knobs.yaml: " + "; ".join(bad))
+    presets()
+    return registry()
+
+
 def run_knobs() -> dict[str, dict]:
     return {path: spec for g in registry()["groups"].values() for path, spec in g["knobs"].items()
             if spec["scope"] == "run"}
@@ -48,7 +69,8 @@ def presets() -> list[dict]:
     out = []
     for path in sorted((settings.CONFIG_DIR / "presets").glob("*.yaml")):
         preset = yaml.safe_load(path.read_text())
-        out.append({"name": path.stem, "help": preset["help"], "values": check(preset.get("values") or {})})
+        out.append({"name": path.stem, "help": preset["help"], "values": check(preset.get("values") or {}),
+                    "choose": preset.get("choose")})
     return out
 
 

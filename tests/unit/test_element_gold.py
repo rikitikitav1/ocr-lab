@@ -1,6 +1,6 @@
 from document.model import Heading, PageMarker, Paragraph
 from evaluation import element_gold
-from pdf import Line
+from text_layer import Line
 
 GOLD = """## Branching
 

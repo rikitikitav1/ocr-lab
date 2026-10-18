@@ -8,14 +8,15 @@ import book_knobs
 import code_version
 import model_steps
 import numerals
-import pdf
 import settings
+import text_layer
 from job_signals import Final
 from orm.catalogue import Book, StructureNode, StructureVersion
 from orm.db import Session
 from structure import tree
 
 from stages import book_stage, intake, versions
+from stages.metadata import resolve
 from stages.structure import outlines, pages, reconcile, scan
 from stages.structure.sources import (
     Entry,
@@ -38,7 +39,7 @@ def code_hash() -> str:
     # the structure reads the layer, running heads and numerals, so the code that reads them is its code
     own = [*sorted((settings.APP_DIR / "stages" / "structure").rglob("*.py")), settings.APP_DIR / "model_steps.py",
            settings.APP_DIR / "stages" / "running_heads.py", settings.APP_DIR / "numerals.py",
-           settings.APP_DIR / "pdf.py", settings.APP_DIR / "structure" / "tree.py"]
+           settings.APP_DIR / "structure" / "tree.py", settings.APP_DIR / "alphabets.py"]
     digest = code_version.files_hash(own, ("structure.yaml",))
     digest.update(json.dumps(model_steps.steps()["contents_reader"], sort_keys=True).encode())
     return digest.hexdigest()[:16]
@@ -49,8 +50,9 @@ def inputs(book_id: int) -> artifacts.Inputs:
     # only the book's own structure knobs: a new knob at its default, or the reading level, leaves a structure fresh
     knobs = {k: v for k, v in book_knobs.overrides(book_id).items()
              if k.startswith("structure.") and k != "structure.reading_level"}
+    # the book's languages tell a broken layer's headings, so a new language list collects the structure again
     parts = {"stage": STAGE, "code": code_hash(), "files": [f.sha256 for f in intake.files_of(book_id)],
-             "knobs": knobs}
+             "knobs": knobs, "languages": resolve.known_languages_of(book_id)}
     if scanned(book_id) or scan.raster_contents(book_id, knobs.get("structure.contents_pages"), run=False) is not None:
         from engines import reading
 
@@ -72,7 +74,7 @@ def _printed(files, given, lines: dict) -> tuple[SourceEntries, dict]:
 
 
 def _whole_book(files) -> Entry:
-    return Entry(Path(files[0].file_name).stem, 1, 1, evidence="no contents in a short book: one chapter",
+    return Entry(Path(files[0].file_name).stem, 1, 1, evidence="no contents in a short book: one node",
                  source="whole_book")
 
 
@@ -112,7 +114,7 @@ def needs_raster(book_id: int) -> bool:
     pages_found, lines = printed_contents.find_pages(book_files, given)
     text = " ".join(x.text for p in pages_found for x in lines.get(p, []))
     # contents pages the owner named but that are pictures are read by recognition
-    if pages_found and (not given or (pdf.has_layer(text) and not pdf.garbled(text))):
+    if pages_found and (not given or (text_layer.has_layer(text) and not text_layer.garbled(text))):
         return False
     if len([e for e in book_bookmarks(book_files, knobs).entries if e.page is not None]) >= 2:
         return False
@@ -151,9 +153,14 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
         counted = numbering.read(book_files, set(printed.notes.get("pages", [])), lines)
     by_file = files.read(book_files)
     found = {s.source: s.entries for s in (marks, printed, by_file, counted) if s.source not in off}
+    styled = _styled(found, lines if not scanned(book_id) else None, total, frozenset(printed.notes.get("pages") or []),
+                     off, bool(label), book_id)
+    if styled.entries:
+        found[styled.source] = styled.entries
     base, merged, report = reconcile.reconcile(found)
     evidence = {"pages": total, "bookmarks": asdict(marks), "printed_contents": asdict(printed),
-                "placement": placement, "files": asdict(by_file), "numbering": asdict(counted), "reconcile": report}
+                "placement": placement, "files": asdict(by_file), "numbering": asdict(counted),
+                "text_headings": asdict(styled), "reconcile": report}
     if base is not None:
         if not scanned(book_id) and "outlines" not in off:
             found_pages = frozenset(printed.notes.get("pages") or [])
@@ -182,10 +189,22 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
             return "headings", seen.entries, evidence
     if total <= conf()["whole_book_max_pages"]:
         return "whole_book", [_whole_book(book_files)], evidence
-    tried = f", headings {evidence['headings']['failed']}" if "headings" in evidence else ""
-    raise Final(f"structure not recognised: no table of contents found in a book of {total} pages: "
+    # a text layer whose headings were read and refused says why, a broken layer above all
+    styled_tried = f", text headings {styled.failed}" if styled.notes and styled.failed else ""
+    tried = styled_tried + (f", headings {evidence['headings']['failed']}" if "headings" in evidence else "")
+    raise Final(f"structure not recognised: no structure found in a book of {total} pages: "
                 f"bookmarks {marks.failed or 'too few'}, "
                 f"printed contents {printed.failed or 'too few placed'}{tried}")
+
+
+# a text book no contents source holds reads its chapters from the headings its text layer sets apart
+def _styled(found: dict, lines: dict | None, total: int, contents: frozenset[int], off: tuple[str, ...],
+            labelled_by_knob: bool, book_id: int) -> SourceEntries:
+    held = any(len([e for e in entries if e.page is not None]) >= reconcile.MIN_ENTRIES
+               for source, entries in found.items() if source not in reconcile.VOTES_ONLY)
+    if lines is None or held or labelled_by_knob or "text_headings" in off:
+        return SourceEntries("text_headings", failed="not read: a scan, a contents source, the label knob, or off")
+    return headings.read_lines(lines, total, contents, tuple(resolve.known_languages_of(book_id)))
 
 
 # chapters opening on neighbouring pages are a list of them (a contents page, a series page), not the book's chapters
@@ -256,7 +275,7 @@ def rows(entries: list[Entry], source: str, total: int) -> list[dict]:
         level = (e.level or top) - top + 1
         nxt = next((x.page for x in entries[i + 1:] if (x.level or top) <= (e.level or top)), None)
         last = total if nxt is None else max(e.page, nxt - 1)
-        out.append({"ord": i + 1, "title": e.title, "level": min(level, 6), "level_source": e.source or source,
+        out.append({"ord": i + 1, "title": e.title, "level": level, "level_source": e.source or source,
                     "first_page": e.page, "last_page": last,
                     "kind": "front_matter" if e.source == "front_matter" else "node",
                     "votes": e.votes or {source: {"level": e.level, "printed": e.printed, "evidence": e.evidence}}})

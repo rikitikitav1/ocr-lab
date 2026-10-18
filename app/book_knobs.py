@@ -1,4 +1,5 @@
-# book-level knobs: what metadata and table-of-contents stages read before any run exists
+# book-level knobs: what the metadata and structure stages read before any run exists
+from contextvars import ContextVar
 from functools import cache
 
 import job_specs
@@ -7,6 +8,7 @@ import yaml
 from orm.catalogue import Book
 from orm.db import Session
 
+PRESETS = ("default", "technical")
 KNOBS = {
     "metadata.title_pages.head": "pages from the start read as title and copyright pages",
     "metadata.title_pages.tail": "pages from the end read as title and copyright pages",
@@ -20,20 +22,21 @@ KNOBS = {
                                "chapters from its headings grouped by look; false lets such a book fail at once",
     "structure.reading_level": "the engines read the nodes of this tree level (0 is the top), a node over 100 pages as "
                                "its own pages and its children; empty takes the automatic level",
+    "run.preset": "the preset a run starts from (default, technical); empty lets the page layout's monospace share "
+                  "choose",
 }
 
 
 @cache
 def defaults() -> dict:
     conf = yaml.safe_load((settings.CONFIG_DIR / "metadata.yaml").read_text())
-    return {"metadata.title_pages.head": int(conf["title_pages"]["head"]),
-            "metadata.title_pages.tail": int(conf["title_pages"]["tail"]),
-            "structure.contents_pages": None,
-            "structure.skip_root_bookmark": False,
-            "structure.ignore_bookmarks": False,
-            "structure.chapter_label": None,
-            "structure.from_headings": True,
-            "structure.reading_level": None}
+    book = yaml.safe_load((settings.CONFIG_DIR / "book_knobs.yaml").read_text())
+    out = {"metadata.title_pages.head": int(conf["title_pages"]["head"]),
+           "metadata.title_pages.tail": int(conf["title_pages"]["tail"]),
+           **{f"{group}.{name}": value for group in ("structure", "run") for name, value in book[group].items()}}
+    if set(out) != set(KNOBS):
+        raise ValueError(f"book_knobs.yaml: defaults {sorted(out)} do not match the knobs {sorted(KNOBS)}")
+    return check(out)
 
 
 def check(knobs: dict | None, pages: int | None = None) -> dict:
@@ -61,13 +64,20 @@ def check(knobs: dict | None, pages: int | None = None) -> dict:
         if not ok:
             raise job_specs.Refused("structure.contents_pages must be [[first, last], ...] "
                                     f"within 1..{pages or 'pages'}")
+    preset = knobs.get("run.preset")
+    if preset is not None and preset not in PRESETS:
+        raise job_specs.Refused(f"run.preset takes one of {list(PRESETS)} or null, not {preset!r}")
     return knobs
+
+
+# knobs tried for a preview only, over the book's own, never stored
+trying: ContextVar[dict | None] = ContextVar("trying", default=None)
 
 
 def of(book_id: int) -> dict:
     with Session() as session:
         stored = session.get(Book, book_id).knobs or {}
-    return {**defaults(), **stored}
+    return {**defaults(), **stored, **(trying.get() or {})}
 
 
 def overrides(book_id: int) -> dict:

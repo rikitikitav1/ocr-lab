@@ -1,0 +1,11 @@
+# defaults of the structure and run book knobs; the title-page window's are in metadata.yaml
+structure:
+  contents_pages: null
+  skip_root_bookmark: false
+  ignore_bookmarks: false
+  chapter_label: null
+  from_headings: true
+  reading_level: null
+run:
+  # the preset a run starts from: null lets the page layout choose, or default, technical
+  preset: null

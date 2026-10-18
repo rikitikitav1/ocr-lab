@@ -234,13 +234,13 @@ def levels(found: list[Entry]) -> None:
     for e in found:
         found_style = style(e.title, labelled, roman)
         if found_style is None:
-            e.level = min(len(open_styles) + 1, 6)
+            e.level = len(open_styles) + 1
             continue
         if found_style in open_styles:
             del open_styles[open_styles.index(found_style) + 1:]
         else:
             open_styles.append(found_style)
-        e.level = min(len(open_styles), 6)
+        e.level = len(open_styles)
 
 
 def folio_offset(recognised: dict[int, dict]) -> tuple[int | None, int]:

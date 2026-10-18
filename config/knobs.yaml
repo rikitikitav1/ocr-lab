@@ -22,12 +22,12 @@ groups:
     question: what is code and how its text is read
     knobs:
       code_from_layer:
-        options: [true, false]
+        options: [false, true]
         help: code text from the text layer inside each code block's box, when the face there is monospace
         probe: element_eval code text similarity
         cost: cpu
       mono_paragraphs:
-        options: [true, false]
+        options: [false, true]
         help: a paragraph whose glyphs all keep one advance is code an engine read as prose
         probe: element_eval code found and phantom
         cost: cpu
@@ -40,6 +40,32 @@ groups:
         options: [true, false]
         help: a code block ending low on a page and one starting high on the next, with only the page between, are one
         probe: element_eval code blocks per listing
+        cost: cpu
+  furniture:
+    question: which blocks the page sets apart from the body (running heads, folios, notes, a chapter's contents)
+    knobs:
+      slot_parts:
+        options: [false, true]
+        help: blocks an engine cut out of one claimed running head or folio line, together that line, are marked as it is
+        probe: reassemble running_heads_in_text and slot_marked
+        cost: cpu
+      chapter_contents:
+        options: [true, false]
+        help: a chapter's own list of its sections on its opening page becomes one contents block a reader can leave out
+        probe: reassemble chapter_contents, headings and subs_found
+        cost: cpu
+      notes_from_furniture:
+        options: [false, true]
+        help: a footnote an engine set aside as a footer comes back at its page's end where the page layout reads it as a note
+        probe: reassemble lost_words and notes_from_furniture
+        cost: cpu
+  captions:
+    question: which blocks are the captions of the book's pictures, tables and listings
+    knobs:
+      caption_series:
+        options: [true, false]
+        help: a block opening with a caption of the book's own numbered series ("Figure 2-1") is that caption
+        probe: reassemble captions_in_caption, captions_in_paragraph and series_captions
         cost: cpu
   recognition:
     question: whose text a scanned page takes
