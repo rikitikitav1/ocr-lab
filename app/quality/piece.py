@@ -7,9 +7,10 @@ from functools import cache
 import settings
 import wordfreq
 import yaml
+from assembly import code_layer
 from assembly.passes import same_title
 from assembly.referee import WORD, block_text
-from document.model import Figure, Heading, PageMarker, Paragraph, Piece
+from document.model import Caption, Figure, Heading, PageMarker, Paragraph, Piece
 from stages import running_heads
 from writers import markdown
 
@@ -21,6 +22,30 @@ def conf() -> dict:
 
 def words(text: str) -> Counter:
     return Counter(WORD.findall(text.lower()))
+
+
+# a listing's line numbers in a page of the layer, by the code pass's own test over the longest runs of rows it holds
+def listing_numbers(text: str) -> Counter:
+    lines = text.splitlines()
+    numbers = [code_layer.line_number(line) for line in lines]
+    out, start = Counter(), 0
+    while start < len(lines):
+        best, count, last = None, 0, None
+        for end in range(start, len(lines)):
+            if numbers[end] is not None:
+                if last is not None and numbers[end] < last:
+                    break
+                count, last = count + 1, numbers[end]
+            size = end - start + 1
+            if size >= code_layer.NUMBERED_MIN_LINES and count >= code_layer.NUMBERED_SHARE * size:
+                best = end + 1
+        found = code_layer.line_numbers(lines[start:best]) if best is not None else None
+        if found is None:
+            start += 1
+            continue
+        out.update(str(n) for n in found)
+        start = best
+    return out
 
 
 def _pages(piece: Piece) -> dict[int, list]:
@@ -51,12 +76,15 @@ def _layer(piece: Piece, layer: dict[int, str], furniture: dict[str, list[str]],
     want -= heads
     if not text_pages:
         return {"layer_pages": 0, "layer_words": 0, "lost_words": 0, "extra_words": 0, "lost_text": None,
-                "extra_text": None, "set_aside_words": 0}
+                "extra_text": None, "set_aside_words": 0, "listing_numbers": 0, "lost_words_no_listing": 0}
     common = sum((want & got).values())
     lost, extra = sum(want.values()) - common, sum(got.values()) - common
     set_aside = (_set_aside({k: v for k, v in furniture.items() if k != "layer"}) - heads) & (want - got)
+    listing = sum((listing_numbers(layer[p]) for p in text_pages), Counter())
     return {"layer_pages": len(text_pages), "layer_words": sum(want.values()), "lost_words": lost,
             "extra_words": extra, "set_aside_words": sum(set_aside.values()),
+            "listing_numbers": sum(listing.values()),
+            "lost_words_no_listing": lost - sum((listing & (want - got)).values()),
             "lost_text": round(lost / max(1, sum(want.values())), 3),
             "extra_text": round(extra / max(1, sum(got.values())), 3)}
 
@@ -87,7 +115,10 @@ def _structure(piece: Piece, subs: list[tuple[str, int]]) -> dict:
         missing = [n.title for n in piece.nodes[1:] if not n.pinned]
     else:
         missing = [title for title, _ in subs if not any(same_title(h, title) for h in heads)]
+    # nodes whose headings stand in another order than the structure's: those off the longest run in node order
+    anchors = [b.node for b in piece.blocks if isinstance(b, Heading) and b.node is not None]
     return {"pages": piece.last_page - piece.first_page + 1, "subs": len(subs),
+            "nodes_out_of_order": len(anchors) - _longest_rising(anchors),
             "subs_found": len(subs) - len(missing), "subs_missing": missing[:10], "headings": len(heads),
             "long_headings": sum(len(h.split()) > conf()["heading_max_words"] for h in heads),
             "empty_headings": sum(not h.strip() for h in heads), "title_level": title_level,
@@ -101,6 +132,27 @@ def _figures(piece: Piece) -> dict:
     return {"figures": len(figures), "figures_not_kept": sum(not markdown.image_kept(b.image) for b in figures)}
 
 
+CAPTION_FOUND = 0.6
+CAPTION_KINDS = {Caption: "caption", Paragraph: "paragraph", Heading: "heading"}
+
+
+# where each caption the layer sets by a picture went: the block on its page holding most of its words, or lost
+def _captions(piece: Piece, captions: dict[int, list[str]]) -> dict:
+    out = {"captions": 0, **{f"captions_in_{k}": 0 for k in CAPTION_KINDS.values()}, "captions_lost": 0}
+    pages = _pages(piece)
+    for page, texts in captions.items():
+        blocks = [b for b in pages.get(page, []) if type(b) in CAPTION_KINDS]
+        for text in texts:
+            want = words(text)
+            if not want:
+                continue
+            share, kind = max(((sum((want & words(block_text(b))).values()) / sum(want.values()),
+                                CAPTION_KINDS[type(b)]) for b in blocks), default=(0.0, None))
+            out["captions"] += 1
+            out[f"captions_in_{kind}" if share >= CAPTION_FOUND else "captions_lost"] += 1
+    return out
+
+
 # recognised pages are measured by how far the two engines agree, since they have no layer to compare with
 def _recognised(agreement: dict[int, float]) -> dict:
     if not agreement:
@@ -109,7 +161,7 @@ def _recognised(agreement: dict[int, float]) -> dict:
             "agreement_min": min(agreement.values())}
 
 
-# the book's running heads and bare folios left in the text as paragraphs; a heading is often its page's head too
+# running heads and folios left as a paragraph or an unpinned heading (a node's title is often its head), or glued
 def _heads_in_text(piece: Piece, furniture: dict[str, list[str]]) -> dict:
     lines = furniture.get("layer", [])
     heads = {key for h in lines if (key := running_heads.edge_key(h))}
@@ -118,8 +170,28 @@ def _heads_in_text(piece: Piece, furniture: dict[str, list[str]]) -> dict:
         folio = running_heads.FOLIO.fullmatch(text)
         return running_heads.edge_key(text) in heads or bool(folio and folio[1] in folios)
 
-    found = sum(isinstance(b, Paragraph) and left(b.text) for b in piece.blocks)
-    return {"running_heads_in_text": found}
+    phrases = {p for h in lines if len(p := tuple(_head_words(h))) >= GLUED_WORDS}
+    def glued(text: str) -> bool:
+        got = tuple(WORD.findall(text.lower()))
+        return any(len(got) > len(p) and (got[:len(p)] == p or got[-len(p):] == p) for p in phrases)
+
+    alone = sum((isinstance(b, Paragraph) or isinstance(b, Heading) and b.node is None) and left(b.text)
+                for b in piece.blocks)
+    return {"running_heads_in_text": alone,
+            "running_heads_glued": sum(isinstance(b, Paragraph) and glued(b.text) for b in piece.blocks)}
+
+
+GLUED_WORDS = 2
+
+
+# a running head's words without the folio at either end
+def _head_words(line: str) -> list[str]:
+    words = WORD.findall(line.lower())
+    while words and words[0].isdigit():
+        words = words[1:]
+    while words and words[-1].isdigit():
+        words = words[:-1]
+    return words
 
 
 # languages wordfreq cannot split without a segmenter; their share stays unknown rather than wrong
@@ -128,16 +200,22 @@ SPACELESS = {"zh", "ja", "ko", "th"}
 
 # on recognised pages: the share of words a dictionary of the book's languages knows, a measure needing no gold
 def _dictionary(piece: Piece, recognised: dict[int, float], languages: list[str]) -> dict:
+    pages = _pages(piece)
+    words = dictionary_words(" ".join(block_text(b) for p in recognised for b in pages.get(p, [])))
+    return {"dictionary_words": len(words), "dictionary_share": dictionary_share(words, languages)}
+
+
+def dictionary_words(text: str) -> list[str]:
+    return [w.lower() for w in re.findall(r"[^\W\d_]{2,}", text)]
+
+
+def dictionary_share(words: list[str], languages: list[str]) -> float | None:
     # a language spaceless or missing from wordfreq leaves its words unknown yet counted, so the share would mislead
     unseen = SPACELESS & set(languages) or set(languages) - set(wordfreq.available_languages())
-    langs = [] if unseen else languages
-    pages = _pages(piece)
-    words = [w.lower() for p in recognised for b in pages.get(p, [])
-             for w in re.findall(r"[^\W\d_]{2,}", block_text(b))]
-    if not words or not langs:
-        return {"dictionary_words": len(words), "dictionary_share": None}
-    known = sum(any(wordfreq.zipf_frequency(w, lang) > 0 for lang in langs) for w in words)
-    return {"dictionary_words": len(words), "dictionary_share": round(known / len(words), 3)}
+    if not words or unseen or not languages:
+        return None
+    known = sum(any(wordfreq.zipf_frequency(w, lang) > 0 for lang in languages) for w in words)
+    return round(known / len(words), 3)
 
 
 # words written from pages without a layer, which extra_text cannot see: a cover's OCR'd thumbnails
@@ -202,10 +280,11 @@ def _shared(piece: Piece, layer: dict[int, str], furniture: dict[str, list[str]]
 
 def check(piece: Piece, subs: list[tuple[str, int]], layer: dict[int, str],
           furniture: dict[str, list[str]] | None = None, recognised: dict[int, float] | None = None,
-          shared: frozenset[int] = frozenset(), languages: list[str] | None = None) -> dict:
+          shared: frozenset[int] = frozenset(), languages: list[str] | None = None,
+          captions: dict[int, list[str]] | None = None) -> dict:
     min_words = conf()["layer_min_words"]
     return {**_layer(piece, layer, furniture or {}, min_words, shared),
             **_shared(piece, layer, furniture or {}, min_words, shared), **_structure(piece, subs),
-            **_figures(piece), **_recognised(recognised or {}),
+            **_figures(piece), **_captions(piece, captions or {}), **_recognised(recognised or {}),
             **_layerless(piece, layer, min_words), **_repeated(piece), **_order(piece, layer, min_words),
             **_heads_in_text(piece, furniture or {}), **_dictionary(piece, recognised or {}, languages or [])}

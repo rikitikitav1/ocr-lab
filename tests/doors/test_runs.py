@@ -68,8 +68,14 @@ def test_a_run_assembles_every_chapter_and_writes_the_bundle(client, inbox, monk
     assert {a["piece"] for a in client.get(f"/v1/runs/{run_id}/artifacts", params={"node": 2}).json()} == {2}
     bundle = settings.DATA_DIR / run["bundle_dir"]
     assert (bundle / "report.json").exists() and (bundle / "run.md").read_text().count(TEXT) == 2
-    report = client.get(f"/v1/runs/{run_id}/report").json()
+    report = client.get(f"/v1/runs/{run_id}/report", params={"pieces": True}).json()
     assert report["numbers"]["pieces_done"] == 2 and [c["ord"] for c in report["pieces"]] == [1, 2]
+    short = client.get(f"/v1/runs/{run_id}/report").json()
+    assert "pieces" not in short and short["pieces_omitted"] == 2 and short["numbers"] == report["numbers"]
+    brief = client.get(f"/v1/runs/{run_id}/nodes", params={"brief": True}).json()
+    assert brief and all("passes" not in c["checks"] and "made_by" not in c["checks"] for c in brief)
+    assert {a["name"] for a in client.get(f"/v1/runs/{run_id}/artifacts", params={"name": "piece.md"}).json()} \
+        == {"piece.md"}
     assert report["numbers"]["reading_level"] == 0
     assert (bundle / "report.md").read_text().startswith("# ")
     kept = client.get(f"/v1/runs/{run_id}/artifacts", params={"node": 1, "stage": "assemble"}).json()
@@ -114,7 +120,9 @@ def test_a_chapter_that_fails_for_good_sends_the_run_to_attention(client, inbox,
     engines(monkeypatch)
     resumed = client.post(f"/v1/runs/{run_id}/resume").json()
     assert resumed["pieces_restarted"] == [failed[0]["ord"]]
-    assert client.post(f"/v1/runs/{run_id}/resume").status_code == 400
+    busy = client.post(f"/v1/runs/{run_id}/resume")
+    assert busy.status_code == 409 and busy.json()["error"]["kind"] == "busy"
+    assert f"wait_runs([{run_id}])" in busy.json()["error"]["message"]
     _drain()
     run = client.get(f"/v1/runs/{run_id}").json()
     assert run["status"] == "done" and run["pieces"] == {"done": 2}
@@ -207,6 +215,173 @@ def test_a_cancelled_run_stops_its_jobs_and_resumes_to_the_end(client, inbox, mo
     cancelled = client.post(f"/v1/runs/{run_id}/cancel").json()
     assert cancelled["status"] == "cancelled" and len(cancelled["jobs_cancelled"]) == 4
     client.post(f"/v1/runs/{run_id}/resume")
+    _drain()
+    assert client.get(f"/v1/runs/{run_id}").json()["pieces"] == {"done": 2}
+
+
+def test_a_worker_killed_mid_run_leaves_done_pieces_as_they_are_and_the_bundle_matches_an_uninterrupted_run(
+        client, inbox, monkeypatch):
+    import job_queue
+
+    pages = [text_page(name, TEXT, bookmark=name) for name in ("One", "Two", "Three")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "kill.pdf", pages))], "then": []}).json()
+    collect.collect(book["id"])
+    engines(monkeypatch)
+    whole = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    _drain()
+    killed = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    while not any(p["status"] == "done" for p in client.get(f"/v1/runs/{killed}/nodes").json()):
+        assert worker.run_once("cpu") or worker.run_once("gpu")
+    before = {a["id"]: a["sha256"] for a in client.get(f"/v1/runs/{killed}/artifacts").json()}
+    # a worker that took a job and died: its host holds no lock, so the job goes back to the queue
+    dead = job_queue.claim_next("cpu", None, "killed-worker") or job_queue.claim_next("gpu", None, "killed-worker")
+    assert dead is not None and dead.id in job_queue.requeue_stale(["cpu", "gpu"], worker.HOST, starting=False)
+    _drain()
+    run = client.get(f"/v1/runs/{killed}").json()
+    assert run["status"] == "done" and run["pieces"] == {"done": 3}
+    after = {a["id"]: a["sha256"] for a in client.get(f"/v1/runs/{killed}/artifacts").json()}
+    assert all(after.get(id) == sha for id, sha in before.items())
+    bundles = [settings.DATA_DIR / client.get(f"/v1/runs/{r}").json()["bundle_dir"] for r in (whole, killed)]
+    assert (bundles[0] / "kill.md").read_bytes() == (bundles[1] / "kill.md").read_bytes()
+
+
+def test_a_piece_counts_as_changed_on_other_engine_builds_or_profile_and_a_new_run_leaves_the_last_one_s_files(
+        client, inbox, monkeypatch):
+    import profiles
+    from orm.catalogue import Run
+    from orm.db import Session
+    from stages import piece_assembly, run_state
+
+    pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "reuse.pdf", pages))], "then": []}).json()
+    collect.collect(book["id"])
+    engines(monkeypatch)
+    first = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    _drain()
+    files = sorted((settings.DATA_DIR / "runs" / str(book["id"]) / str(first)).rglob("*"))
+    shas = {f: f.read_bytes() for f in files if f.is_file()}
+    with Session() as session:
+        run = session.get(Run, first)
+        assert not piece_assembly.piece_changed(session, run, 1)
+        real = run_state.round_readings
+        monkeypatch.setattr(run_state, "round_readings", lambda s, r, o: (real(s, r, o)[0], {"docling": {"base": "x"}}))
+        assert piece_assembly.piece_changed(session, run, 1)
+        monkeypatch.setattr(run_state, "round_readings", real)
+        run.profile_id = profiles.derive(run.profile_id, pieces={1: {"assembly.tables_from": "docling"}})["id"]
+        assert piece_assembly.piece_changed(session, run, 1)
+    client.post(f"/v1/books/{book['id']}/runs", json={})
+    _drain()
+    assert all(f.read_bytes() == blob for f, blob in shas.items())
+
+
+def test_a_write_that_fails_on_a_full_disk_leaves_no_row_and_no_file_so_the_stage_runs_again(stand, tmp_path,
+                                                                                            monkeypatch):
+    import errno
+
+    import artifacts
+
+    def full(path, data):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    owner, inputs = artifacts.Owner(book_id=None), artifacts.Inputs({"stage": "probe", "n": 1})
+    monkeypatch.setattr(artifacts, "atomic_write", full)
+    with pytest.raises(OSError):
+        artifacts.write(owner, tmp_path, "probe", "out.json", {"a": 1}, inputs)
+    assert artifacts.find_done(owner, "probe", "out.json", inputs.key) is None
+    assert not (settings.DATA_DIR / tmp_path / "probe" / "out.json").exists()
+
+
+def test_a_run_was_made_from_its_latest_round_s_readings_not_an_older_round_s(client, inbox, monkeypatch):
+    from orm.db import Session
+    from orm.jobs import Job
+
+    pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "round.pdf", pages))], "then": []}).json()
+    collect.collect(book["id"])
+    engines(monkeypatch)
+    run_id = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    _drain()
+    own = next(a for a in client.get(f"/v1/runs/{run_id}/artifacts", params={"name": "piece.md"}).json())
+    # a read job of a round before the one the piece was assembled from, naming another artifact
+    with Session() as session:
+        session.add(Job(type="read_piece", lane="gpu", run_id=run_id, status="done",
+                        options={"ord": 1, "engine": "docling", "round": -1}, result={"readings": {"1-1": own["id"]}}))
+        session.commit()
+    used = {a["id"]: a for a in client.get(f"/v1/runs/{run_id}/artifacts", params={"used": True}).json()}
+    assert not used[own["id"]].get("used") and any(a.get("used") and a["name"].startswith("reading.")
+                                                    for a in used.values())
+
+
+def test_a_run_reads_the_page_layout_it_started_on_and_a_failed_layout_is_the_job_s_failure(client, inbox, monkeypatch):
+    from orm.catalogue import Artifact, Run
+    from orm.db import Session
+    from stages.layout import collect as layout_collect
+
+    pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "pin.pdf", pages))], "then": []}).json()
+    collect.collect(book["id"])
+    engines(monkeypatch)
+    run_id = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    _drain()
+    with Session() as session:
+        pinned = session.get(Run, run_id).layout_version_id
+    assert pinned == layout_collect.current(book["id"], layout_collect.PAGE).id
+    model = next(a for a in client.get(f"/v1/runs/{run_id}/artifacts", params={"name": "model.json"}).json())
+    # the piece's inputs name the layout, kept hashed like every input
+    with Session() as session:
+        assert "layout" in session.get(Artifact, model["id"]).meta["inputs"]
+
+    def broken(*args, **kwargs):
+        raise ValueError("layout unreadable")
+
+    monkeypatch.setattr(layout_collect, "collect_page", broken)
+    job = client.post(f"/v1/books/{book['id']}/recollect", json={"what": ["layout"]}).json()["job_id"]
+    _drain()
+    done = client.get(f"/v1/jobs/{job}").json()
+    assert done["status"] != "done" and "layout unreadable" in str(done["waiting_because"] or done["error"])
+
+
+def test_a_run_s_preset_follows_the_page_layout_it_pins_and_a_profile_derived_by_hand_stays(client, inbox, monkeypatch):
+    import profiles
+    from orm.catalogue import Profile, Run
+    from orm.db import Session
+
+    pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "preset.pdf", pages))], "then": []}).json()
+    collect.collect(book["id"])
+    engines(monkeypatch)
+    started = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]
+    derived = profiles.derive(started["profile_id"], set={"assembly.tables_from": "docling"})["id"]
+    by_hand = client.post(f"/v1/books/{book['id']}/runs", json={"profile_id": derived}).json()["run"]["id"]
+    # the layout the run pins chooses another preset than the one current when the run was made
+    monkeypatch.setattr(profiles, "chosen_preset", lambda book_id: ("technical", "monospace share"))
+    _drain()
+    with Session() as session:
+        chosen = session.get(Profile, session.get(Run, started["id"]).profile_id)
+        kept = session.get(Run, by_hand).profile_id
+    assert chosen.preset == "technical" and kept == derived
+
+
+def test_resume_keeps_a_done_piece_on_the_same_inputs_and_assembles_it_again_on_other_code(client, inbox,
+                                                                                           monkeypatch):
+    import code_version
+
+    pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "again.pdf", pages))], "then": []}).json()
+    collect.collect(book["id"])
+    engines(monkeypatch)
+    run_id = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    _drain()
+    # the code on disk is faked for the resume door only: the worker reloads itself when it sees the disk move
+    real = code_version.tree_hash
+    monkeypatch.setattr(code_version, "tree_hash", lambda root=None: code_version.LOADED)
+    assert client.post(f"/v1/runs/{run_id}/resume").json()["pieces_restarted"] == []
+    monkeypatch.setattr(code_version, "tree_hash", real)
+    _drain()
+    monkeypatch.setattr(code_version, "tree_hash", lambda root=None: "other code")
+    ords = [p["ord"] for p in client.get(f"/v1/runs/{run_id}/nodes").json()]
+    assert client.post(f"/v1/runs/{run_id}/resume").json()["pieces_restarted"] == ords
+    monkeypatch.setattr(code_version, "tree_hash", real)
     _drain()
     assert client.get(f"/v1/runs/{run_id}").json()["pieces"] == {"done": 2}
 
@@ -563,3 +738,47 @@ def test_a_piece_is_assembled_only_once_the_piece_after_it_is_read(client, inbox
 
     assert read(1) == []
     assert read(2) == [1, 2]
+
+
+def test_a_bulk_start_hangs_its_runs_under_one_batch_that_one_wait_covers(client, inbox, monkeypatch):
+    first, second = _book(client, inbox, "batch1.pdf"), _book(client, inbox, "batch2.pdf")
+    engines(monkeypatch)
+    started = client.post("/v1/runs", json={"book_ids": [first, second]}).json()
+    batch = started["batch_job_id"]
+    pending = client.get(f"/v1/jobs/{batch}/wait", params={"timeout": 0.2}).json()
+    assert pending["finished"] is False and pending["counts"]["book_run"] == {"new": 2}
+    _drain()
+    done = client.get(f"/v1/jobs/{batch}/wait", params={"timeout": 1}).json()
+    assert done["finished"] and done["counts"]["book_run"] == {"done": 2} and done["counts"]["batch"] == {"done": 1}
+    again = client.post("/v1/books/recollect", json={"ids": [first, second], "what": ["structure"]}).json()
+    heads = client.get("/v1/jobs", params={"parent_id": again["batch_job_id"]}).json()
+    assert sorted(j["id"] for j in heads) == sorted(again["jobs"].values())
+    _drain()
+    assert client.get(f"/v1/jobs/{again['batch_job_id']}/wait", params={"timeout": 1}).json()["finished"]
+
+
+def test_many_pairs_compare_at_once_by_numbers_pieces_and_the_bundle_text(client, inbox, monkeypatch):
+    book = _book(client, inbox, "pairs.pdf")
+    engines(monkeypatch)
+    first = client.post(f"/v1/books/{book}/runs", json={}).json()["run"]["id"]
+    _drain()
+    second = client.post(f"/v1/books/{book}/runs", json={}).json()["run"]["id"]
+    _drain()
+    got = client.post("/v1/runs/compare", json={"pairs": [[first, second]]}).json()
+    row = got["rows"][0]
+    assert got["pairs"] == 1 and row["book_id"] == book and row["bundle"]["same"] is True
+    assert row["bundle"]["lines_changed"] == 0 and row["pieces_moved"] == 0
+    assert client.post("/v1/runs/compare", json={"pairs": [[first]]}).status_code == 400
+
+
+def test_a_page_of_a_run_names_its_pieces_their_cut_its_blocks_and_its_words(client, inbox, monkeypatch):
+    book = _book(client, inbox, "page.pdf")
+    engines(monkeypatch)
+    run_id = client.post(f"/v1/books/{book}/runs", json={}).json()["run"]["id"]
+    _drain()
+    got = client.get(f"/v1/runs/{run_id}/pages/1").json()
+    assert got["page"] == 1 and [p["ord"] for p in got["pieces"]] and got["pieces"][0]["assembled"]
+    blocks = [b for p in got["pieces"] for b in p["blocks"]]
+    assert blocks and all({"type", "engine", "box", "text"} <= set(b) for b in blocks)
+    assert got["layer_words"] > 0 and got["lost"] <= got["layer_words"]
+    assert client.get(f"/v1/runs/{run_id}/pages/999").status_code == 404

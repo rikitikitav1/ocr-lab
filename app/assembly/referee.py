@@ -2,9 +2,11 @@
 import re
 from collections import Counter
 
-from document.model import Code, Formula, ListBlock, PageMarker, Table
+from document.model import Code, Contents, Formula, ListBlock, PageMarker, Table
 
-WORD = re.compile(r"\w+")
+# Chinese, Japanese and Korean write no spaces between words, so each of their characters counts as a word
+CJK = "\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff"
+WORD = re.compile(rf"[{CJK}]|(?:(?![{CJK}])\w)+")
 
 
 def block_text(block) -> str:
@@ -17,6 +19,8 @@ def block_text(block) -> str:
             return " ".join(c.text for row in block.rows for c in row)
         case ListBlock():
             return " ".join(i.text + " " + " ".join(block_text(c) for c in i.children) for i in block.items)
+        case Contents():
+            return " ".join(block.entries)
     return getattr(block, "text", "")
 
 

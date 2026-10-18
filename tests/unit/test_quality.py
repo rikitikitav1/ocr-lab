@@ -1,4 +1,4 @@
-from document.model import Code, Figure, Heading, PageMarker, Paragraph
+from document.model import Caption, Code, Figure, Heading, PageMarker, Paragraph
 from document.model import Piece as Model
 from quality import book, piece
 
@@ -149,10 +149,16 @@ def test_the_book_s_own_running_head_left_as_a_paragraph_is_counted():
     got = piece.check(_chapter([_page(1), Paragraph(text="CHAPTER 3. STREAMS 41"), Paragraph(text=LAYER)]),
                         [], {1: LAYER}, {"layer": ["Chapter 3. Streams 40"]})
     assert got["running_heads_in_text"] == 1
-    kept = piece.check(_chapter([_page(1), Heading(text="Chapter 3. Streams", level=1, level_source="structure"),
+    kept = piece.check(_chapter([_page(1), Heading(text="Chapter 3. Streams", level=1, level_source="structure",
+                                                   node=3),
                                    Paragraph(text="41"), Paragraph(text=LAYER)]),
                          [], {1: LAYER}, {"layer": ["Chapter 3. Streams 40", "41"]})
     assert kept["running_heads_in_text"] == 1
+    # a running head set as a heading no node is pinned to counts, and one glued to a paragraph is counted apart
+    leaked = piece.check(_chapter([_page(1), Heading(text="Chapter 3. Streams", level=2, level_source="mineru"),
+                                     Paragraph(text=f"{LAYER} Chapter 3. Streams")]),
+                           [], {1: LAYER}, {"layer": ["Chapter 3. Streams 40"]})
+    assert (leaked["running_heads_in_text"], leaked["running_heads_glued"]) == (1, 1)
 
 
 def test_heading_levels_are_read_from_the_written_markdown_past_code_comments():
@@ -173,3 +179,33 @@ def test_a_book_language_wordfreq_lacks_leaves_the_dictionary_share_unknown_rath
     got = _chapter([_page(1), Paragraph(text="Книга о мире и ри гедие")])
     assert piece.check(got, [], {}, recognised={1: 0.5}, languages=["ru", "la"])["dictionary_share"] is None
 
+
+
+def test_nodes_whose_headings_stand_out_of_the_structure_s_order_are_counted():
+    heads = [Heading(text=t, level=2, level_source="structure", node=n) for t, n in (("A", 2), ("C", 4), ("B", 3))]
+    got = _chapter([_page(1), *heads, Paragraph(text=LAYER)])
+    assert piece.check(got, [], {1: LAYER})["nodes_out_of_order"] == 1
+    totals = book.numbers([{"ord": 1, "title": "x", "status": "done",
+                            "checks": {"nodes_out_of_order": 1, "figures_not_kept": 2}}], {})
+    assert (totals["nodes_out_of_order"], totals["figures_not_kept"]) == (1, 2)
+
+
+def test_a_caption_is_found_in_the_block_holding_most_of_its_words_or_lost():
+    got = _chapter([_page(1), Caption(text="Figure 2-1. The quick brown fox"), Paragraph(text=LAYER),
+                    _page(2), Paragraph(text="Figure 3-1 the lazy dog sleeps " + LAYER)], 1, 2)
+    checks = piece.check(got, [], {1: LAYER, 2: LAYER},
+                         captions={1: ["Figure 2-1. The quick brown fox"], 2: ["Figure 3-1. The lazy dog", "Plate 9"]})
+    assert {k: v for k, v in checks.items() if k.startswith("captions")} == {
+        "captions": 3, "captions_in_caption": 1, "captions_in_paragraph": 1, "captions_in_heading": 0,
+        "captions_lost": 1}
+
+
+def test_a_listing_s_line_numbers_are_counted_and_a_lone_number_or_a_year_is_not():
+    from quality import piece as piece_quality
+
+    layer = ("1 void Update() {\n2   for (e : all) {\n3     e.tick();\n4   }\n"
+             "In 1998 the engine\nwas rewritten from scratch\n7 days later\n")
+    assert piece_quality.listing_numbers(layer) == {"1": 1, "2": 1, "3": 1, "4": 1}
+    wrapped = "10 SELECT name,\n   price FROM items\n20 WHERE price > 3\n30 ORDER BY name;\n40 LIMIT 5;\n"
+    assert piece_quality.listing_numbers(wrapped) == {"10": 1, "20": 1, "30": 1, "40": 1}
+    assert piece_quality.listing_numbers("Prose about 3 things.\nMore prose here\nAnd 1998 came.\n") == {}

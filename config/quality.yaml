@@ -4,7 +4,7 @@ piece:
   layer_min_words: 20
   # a heading longer than this many words is a paragraph an engine took for a heading
   heading_max_words: 20
-  # a paragraph at least this long met twice in one chapter is counted as repeated
+  # a paragraph at least this long met twice in one piece is counted as repeated
   repeated_min_chars: 120
   # word runs this long met once in the layer and once in the chapter anchor the order check
   order_run_words: 6
