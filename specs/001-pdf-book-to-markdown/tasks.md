@@ -136,4 +136,5 @@ FR-030 has no task here: this feature ships one format. When a second format arr
 - Phases 2 and 3 are tuning on the shelf; each change goes through its own gate, registered before its run.
 - Phase 5 after Phase 4's profiles (`best_profile_id`); Phase 7 after Phase 5 (isolation is proven with evaluation runs).
 - Phase 6 any time; its steps change no Markdown until their gate.
+- The comparison with rag-lab on its questions starts once Phases 2, 3 and 6 are closed (owner, 2026-10-18): ocr-lab prepares the sources, rag-lab only reads Markdown, HTML and the like.
 - Within a phase: tests first, migrations before stages, stages before handlers, handlers before doors; every door ships with its MCP tool (the parity test enforces it).
