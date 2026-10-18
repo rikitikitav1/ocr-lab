@@ -21,4 +21,4 @@ def register(type: str, ended: Callable[[dict, str, str | None], None] | None = 
 
 
 def load_all() -> None:
-    from job_handlers import book, builtin, evaluation, run, workbench  # noqa: F401
+    from job_handlers import book, builtin, evaluation, preview, run, workbench  # noqa: F401

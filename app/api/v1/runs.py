@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel
-from use_cases import runs
+from use_cases import cleanup, pages, runs
 
 router = APIRouter()
 
@@ -51,6 +51,16 @@ def wait_runs(ids: Annotated[list[int], Query()], timeout: float = 600, until: s
     return runs.wait_runs(ids, timeout, until)
 
 
+class Pairs(BaseModel):
+    pairs: list[list[int]]
+    lines: int = 5
+
+
+@router.post("/runs/compare")
+def compare_run_pairs(body: Pairs):
+    return runs.compare_run_pairs(body.pairs, body.lines)
+
+
 @router.get("/runs/compare")
 def compare_runs(a: int, b: int, keys: Annotated[list[str] | None, Query()] = None):
     return runs.compare_runs(a, b, keys)
@@ -62,18 +72,24 @@ def get_run(id: int):
 
 
 @router.get("/runs/{id}/nodes")
-def run_pieces(id: int):
-    return runs.run_pieces(id)
+def run_pieces(id: int, brief: bool = False):
+    return runs.run_pieces(id, brief)
+
+
+@router.get("/runs/{id}/pages/{page}")
+def run_page(id: int, page: int):
+    return pages.page(id, page)
 
 
 @router.get("/runs/{id}/report")
-def run_report(id: int):
-    return runs.run_report(id)
+def run_report(id: int, pieces: bool = False):
+    return runs.run_report(id, pieces)
 
 
 @router.get("/runs/{id}/artifacts")
-def run_artifacts(id: int, stage: str | None = None, node: int | None = None):
-    return runs.run_artifacts(id, stage, node)
+def run_artifacts(id: int, stage: str | None = None, node: int | None = None, used: bool = False,
+                  heavy: bool = False, name: str | None = None):
+    return runs.run_artifacts(id, stage, node, used, heavy, name)
 
 
 @router.get("/runs/{id}/artifacts/{artifact_id}")
@@ -109,6 +125,20 @@ def rerun_node(id: int, ord: int, body: Rerun):
 @router.post("/runs/{id}/resume", status_code=202)
 def resume_run(id: int):
     return runs.resume_run(id)
+
+
+@router.delete("/runs/{id}")
+def delete_run(id: int):
+    return cleanup.delete_run(id)
+
+
+class Cleanup(BaseModel):
+    dry_run: bool = True
+
+
+@router.post("/cleanup")
+def run_cleanup(body: Cleanup):
+    return cleanup.cleanup(body.dry_run)
 
 
 @router.post("/runs/{id}/cancel")

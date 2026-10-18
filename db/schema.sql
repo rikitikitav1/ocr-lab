@@ -143,6 +143,7 @@ CREATE TABLE public.jobs (
     deferred_seconds integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_by text,
     CONSTRAINT jobs_lane_check CHECK ((lane = ANY (ARRAY['gpu'::text, 'cpu'::text]))),
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['new'::text, 'running'::text, 'done'::text, 'error'::text, 'paused'::text, 'cancelled'::text])))
 );
@@ -274,7 +275,7 @@ CREATE TABLE public.nodes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     parent_ord integer,
     CONSTRAINT nodes_kind_check CHECK ((kind = ANY (ARRAY['node'::text, 'front_matter'::text]))),
-    CONSTRAINT nodes_level_check CHECK (((level >= 1) AND (level <= 6)))
+    CONSTRAINT nodes_level_check CHECK ((level >= 1))
 );
 
 
@@ -372,6 +373,7 @@ CREATE TABLE public.runs (
     bundle_dir text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     reading_level integer,
+    layout_version_id bigint,
     CONSTRAINT runs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'needs_attention'::text, 'done'::text, 'failed'::text, 'cancelled'::text])))
 );
 
@@ -437,7 +439,9 @@ CREATE TABLE public.workers (
     host text NOT NULL,
     code text NOT NULL,
     started_at timestamp with time zone DEFAULT now() NOT NULL,
-    seen_at timestamp with time zone DEFAULT now() NOT NULL
+    seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    lanes text DEFAULT 'cpu,gpu'::text NOT NULL,
+    cpu_threads integer DEFAULT 4 NOT NULL
 );
 
 
@@ -832,6 +836,14 @@ ALTER TABLE ONLY public.runs
 
 ALTER TABLE ONLY public.runs
     ADD CONSTRAINT runs_structure_version_id_fkey FOREIGN KEY (structure_version_id) REFERENCES public.structure_versions(id);
+
+
+--
+-- Name: runs runs_layout_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runs
+    ADD CONSTRAINT runs_layout_version_id_fkey FOREIGN KEY (layout_version_id) REFERENCES public.layout_versions(id);
 
 
 --

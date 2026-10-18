@@ -1,6 +1,7 @@
 import job_handlers
 import job_queue
 import worker
+import worker_registry
 from orm.db import Session
 from orm.jobs import Job
 
@@ -62,11 +63,11 @@ def test_the_worker_moves_to_newer_code_only_when_nothing_is_running_or_due(monk
     monkeypatch.setitem(worker._held, "stopping", False)
     monkeypatch.setattr(worker.os, "_exit", lambda code: exits.append(code))
     monkeypatch.setattr(worker.code_version, "differs_from_disk", lambda: True)
-    monkeypatch.setattr(worker.code_version, "reload_requested", lambda: False)
-    monkeypatch.setattr(job_queue, "has_due", lambda: True)
+    monkeypatch.setattr(worker.code_version, "reload_requested", lambda host=None: False)
+    monkeypatch.setattr(job_queue, "has_due", lambda lanes=None: True)
     worker._restart_if_behind()
     assert exits == []
-    monkeypatch.setattr(job_queue, "has_due", lambda: False)
+    monkeypatch.setattr(job_queue, "has_due", lambda lanes=None: False)
     monkeypatch.setitem(worker._held, "running", 1)
     worker._restart_if_behind()
     assert exits == []
@@ -84,14 +85,14 @@ def test_an_asked_reload_stops_claiming_at_once_and_restarts_when_the_jobs_in_ha
     monkeypatch.setitem(worker._held, "running", 1)
     monkeypatch.setattr(worker.os, "_exit", lambda code: exits.append(code))
     monkeypatch.setattr(worker.code_version, "differs_from_disk", lambda: True)
-    monkeypatch.setattr(job_queue, "has_due", lambda: True)
-    monkeypatch.setattr(job_queue, "claim_next", lambda lane, code: claims.append(lane))
-    worker.code_version.request_reload()
+    monkeypatch.setattr(job_queue, "has_due", lambda lanes=None: True)
+    monkeypatch.setattr(job_queue, "claim_next", lambda lane, code, host=None: claims.append(lane))
+    worker.code_version.request_reload([worker.HOST])
     assert worker.run_once("cpu") is False
     assert exits == [] and claims == [] and worker._held["stopping"]
     monkeypatch.setitem(worker._held, "running", 0)
     assert worker.run_once("gpu") is False
-    assert exits == [0] and claims == [] and not worker.code_version.reload_requested()
+    assert exits == [0] and claims == [] and not worker.code_version.reload_requested(worker.HOST)
 
 
 def test_a_reload_asked_with_nothing_newer_on_disk_is_dropped(monkeypatch, tmp_path):
@@ -102,9 +103,9 @@ def test_a_reload_asked_with_nothing_newer_on_disk_is_dropped(monkeypatch, tmp_p
     monkeypatch.setitem(worker._held, "stopping", False)
     monkeypatch.setattr(worker.os, "_exit", lambda code: exits.append(code))
     monkeypatch.setattr(worker.code_version, "differs_from_disk", lambda: False)
-    worker.code_version.request_reload()
+    worker.code_version.request_reload([worker.HOST])
     worker._restart_if_behind()
-    assert exits == [] and not worker._held["stopping"] and not worker.code_version.reload_requested()
+    assert exits == [] and not worker._held["stopping"] and not worker.code_version.reload_requested(worker.HOST)
 
 
 def test_a_job_s_log_lines_name_its_run_and_book(monkeypatch):
@@ -123,10 +124,23 @@ def test_the_worker_beats_while_its_lanes_are_busy(monkeypatch):
     def sleep(seconds):
         raise StopIteration
 
-    monkeypatch.setattr(job_queue, "heartbeat", lambda host, code: beats.append(code))
+    monkeypatch.setattr(worker_registry, "heartbeat", lambda host, code, lanes=(): beats.append(code))
+    # the beat runs with no database: the locks and the takeback are faked, only the heartbeat is watched
+    monkeypatch.setattr(worker, "_keep_alive", lambda: None)
+    monkeypatch.setattr(worker, "_keep_gpu", lambda: None)
+    monkeypatch.setattr(worker.job_queue, "requeue_stale", lambda *a, **kw: [])
     monkeypatch.setattr(worker.time, "sleep", sleep)
     try:
         worker._beat()
     except StopIteration:
         pass
     assert beats == [worker.code_version.LOADED]
+
+
+def test_a_started_worker_without_the_gpu_lane_never_claims_from_it(monkeypatch):
+    claims = []
+    monkeypatch.setitem(worker._gpu, "held", False)
+    monkeypatch.setitem(worker._held, "stopping", False)
+    monkeypatch.setattr(worker.code_version, "reload_requested", lambda host=None: False)
+    monkeypatch.setattr(job_queue, "claim_next", lambda lane, code, host=None: claims.append(lane))
+    assert worker.run_once("gpu") is False and claims == []

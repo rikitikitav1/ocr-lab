@@ -1,8 +1,9 @@
 name: CI
 
+# a branch with a pull request is run by the pull_request event alone, so one push runs the checks once
 on:
   push:
-    branches: ['**']
+    branches: [master]
   pull_request:
 
 jobs:
@@ -23,7 +24,7 @@ jobs:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports: ["5432:5432"]
         options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_POSTGRES_URL: postgresql+psycopg://postgres@localhost:5432/postgres
     steps:
@@ -31,7 +32,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen --all-groups
       # a skipped database test would pass for the wrong reason, so the run fails if any is skipped
+      # bash with pipefail, so a failing test fails the step and not only tee's exit code counts
       - run: uv run pytest -q -n 4 -rs | tee pytest.log
+        shell: bash
       - run: "! grep -q SKIPPED pytest.log"
 
   security:

@@ -12,7 +12,8 @@ def knobs() -> dict:
 
 
 @tool("presets", "GET /v1/presets",
-      "The knob presets with their help and values.")
+      "The knob presets with their help, values and `choose`, the page layout's monospace share a run is started "
+      "on that preset by.")
 def presets() -> list[dict]:
     return registry.presets()
 

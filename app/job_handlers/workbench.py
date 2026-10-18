@@ -7,11 +7,11 @@ from orm.catalogue import Artifact, Piece, Run
 from orm.db import Session
 from sqlalchemy import select
 from stages import assemble, run_pieces, run_state
+from stages.piece_assembly import assembled
 from stages.structure import scan
 from writers import markdown as markdown_writer
 
 from job_handlers import register
-from job_handlers.run import assembled
 
 
 @register("read_range")

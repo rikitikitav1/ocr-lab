@@ -1,11 +1,11 @@
 # a book run through the doors: start one on the current metadata and structure, read it and its pieces
+import difflib
 import io
 import json
 import tarfile
 from pathlib import Path
 
 import artifacts
-import book_knobs
 import job_queue
 import job_specs
 import profiles
@@ -15,18 +15,15 @@ from mcp_tools import tool
 from orm.catalogue import (
     Artifact,
     Book,
-    MetadataVersion,
     Piece,
-    Profile,
     Run,
     RunStatus,
     StructureNode,
-    StructureVersion,
 )
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import func, select
-from stages import eta, result_run, run_state, versions
+from stages import eta, piece_assembly, result_run, run_start, run_state
 from stages import run_pieces as units_of_run
 
 
@@ -36,42 +33,15 @@ def _view(run: Run) -> dict:
             "profile_id": run.profile_id, "bundle_dir": run.bundle_dir, "created_at": run.created_at}
 
 
-def _startable(session, id: int, format: str, profile_id: int | None) -> tuple[StructureVersion, int]:
-    if format != "markdown":
-        raise job_specs.Refused(f"format {format!r} is not built; built: markdown")
-    if session.get(Book, id) is None:
-        raise LookupError(f"no book {id}")
-    structure = versions.current(session, StructureVersion, id)
-    if structure is None:
-        raise job_specs.Refused(f"book {id} has no structure yet; recollect structure first")
-    if profile_id is None:
-        return structure, profiles.resolve(session, id).id
-    if (given := session.get(Profile, profile_id)) is None or given.book_id != id:
-        raise job_specs.Refused(f"profile {profile_id} is not a profile of book {id}")
-    return structure, profile_id
-
-
-def _start(session, id: int, format: str, structure: StructureVersion, profile_id: int) -> tuple[Run, int]:
-    meta = versions.current(session, MetadataVersion, id)
-    run = Run(book_id=id, profile_id=profile_id, structure_version_id=structure.id, format=format,
-              metadata_version_id=meta.id if meta is not None else None, dir="", status="queued",
-              reading_level=units_of_run.level_for(book_knobs.of(id)["structure.reading_level"],
-                                                  units_of_run.rows(session, structure.id)))
-    session.add(run)
-    session.flush()
-    run.dir = str(artifacts.run_dir(id, run.id))
-    return run, job_queue.enqueue("book_run", {"run_id": run.id}, run_id=run.id, book_id=id, session=session)
-
-
 # until profile search exists a run asking for it runs on the default preset and says so
 @tool("start_run", "POST /v1/books/{id}/runs",
       "Starts a book run on the current structure and metadata with the given or resolved profile and queues its "
-      "book_run job (cpu lane; pieces then read on the gpu lane). Returns the run and job_id; follow the job "
-      "with wait_job.")
+      "book_run job (cpu lane; pieces then read on the gpu lane). Returns the run, job_id, an eta, and `search` "
+      "saying profile search was skipped (it is not built yet); follow the job with wait_job.")
 def start_run(id: int, format: str = "markdown", profile_id: int | None = None, search: bool = True) -> dict:
     with Session() as session:
-        structure, profile_id = _startable(session, id, format, profile_id)
-        run, job = _start(session, id, format, structure, profile_id)
+        structure, profile_id = run_start.startable(session, id, format, profile_id)
+        run, job = run_start.start(session, id, format, structure, profile_id)
         session.commit()
         view = _view(run)
     return {"run": view, "job_id": job, "search": profiles.SEARCH_SKIPPED if search else None,
@@ -82,7 +52,8 @@ def start_run(id: int, format: str = "markdown", profile_id: int | None = None, 
 @tool("start_runs", "POST /v1/runs",
       "Start a run for each of several books on their current structure and metadata; every book is checked first, "
       "so none"
-      " starts if one is refused. Returns the runs and job ids.")
+      " starts if one is refused. Returns the runs and job ids, and batch_job_id: wait_job on it waits for every "
+      "run.")
 def start_runs(book_ids: list[int], format: str = "markdown") -> dict:
     if not book_ids:
         raise job_specs.Refused("no books given")
@@ -90,14 +61,17 @@ def start_runs(book_ids: list[int], format: str = "markdown") -> dict:
         checked, refused = {}, []
         for id in dict.fromkeys(book_ids):
             try:
-                checked[id] = _startable(session, id, format, None)
+                checked[id] = run_start.startable(session, id, format, None)
             except (LookupError, job_specs.Refused) as e:
                 refused.append(f"book {id}: {e}")
         if refused:
             raise job_specs.Refused("no run started; " + "; ".join(refused))
-        started = [_start(session, id, format, found, profile_id) for id, (found, profile_id) in checked.items()]
+        batch = job_queue.batch(session, "start_runs", len(checked))
+        started = [run_start.start(session, id, format, found, profile_id, batch)
+                   for id, (found, profile_id) in checked.items()]
         session.commit()
-        return {"runs": [{"run_id": run.id, "book_id": run.book_id, "job_id": job} for run, job in started]}
+        return {"runs": [{"run_id": run.id, "book_id": run.book_id, "job_id": job} for run, job in started],
+                "batch_job_id": batch}
 
 
 # a run stopped by its own start or bundle, not by a piece, names the job and the error that stopped it
@@ -172,7 +146,8 @@ def _brief(run: Run, pieces: dict) -> dict:
 
 # the shelf at a glance: brief rows, and for a finished run its pages and seconds per page from the report
 @tool("runs", "GET /v1/runs",
-      "List runs, filtered by ids, book or status: brief rows with status, pages and, for done runs, seconds per page.")
+      "List runs, filtered by ids, book or status: brief rows with status, stage, code_hash and piece counts by "
+      "status, and for done runs pages and seconds per page.")
 def list_runs(ids: list[int] | None = None, book_id: int | None = None, status: str | None = None,
               limit: int = 50) -> list[dict]:
     query = select(Run).order_by(Run.id.desc()).limit(limit)
@@ -202,16 +177,21 @@ def _held(session, run: Run) -> dict[int, list[int]]:
 
 @tool("nodes", "GET /v1/runs/{id}/nodes",
       "A run's pieces in order, each with the nodes it holds (a piece is a node of the reading level with the "
-      "nodes under it), status, engine, checks, errors and seconds.")
-def run_pieces(id: int) -> list[dict]:
+      "nodes under it), status, engine, checks, errors and seconds; `brief` leaves out the checks' passes and "
+      "made_by.")
+def run_pieces(id: int, brief: bool = False) -> list[dict]:
     with Session() as session:
         run = session.get(Run, id)
         if run is None:
             raise LookupError(f"no run {id}")
         held = _held(session, run)
-        return [{"ord": c.ord, "node_id": c.node_id, "nodes": held.get(c.ord, [c.ord]), "status": c.status,
+        rows = [{"ord": c.ord, "node_id": c.node_id, "nodes": held.get(c.ord, [c.ord]), "status": c.status,
                  "engine": c.engine, "checks": c.checks, "errors": c.errors, "seconds": c.seconds}
                 for c in session.scalars(select(Piece).where(Piece.run_id == id).order_by(Piece.ord))]
+    if brief:
+        for row in rows:
+            row["checks"] = {k: v for k, v in (row["checks"] or {}).items() if k not in ("passes", "made_by")}
+    return rows
 
 
 def _run(session, id: int) -> Run:
@@ -224,14 +204,17 @@ def _run(session, id: int) -> Run:
 # the newest report the run's book metrics wrote; a run still assembling has none yet
 @tool("report", "GET /v1/runs/{id}/report",
       "The newest report.json of a run (per phase and per page seconds, structure base, worst pieces); missing "
-      "until book metrics have run.")
-def run_report(id: int) -> dict:
+      "until book metrics have run. Its per-piece section is left out unless `pieces` is true (it is most of the "
+      "file); the worst pieces by each number stay in numbers.worst.")
+def run_report(id: int, pieces: bool = False) -> dict:
     with Session() as session:
         _run(session, id)
         report = _report_of(session, id)
     if report is None:
         raise LookupError(f"run {id} has no report yet: book metrics have not run")
-    return report
+    if pieces:
+        return report
+    return {**{k: v for k, v in report.items() if k != "pieces"}, "pieces_omitted": len(report.get("pieces") or [])}
 
 
 def _artifact_view(a: Artifact) -> dict:
@@ -239,24 +222,59 @@ def _artifact_view(a: Artifact) -> dict:
             "sha256": a.sha256, "heavy": a.heavy, "created_at": a.created_at}
 
 
+# the book's artifacts a run was made from: its probe, its structure and metadata versions, the readings it named
+def _used(session, run) -> dict[int, int | None]:
+    out: dict[int, int | None] = {}
+    # a piece is assembled from its latest round's readings, so a rerun's older ones are not what it was made from
+    ords = session.scalars(select(Job.options["ord"].astext).where(Job.run_id == run.id, Job.type == "read_piece")
+                           .distinct())
+    for ord in map(int, ords):
+        out.update({artifact_id: ord for artifact_id in run_state.round_readings(session, run.id, ord)[0].values()})
+    owned = [Artifact.structure_version_id == run.structure_version_id] if run.structure_version_id else []
+    owned += [Artifact.metadata_version_id == run.metadata_version_id] if run.metadata_version_id else []
+    for column in owned:
+        out.update({a: None for a in session.scalars(select(Artifact.id).where(column))})
+    probe = session.scalar(select(Artifact.id).where(Artifact.book_id == run.book_id, Artifact.stage == "intake",
+                                                     Artifact.name == "probe.json", Artifact.removed_at.is_(None),
+                                                     Artifact.created_at <= run.created_at)
+                           .order_by(Artifact.id.desc()).limit(1))
+    if probe is not None:
+        out[probe] = None
+    return out
+
+
 @tool("run_artifacts", "GET /v1/runs/{id}/artifacts",
       "Lists a run's artifacts (id, stage, piece, name, path, size flags), optionally by stage or by `node` "
-      "ord (the artifacts of the piece holding that node); read one with run_artifact.")
-def run_artifacts(id: int, stage: str | None = None, node: int | None = None) -> list[dict]:
+      "ord (the artifacts of the piece holding that node); `used` adds the book's artifacts the run was made "
+      "from (probe, structure, metadata, the engines' readings), each marked used; heavy per-pass dumps only with "
+      "`heavy`; `name` keeps the names holding it; read one with run_artifact.")
+def run_artifacts(id: int, stage: str | None = None, node: int | None = None, used: bool = False,
+                  heavy: bool = False, name: str | None = None) -> list[dict]:
     with Session() as session:
         run = _run(session, id)
         piece = next((p for p, nodes in _held(session, run).items() if node in nodes), node)
         query = select(Artifact).where(Artifact.run_id == id, Artifact.removed_at.is_(None))
         query = query.where(Artifact.stage == stage) if stage is not None else query
+        query = query if heavy else query.where(~Artifact.heavy)
+        query = query.where(Artifact.name.contains(name)) if name else query
         query = query.where(Artifact.piece_ord == piece) if node is not None else query
-        return [_artifact_view(a) for a in session.scalars(query.order_by(Artifact.id))]
+        out = [_artifact_view(a) for a in session.scalars(query.order_by(Artifact.id))]
+        if not used:
+            return out
+        made_from = _used(session, run)
+        rows = session.scalars(select(Artifact).where(Artifact.id.in_(made_from), Artifact.removed_at.is_(None))
+                               .order_by(Artifact.id))
+        for a in rows:
+            if (stage is None or a.stage == stage) and (node is None or made_from[a.id] == piece):
+                out.append({**_artifact_view(a), "piece": made_from[a.id] or a.piece_ord, "used": True})
+        return out
 
 
 def _artifact_row(id: int, artifact_id: int) -> Artifact:
     with Session() as session:
-        _run(session, id)
+        run = _run(session, id)
         row = session.get(Artifact, artifact_id)
-        if row is None or row.run_id != id or row.removed_at is not None:
+        if row is None or row.removed_at is not None or (row.run_id != id and artifact_id not in _used(session, run)):
             raise LookupError(f"run {id} has no artifact {artifact_id}")
         return row
 
@@ -336,6 +354,8 @@ def book_bundle_tar(id: int) -> tuple[str, bytes]:
 def _refused_while_running(action):
     try:
         return action()
+    except job_specs.Refused:
+        raise
     except ValueError as e:
         raise job_specs.Refused(str(e)) from e
 
@@ -347,7 +367,7 @@ def _derived(id: int, ord: int, overrides: dict) -> int:
         if run is None:
             raise LookupError(f"no run {id}")
         if run_state.busy(run):
-            raise job_specs.Refused(f"run {id} is still running")
+            raise job_specs.Busy(id)
         base = run.profile_id if run.profile_id is not None else profiles.resolve(session, run.book_id).id
         session.commit()
     return profiles.derive(base, pieces={ord: overrides})["id"]
@@ -381,15 +401,17 @@ def _unit_of(id: int, ord: int) -> tuple[int, list[int]]:
 
 
 @tool("resume_run", "POST /v1/runs/{id}/resume",
-      "Restarts the pieces of a stopped run that are not done (the done ones keep their artifacts); queues "
-      "jobs and returns the run with pieces_restarted. Refused while it is running.")
+      "Restarts the pieces of a stopped run that are not done, and the done ones whose inputs changed since "
+      "(code, profile, engine builds, languages); the rest keep their artifacts. Queues jobs and returns the run "
+      "with pieces_restarted. Refused while it is running.")
 def resume_run(id: int) -> dict:
-    pieces = _refused_while_running(lambda: run_state.resume(id))
+    pieces = _refused_while_running(lambda: run_state.resume(id, piece_assembly.piece_changed))
     return {**get_run(id), "pieces_restarted": pieces}
 
 
 @tool("cancel_run", "POST /v1/runs/{id}/cancel",
-      "Cancels a run's live jobs and returns the run with jobs_cancelled.")
+      "Cancels a run's live jobs, marks the run cancelled and its unfinished pieces failed; returns the run with "
+      "jobs_cancelled.")
 def cancel_run(id: int) -> dict:
     jobs = run_state.cancel(id)
     return {**get_run(id), "jobs_cancelled": jobs}
@@ -496,3 +518,38 @@ def compare_runs(a: int, b: int, keys: list[str] | None = None) -> dict:
             "totals": {k: [_total(side_a, k), _total(side_b, k)] for k in keys}, "pieces_moved": moved,
             "only_in_a": [side_a[p][0].ord for p in side_a if p not in side_b],
             "only_in_b": [side_b[p][0].ord for p in side_b if p not in side_a]}
+
+
+# the bundle's own document: the one Markdown file beside report.md
+def _bundle_text(run: Run) -> list[str] | None:
+    if not run.bundle_dir:
+        return None
+    found = [p for p in (settings.DATA_DIR / run.bundle_dir).glob("*.md") if p.name != "report.md"]
+    return found[0].read_text(encoding="utf-8").splitlines() if found else None
+
+
+@tool("compare_run_pairs", "POST /v1/runs/compare",
+      "Many pairs of runs, each of one book, compared at once: per pair the report numbers that moved, how many "
+      "pieces moved, and the bundle's Markdown lines changed with the first few. Use compare_runs for one pair in "
+      "full.")
+def compare_run_pairs(pairs: list[list[int]], lines: int = 5) -> dict:
+    if not pairs or any(len(p) != 2 for p in pairs):
+        raise job_specs.Refused("pairs is a list of [a, b] run ids")
+    rows = []
+    for a, b in pairs:
+        full = compare_runs(a, b)
+        with Session() as session:
+            run_a, run_b = _run(session, a), _run(session, b)
+            book_id, text_a, text_b = run_a.book_id, _bundle_text(run_a), _bundle_text(run_b)
+        moved = {k: v for k, v in full["numbers"].items() if v[0] != v[1]}
+        if text_a is None or text_b is None:
+            bundle = {"same": None, "missing": [r for r, t in ((a, text_a), (b, text_b)) if t is None]}
+        else:
+            changed = [d for d in difflib.unified_diff(text_a, text_b, lineterm="", n=0)
+                       if d[:1] in "+-" and d[:3] not in ("+++", "---")]
+            bundle = {"same": not changed, "lines_changed": len(changed), "first": changed[:lines]}
+        rows.append({"book_id": book_id, "a": a, "b": b, "numbers_moved": moved,
+                     "pieces_moved": len(full["pieces_moved"]), "bundle": bundle})
+    return {"pairs": len(rows), "with_moves": sum(bool(r["numbers_moved"] or r["pieces_moved"] or
+                                                       not r["bundle"].get("same", True)) for r in rows),
+            "rows": rows}

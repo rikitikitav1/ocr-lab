@@ -7,6 +7,8 @@ SHELF_DIR = Path(os.getenv("SHELF_DIR", "/shelf"))
 CONFIG_DIR = Path(os.getenv("CONFIG_DIR", Path(__file__).resolve().parents[1] / "config"))
 APP_DIR = Path(__file__).resolve().parent
 CPU_LANE_THREADS = int(os.getenv("CPU_LANE_THREADS", "4"))
+# the lanes this worker serves: "gpu" for the card's single worker, "cpu" for workers that may run several at once
+WORKER_LANES = [lane.strip() for lane in os.getenv("WORKER_LANES", "cpu,gpu").split(",") if lane.strip()]
 CONVERTERS = {
     "docling": os.getenv("CONVERTER_DOCLING_BASE_URL", "http://localhost:5001"),
     "mineru": os.getenv("CONVERTER_MINERU_BASE_URL", "http://localhost:5002"),

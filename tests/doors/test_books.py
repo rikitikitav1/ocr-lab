@@ -38,7 +38,8 @@ def test_submit_twice_returns_the_same_book(client, inbox):
     assert jobs and {j["book_id"] for j in jobs} == {first.json()["id"]}
     assert "intake" in client.get(f"/v1/books/{first.json()['id']}").json()["stages"]
     assert "gpu_holders" in client.get("/v1/queue").json()
-    assert client.get(f"/v1/books/{first.json()['id']}").json()["stale"] == {"metadata": False, "structure": False}
+    assert client.get(f"/v1/books/{first.json()['id']}").json()["stale"] == {
+        "metadata": False, "structure": False, "layout_page": False, "layout_headings": False}
 
 
 def test_paths_outside_shelf_are_refused(client, stand, tmp_path):
@@ -109,6 +110,16 @@ def test_a_shelf_snapshot_names_the_books_whose_toc_or_metadata_moved(client, in
     assert got["base"] == ["bookmarks", "printed_contents"] and [r["title"] for r in got["removed"]] == ["Two"]
     assert meta["fields"]["title"]["after"] == {"value": "Hand title", "source": "manual"}
     assert client.get("/v1/shelf/snapshots/999999/changes").status_code == 404
+    listed = client.get("/v1/shelf/snapshots").json()
+    assert {"id": taken["id"], "taken_at": taken["taken_at"], "books": taken["books"]} in listed
+    kept = client.get(f"/v1/shelf/snapshots/{taken['id']}").json()["books"][str(book["id"])]
+    assert set(kept) == {"structure", "metadata", "layout_page", "layout_headings"}
+    assert client.get("/v1/shelf/snapshots/999999").status_code == 404
+    from stages.layout import collect as layout
+    layout.collect_page(still["id"], force=True)
+    layout.collect_page(still["id"], force=True)
+    moved = client.get(f"/v1/shelf/snapshots/{taken['id']}/changes", params={"book_ids": [still["id"]]}).json()
+    assert moved["moved"] == [] and set(moved["layouts_moved"][str(still["id"])]) == {"layout_page"}
 
 
 def test_toc_is_collected_alone_and_read_through_the_door(client, inbox):
@@ -126,7 +137,8 @@ def test_toc_is_collected_alone_and_read_through_the_door(client, inbox):
     assert [(e["title"], e["first_page"], e["last_page"]) for e in got["entries"]] == [("One", 1, 1), ("Two", 2, 2)]
     assert got["chosen"] == "bookmarks"
     assert [e["parent_ord"] for e in got["entries"]] == [None, None] and got["depth"] == 1
-    assert client.get(f"/v1/books/{book['id']}").json()["structure"] == {"version": got["version"], "base": "bookmarks"}
+    assert client.get(f"/v1/books/{book['id']}").json()["structure"] == {"version": got["version"], "base": "bookmarks",
+                                                                         "depth": 1, "nodes": 2}
     by_source = client.get(f"/v1/books/{book['id']}/structure", params={"source": "bookmarks"}).json()
     assert by_source["chosen"] == "bookmarks"
     assert client.get(f"/v1/books/{book['id']}/structure", params={"source": "nope"}).status_code == 404
@@ -362,3 +374,86 @@ def test_the_element_eval_takes_run_knobs_and_refuses_an_unknown_one(client):
     assert refused.status_code == 400 and "unknown run knob" in refused.json()["error"]["message"]
     job = client.post("/v1/eval/elements", json={"ids": ["x"], "knobs": {"assembly.code_union": True}}).json()
     assert client.get(f"/v1/jobs/{job['job_id']}").json()["options"]["knobs"] == {"assembly.code_union": True}
+
+
+def test_a_recollection_s_dry_run_names_its_chain_what_is_stale_and_queues_nothing(client, inbox):
+    pdf = build(inbox / "plan.pdf", [text_page("Hello")])
+    book = client.post("/v1/books", json={"file_paths": [str(pdf)], "then": []}).json()["id"]
+    before = client.get("/v1/jobs", params={"book_id": book}).json()
+    plan = client.post(f"/v1/books/{book}/recollect", json={"what": ["structure"], "dry_run": True}).json()
+    # a one-page book with no contents in its layer goes on to the raster, as its structure job would
+    assert plan["dry_run"] and [s["type"] for s in plan["chain"]] == ["layout_page", "structure", "structure_scan",
+                                                                       "layout_headings"]
+    assert plan["forced"] == ["structure"] and set(plan["stale"]) >= {"metadata", "structure"}
+    many = client.post("/v1/books/recollect", json={"ids": [book], "what": ["metadata", "structure"],
+                                                    "run": True, "dry_run": True}).json()
+    chain = [s["type"] for s in many["books"][str(book)]["chain"]]
+    assert chain == ["metadata", "layout_page", "structure", "structure_scan", "layout_headings", "book_run"]
+    assert set(many["seconds_per_lane"]) <= {"cpu", "gpu"}
+    assert client.get("/v1/jobs", params={"book_id": book}).json() == before
+
+
+def test_a_recollection_asking_for_layout_carries_it_to_the_structure_so_the_heading_layout_is_forced(client, inbox):
+    import worker
+
+    pdf = build(inbox / "forced.pdf", [text_page("Hello")])
+    book = client.post("/v1/books", json={"file_paths": [str(pdf)], "then": []}).json()["id"]
+    client.post(f"/v1/books/{book}/recollect", json={"what": ["structure", "layout"]})
+    worker.job_handlers.load_all()
+    while worker.run_once("cpu"):
+        pass
+    # a one-page book without contents goes on to the raster, which carries the stages asked as well
+    jobs = {j["type"]: j["id"] for j in client.get("/v1/jobs", params={"book_id": book}).json()}
+    for kind in ("structure", "structure_scan"):
+        assert "layout" in client.get(f"/v1/jobs/{jobs[kind]}").json()["options"]["what"]
+
+
+def test_a_preview_of_unknown_books_is_refused_before_anything_is_queued(client):
+    refused = client.post("/v1/structure/preview", json={"book_ids": [999999]})
+    assert refused.status_code == 404 and "999999" in refused.json()["error"]["message"]
+
+
+def test_book_rows_carry_their_structure_s_depth_and_filter_by_it(client, inbox):
+    from stages.structure import collect
+
+    pages = [text_page("One", "Text of one.", bookmark="One"), text_page("Two", "Text of two.", bookmark="Two")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "deep.pdf", pages))], "then": []}).json()
+    collect.collect(book["id"])
+    row = next(r for r in client.get("/v1/books").json() if r["id"] == book["id"])
+    assert row["structure"]["nodes"] >= 2 and row["structure"]["depth"] >= 1
+    depth = row["structure"]["depth"]
+    assert book["id"] in [r["id"] for r in client.get("/v1/books", params={"min_depth": depth}).json()]
+    assert book["id"] not in [r["id"] for r in client.get("/v1/books", params={"min_depth": depth + 1}).json()]
+    view = client.get(f"/v1/books/{book['id']}").json()["structure"]
+    assert view["depth"] == depth and view["nodes"] == row["structure"]["nodes"] and "base" in view
+
+
+def test_a_structure_preview_tries_knobs_on_today_s_code_and_writes_no_version(client, inbox):
+    import worker
+    from orm.catalogue import StructureVersion
+    from orm.db import Session
+    from sqlalchemy import func, select
+    from stages.structure import collect
+
+    pages = [text_page("One", "Text of one.", bookmark="One"), text_page("Two", "Text of two.", bookmark="Two")]
+    book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "preview.pdf", pages))],
+                                          "then": []}).json()["id"]
+    collect.collect(book)
+    versions = select(func.count()).select_from(StructureVersion).where(StructureVersion.book_id == book)
+    with Session() as session:
+        before = session.scalar(versions)
+    same = client.post("/v1/structure/preview", json={"book_ids": [book]}).json()["job_id"]
+    tried = client.post("/v1/structure/preview", json={"book_ids": [book],
+                                                       "knobs": {"structure.ignore_bookmarks": True}}).json()["job_id"]
+    worker.job_handlers.load_all()
+    while worker.run_once("cpu"):
+        pass
+    plain = client.get(f"/v1/jobs/{same}").json()["result"]
+    assert plain["moved"] == [] and plain["books"][str(book)]["same"] is True
+    done = client.get(f"/v1/jobs/{tried}").json()
+    assert done["status"] == "done", (done["waiting_because"], done["error"])
+    moved = done["result"]["books"][str(book)]
+    assert moved["same"] is False and moved["rows"][1] == 1 and moved["base"][1] == "whole_book"
+    with Session() as session:
+        assert session.scalar(versions) == before
+    assert client.post("/v1/structure/preview", json={"book_ids": [book], "knobs": {"nope": 1}}).status_code == 400

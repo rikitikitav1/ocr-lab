@@ -144,6 +144,7 @@ class Run(Base):
     engine_builds: Mapped[dict] = mapped_column(JSONB, default=dict)
     bundle_dir: Mapped[str | None] = mapped_column(Text)
     reading_level: Mapped[int | None] = mapped_column(Integer)
+    layout_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("layout_versions.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

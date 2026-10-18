@@ -33,12 +33,14 @@ class MetadataValue(BaseModel):
 class Recollect(BaseModel):
     what: list[str] | None = None
     run: bool = False
+    dry_run: bool = False
 
 
 class RecollectMany(BaseModel):
     ids: list[int] = []
     what: list[str] | None = None
     run: bool = False
+    dry_run: bool = False
 
 
 class ShelfSnapshot(BaseModel):
@@ -70,18 +72,28 @@ def upload_book(files: Annotated[list[UploadFile], File()], knobs: Annotated[str
 
 @router.post("/books/recollect", status_code=202)
 def recollect_books(body: RecollectMany):
-    return books.recollect_books(body.ids or None, body.what, body.run)
+    return books.recollect_books(body.ids or None, body.what, body.run, body.dry_run)
 
 
 @router.get("/books")
 def list_books(stage: str | None = None, q: str | None = None, series: str | None = None,
-               limit: int = 100, offset: int = 0, brief: bool = True):
-    return books.list_books(stage, q, series, limit, offset, brief)
+               limit: int = 100, offset: int = 0, brief: bool = True, min_depth: int | None = None):
+    return books.list_books(stage, q, series, limit, offset, brief, min_depth)
 
 
 @router.post("/shelf/snapshots", status_code=201)
 def shelf_snapshot(body: ShelfSnapshot):
     return shelf.shelf_snapshot(body.book_ids or None)
+
+
+@router.get("/shelf/snapshots")
+def shelf_snapshots():
+    return shelf.shelf_snapshots()
+
+
+@router.get("/shelf/snapshots/{id}")
+def shelf_snapshot_read(id: int):
+    return shelf.shelf_snapshot_read(id)
 
 
 @router.get("/shelf/snapshots/{id}/changes")
@@ -116,4 +128,4 @@ def set_book_knobs(id: int, body: KnobChange):
 
 @router.post("/books/{id}/recollect", status_code=202)
 def recollect(id: int, body: Recollect):
-    return books.recollect(id, body.what, body.run)
+    return books.recollect(id, body.what, body.run, body.dry_run)

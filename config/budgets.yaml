@@ -6,11 +6,19 @@ attempts:
   metadata_gpu: 4
   structure: 4
   structure_scan: 4
+  layout_page: 3
+  layout_headings: 3
   profile_search: 3
   read_piece: 5
   assemble_piece: 3
   book_metrics: 3
+  read_range: 5
+  reassemble: 3
   eval_run: 3
   structure_eval: 3
   element_eval: 3
   cleanup: 3
+  batch: 3
+  structure_preview: 3
+  noop: 3
+  noop_gpu: 3

@@ -72,7 +72,7 @@ services:
         condition: service_completed_successfully
     volumes: *app-volumes
 
-  worker:
+  worker: &worker
     build:
       dockerfile: Dockerfile
     # the worker runs from a copy of app/ and config/, so an edit on disk never reaches a running job
@@ -90,6 +90,15 @@ services:
       dbmate:
         condition: service_completed_successfully
     volumes: *app-volumes
+
+  # CPU-lane workers on demand (--profile cpu-workers, --scale worker-cpu=2); the GPU lane stays one worker's
+  worker-cpu:
+    <<: *worker
+    profiles: ["cpu-workers"]
+    environment:
+      <<: *app-env
+      HOME: /tmp
+      WORKER_LANES: cpu
 
   ollama:
     image: ollama/ollama@sha256:57f573b47f1f71ebb445789f279fe3e596a8beab182f7cf486db9205bad87c5a

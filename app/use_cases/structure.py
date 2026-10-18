@@ -1,8 +1,13 @@
+import book_knobs
+import job_queue
+import job_specs
 from mcp_tools import tool
 from orm.catalogue import StructureNode, StructureVersion
 from orm.db import Session
 from sqlalchemy import select
 from stages.structure import evidence
+
+from use_cases import known
 
 SOURCES = ("bookmarks", "printed_contents")
 
@@ -41,3 +46,18 @@ def get_structure(id: int, source: str | None = None, version: int | None = None
         raise LookupError(f"structure version {head['version']} of book {id} kept no evidence; collect it again")
     return {**head, "source": kept.get(source),
             "placement": kept.get("placement") if source == "printed_contents" else None}
+
+
+@tool("structure_preview", "POST /v1/structure/preview",
+      "Collects the structure of the given text books on today's code with `knobs` (book knobs) tried over their own, "
+      "writes no version, and answers in the job's result per book whether it moved against the current version "
+      "(base, row counts, the first rows removed and added); scans are skipped, and so is the last try by headings "
+      "read as pictures unless `structure.from_headings` is set true. Returns {job_id}: follow it with "
+      "wait_job, then read the job.")
+def structure_preview(book_ids: list[int], knobs: dict | None = None) -> dict:
+    if not book_ids:
+        raise job_specs.Refused("no books given")
+    with Session() as session:
+        known.check_books(session, book_ids)
+    book_knobs.check(knobs or {})
+    return {"job_id": job_queue.enqueue("structure_preview", {"book_ids": book_ids, "knobs": knobs or {}})}

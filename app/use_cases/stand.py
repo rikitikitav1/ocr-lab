@@ -5,6 +5,7 @@ import code_version
 import httpx
 import net
 import settings
+import worker_registry
 from engines import card, converter, ocr_languages
 from mcp_tools import tool
 from orm.db import Session
@@ -15,11 +16,12 @@ def _db() -> dict:
     try:
         with Session() as session:
             session.execute(text("SELECT 1"))
-            worker = session.execute(text("SELECT code, extract(epoch FROM now() - seen_at) FROM workers "
-                                          "ORDER BY seen_at DESC LIMIT 1")).first()
-        if worker is None:
-            return {"ok": True, "last_worker_code": None, "worker_seen_seconds_ago": None}
-        return {"ok": True, "last_worker_code": worker[0], "worker_seen_seconds_ago": round(float(worker[1]))}
+            every = worker_registry.workers(session)
+        live = {h: w for h, w in every.items() if w["alive"]}
+        seen = min((w["seconds_ago"] for w in every.values()), default=None)
+        # a worker gone silent stays listed with how long ago it beat, so a dead one is seen, not forgotten
+        return {"ok": True, "last_worker_code": worker_registry.worker_code(live), "worker_seen_seconds_ago": seen,
+                "workers": {h: {k: v for k, v in w.items() if k != "started_at"} for h, w in every.items()}}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -57,16 +59,18 @@ def _gpu_memory() -> dict:
 
 
 @tool("stand", "GET /v1/stand",
-      "Health of the stand: database and the code the worker runs, converters with builds and missing models, "
-      "ollama, GPU holders and the card's memory, network sources set aside, and whether the worker is behind the "
-      "code on disk.")
+      "Health of the stand: database and every worker with its code, lanes, CPU-lane threads and last beat (a "
+      "silent one stays listed for a day), converters with builds and missing models, ollama, GPU holders and the "
+      "card's memory, network sources set aside, and whether a live worker is behind the code on disk (null with "
+      "no live worker).")
 def stand() -> dict:
     converters = {}
     for name in settings.CONVERTERS:
         state, body = converter.reading(name)
         converters[name] = {"state": state, "build": body.get("build"), "missing_models": body.get("missing_models")}
     db = _db()
-    disk_code = code_version.tree_hash()
+    disk_code = code_version.on_disk()
+    live = {h: w for h, w in db.get("workers", {}).items() if w["alive"]}
     return {
         "db": db,
         "converters": converters,
@@ -76,8 +80,8 @@ def stand() -> dict:
         "sources_set_aside": net.inactive(),
         "code": {"api_loaded": code_version.LOADED, "on_disk": disk_code,
                  "worker_last_seen": db.get("last_worker_code"),
-                 # the worker keeps its own copy and takes the newer code once the queue is empty
-                 "worker_behind_disk": db.get("last_worker_code") not in (None, disk_code)},
+                 # each worker keeps its own copy and takes newer code once its lanes empty; no worker seen, null
+                 "worker_behind_disk": bool(code_version.behind(live, disk_code)) if live else None},
         "shelf": {"dir": str(settings.SHELF_DIR), "books": (settings.SHELF_DIR / "books").exists(),
                   "gold": (settings.SHELF_DIR / "gold").exists()},
     }
@@ -96,3 +100,20 @@ def ocr_language_list() -> dict:
       "after it use it.")
 def install_ocr_language(language: str) -> dict:
     return ocr_languages.install(language.strip().lower())
+
+
+# the worker stops claiming and restarts on newer code once its jobs in hand end; a run in flight then mixes code
+@tool("reload_worker", "POST /v1/stand/worker/reload",
+      "Ask every live worker on older code to take the code on disk once its jobs in hand end, instead of waiting for"
+      " an empty queue; a run in flight then mixes code across its pieces. worker_code is the one code they run,"
+      " 'mixed' while some are behind.")
+def reload_worker() -> dict:
+    live, disk = worker_registry.live_workers(), code_version.on_disk()
+    behind = code_version.behind(live, disk)
+    shown = {h: {k: v for k, v in w.items() if k != "started_at"} for h, w in live.items()}
+    seen = {"worker_code": worker_registry.worker_code(live), "on_disk": disk, "workers": shown}
+    if not behind:
+        return {"requested": False, **seen,
+                "because": "no worker seen" if not live else "every worker already runs the code on disk"}
+    code_version.request_reload(behind, alive=set(live))
+    return {"requested": True, **seen, "asked": behind}

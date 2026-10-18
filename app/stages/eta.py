@@ -1,6 +1,7 @@
 # how long a book's run takes and when it starts, from what the stand's finished runs cost per page
 import statistics
 
+import job_costs
 from orm.catalogue import Book, Piece, Run, RunStatus
 from orm.db import Session
 from orm.jobs import Job
@@ -8,8 +9,6 @@ from sqlalchemy import func, select
 
 # the newest finished runs looked at for the cost
 LOOKED_AT = 60
-# a reading under this many seconds came from the cache, so its run tells nothing about cost
-CACHED_READ = 1.0
 
 
 def _scanned(book: Book) -> int:
@@ -22,12 +21,14 @@ def _costs(session) -> dict[str, list[float]]:
     out: dict[str, list[float]] = {"text": [], "scan": []}
     done = select(Run).where(Run.status == RunStatus.DONE).order_by(Run.id.desc()).limit(LOOKED_AT)
     for run in session.scalars(done):
-        jobs = session.execute(select(Job.type, Job.elapsed).where(Job.run_id == run.id, Job.status == "done")).all()
-        reads = [e or 0 for t, e in jobs if t == "read_piece"]
+        jobs = session.execute(select(Job.type, Job.elapsed, Job.result).where(Job.run_id == run.id,
+                                                                               Job.status == "done")).all()
+        reads = [(e, (r or {}).get("kept")) for t, e, r in jobs if t == "read_piece"]
         book = session.get(Book, run.book_id)
-        if not reads or min(reads) < CACHED_READ or not book.pages:
+        # a run with a kept reading tells nothing about what reading costs
+        if not reads or any(job_costs.kept_read(e, kept) for e, kept in reads) or not book.pages:
             continue
-        total = sum(e or 0 for t, e in jobs if t in ("read_piece", "assemble_piece", "book_metrics"))
+        total = sum(e or 0 for t, e, _ in jobs if t in ("read_piece", "assemble_piece", "book_metrics"))
         out["scan" if _scanned(book) > book.pages / 2 else "text"].append(total / book.pages)
     return out
 

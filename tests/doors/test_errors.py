@@ -40,3 +40,9 @@ def test_a_refusal_says_refused_over_both_doors():
     answer = TestClient(app).post("/v1/eval/structure", json={"set": "nonsense"})
     assert answer.status_code == 400
     assert answer.json()["error"]["kind"] == "refused"
+
+
+def test_a_body_the_route_refuses_comes_in_the_typed_error_shape():
+    got = TestClient(app).post("/v1/runs/1/reassemble", json={"knobs": "not a dict"})
+    assert got.status_code == 422 and got.json()["error"]["kind"] == "refused"
+    assert "knobs" in got.json()["error"]["message"]

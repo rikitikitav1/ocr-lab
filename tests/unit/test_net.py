@@ -86,3 +86,27 @@ def test_a_read_timeout_is_not_sent_again(local):
     with pytest.raises(net.SourceDown, match="ReadTimeout"):
         net.request("GET", "https://www.litres.ru/x", client=client)
     assert client.calls == 1
+
+
+def test_mineru_s_upload_goes_through_the_wrapper_s_retries(local, monkeypatch, tmp_path):
+    from engines import converter_tools
+
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4 x")
+    answers = {"POST /v1/uploads": [httpx.ConnectError("boom"), {"id": "u1"}],
+               "PUT /v1/uploads/u1/content": [{}], "POST /v1/uploads/u1/complete": [{"file": {"id": "f1"}}]}
+    seen = []
+
+    def request(method, url, **kwargs):
+        route = f"{method} {httpx.URL(url).path}"
+        seen.append(route)
+        answer = answers[route].pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return httpx.Response(200, json=answer, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(httpx, "request", request)
+    converter_tools._MINERU_FILES.clear()
+    assert converter_tools._mineru_file("http://mineru:8000", pdf, "r") == "f1"
+    assert seen == ["POST /v1/uploads", "POST /v1/uploads", "PUT /v1/uploads/u1/content",
+                    "POST /v1/uploads/u1/complete"]
