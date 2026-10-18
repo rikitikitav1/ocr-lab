@@ -1,12 +1,10 @@
-# thin helpers over pypdfium2; a book is one or more files with pages numbered across them
+# thin helpers over pypdfium2: pages, glyphs, crops, pictures, outline and file info; text_layer.py reads the text
 import functools
 import html
 import re
-import statistics
 import struct
 import threading
 import zlib
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,9 +24,8 @@ def _serialised(fn):
 
     return wrap
 
-# fewer letters than this is no text layer: a recogniser that lost its alphabet leaves only digits
-LAYER_MIN_LETTERS = 40
-LAYER_RULE = "letters>=40"
+# a picture smaller than this share of the page is an icon or a rule, not a figure
+PICTURE_MIN_AREA = 0.02
 
 
 @dataclass(frozen=True)
@@ -50,20 +47,23 @@ def page_count(path: Path) -> int:
 
 # the glyphs of a page as shares of the page from the top left, loose boxes so a comma sits on its line's row
 @_serialised
-def page_glyphs(path: Path, page_index: int) -> list[tuple[float, float, float, float, str]]:
+# a glyph's box, its character, and whether the text puts a space before it on its line
+def page_glyphs(path: Path, page_index: int) -> list[tuple[float, float, float, float, str, bool]]:
     doc = pdfium.PdfDocument(str(path))
     try:
         page = doc[page_index]
         width, height = page.get_size()
-        textpage = page.get_textpage()
-        out = []
+        textpage = _text_page(page)
+        out, spaced = [], False
         for i in range(textpage.count_chars()):
             ch = textpage.get_text_range(i, 1)
             if not ch or ch in ("\r", "\n") or ch.isspace():
+                spaced = bool(ch) and ch not in ("\r", "\n")
                 continue
             left, bottom, right, top = textpage.get_charbox(i, loose=True)
             out.append((left / width, 1 - top / height, right / width, 1 - bottom / height,
-                        "-" if ch == "\ufffe" else repair(ch)))
+                        "-" if ch == "\ufffe" else repair(ch), spaced))
+            spaced = False
         textpage.close()
         page.close()
         return out
@@ -112,16 +112,25 @@ def page_sizes(path: Path) -> list[tuple[float, float]]:
         doc.close()
 
 
+# PDFium loads glyphs on a first render and char boxes differ after it, so every page is rendered small before reading
+GLYPH_SCALE = 0.05
+
+
+def _text_page(page):
+    page.render(scale=GLYPH_SCALE, draw_annots=False)
+    return page.get_textpage()
+
+
 # one reading per page, the file opened once and every page closed after its reading
 @_serialised
-def _each_page(path: Path, pages: list[int] | None, read) -> dict:
+def each_page(path: Path, pages: list[int] | None, read) -> dict:
     doc = pdfium.PdfDocument(str(path))
     try:
         wanted = range(len(doc)) if pages is None else [p for p in pages if 0 <= p < len(doc)]
         out = {}
         for i in wanted:
             page = doc[i]
-            textpage = page.get_textpage()
+            textpage = _text_page(page)
             out[i] = read(page, textpage)
             textpage.close()
             page.close()
@@ -130,118 +139,39 @@ def _each_page(path: Path, pages: list[int] | None, read) -> dict:
         doc.close()
 
 
-def page_texts(path: Path, pages: list[int] | None = None) -> dict[int, str]:
-    return _each_page(path, pages, lambda page, textpage: repair(_joined(textpage)[0]))
-
-
-@dataclass(frozen=True)
-class Line:
-    text: str
-    x: float
-    top: float
-    size: float
-    bold: bool
-
-
-def _low(gaps: list[float]) -> float:
-    return sorted(gaps)[len(gaps) * 3 // 10]
-
-
-# PDFium breaks lines inside words whose glyphs sit on one row ("Север\r\nе уступае"), and such a break is undone
-def _joined(textpage) -> tuple[str, list[int]]:
-    text = textpage.get_text_range()
-    if len(text) != textpage.count_chars():
-        return text, list(range(len(text)))
-    box: list = []
-    for i, ch in enumerate(text):
-        try:
-            box.append(textpage.get_charbox(i) if ch.isalpha() else None)
-        except pdfium.PdfiumError:
-            box.append(None)
-    drop = _breaks(text, box, [bool(pdfium_raw.FPDFText_IsGenerated(textpage.raw, i)) for i in range(len(text))])
-    kept = [k for k in range(len(text)) if k not in drop]
-    return "".join(text[k] for k in kept), kept
-
-
-def join_breaks(text: str, box: list, made: list[bool]) -> str:
-    drop = _breaks(text, box, made)
-    return "".join(c for k, c in enumerate(text) if k not in drop)
-
-
-# a break goes when its letters are no further apart than letters nearby plus a quarter glyph height
-def _breaks(text: str, box: list, made: list[bool]) -> set[int]:
-    n = len(text)
-    row_of, row = [0] * n, 0
-    for i, ch in enumerate(text):
-        row += ch == "\n"
-        row_of[i] = row
-
-    # a recogniser's invisible layer may give glyphs no height; a letter is then about 1.4 widths tall
-    def height(k: int) -> float:
-        left, bottom, right, top = box[k]
-        return top - bottom if top - bottom > 0.3 * (right - left) else 1.4 * (right - left)
-
-    def same_row(a: int, b: int) -> bool:
-        if box[a][3] <= box[a][1] or box[b][3] <= box[b][1]:
-            return abs(box[a][1] - box[b][1]) < 0.3 * max(height(a), height(b))
-        overlap = min(box[a][3], box[b][3]) - max(box[a][1], box[b][1])
-        return overlap >= 0.5 * min(box[a][3] - box[a][1], box[b][3] - box[b][1])
-
-    letters = [i for i in range(n) if box[i]]
-    at = {k: j for j, k in enumerate(letters)}
-    tight: dict[int, float] = {}
-    for a, b in zip(letters, letters[1:], strict=False):
-        if b == a + 1 and same_row(a, b):
-            tight[a] = box[b][0] - box[a][2]
-    page_gap = _low(list(tight.values())) if tight else 0.0
-    drop = set()
-    for a, b in zip(letters, letters[1:], strict=False):
-        between = range(a + 1, b)
-        if b == a + 1 or not any(text[k] == "\n" for k in between) or not same_row(a, b) \
-                or not all(made[k] and text[k] in " \r\n" for k in between):
-            continue
-        h = max(height(a), height(b))
-        # the letters' own gap is read near the pair in glyphs of its size, so another font on the page cannot set it
-        near = [tight[k] for k in letters[max(0, at[a] - 5):at[b] + 5]
-                if k in tight and abs(height(k) - h) < 0.2 * h and row_of[k] in (row_of[a], row_of[b])]
-        own = statistics.median(near) if len(near) >= 2 else page_gap
-        if box[b][0] > box[a][0] and box[b][0] - box[a][2] < own + 0.25 * h:
-            drop.update(between)
-    return drop
-
-
-def _char_style(textpage, index: int) -> tuple[float, bool]:
-    matrix = pdfium_raw.FS_MATRIX()
-    pdfium_raw.FPDFText_GetMatrix(textpage.raw, index, matrix)
-    scale = abs(matrix.d) or (matrix.b ** 2 + matrix.d ** 2) ** 0.5 or 1
-    size = pdfium_raw.FPDFText_GetFontSize(textpage.raw, index) * scale
-    return round(size * 2) / 2, pdfium_raw.FPDFText_GetFontWeight(textpage.raw, index) >= 600
-
-
-# lines as PDFium breaks them less breaks inside a word; position from the first character, style from the most common
-def _lines(page, textpage) -> list[Line]:
-    height = page.get_height()
-    text, char_at = _joined(textpage)
-    out, offset = [], 0
-    for raw_line in text.split("\r\n"):
-        begin, offset = offset, offset + len(raw_line) + 2
-        stripped = raw_line.strip()
-        if not stripped:
-            continue
-        first = begin + (len(raw_line) - len(raw_line.lstrip()))
-        try:
-            left, _, _, top = textpage.get_charbox(char_at[first])
-        except Exception:
-            continue
-        styles = Counter(_char_style(textpage, char_at[i]) for i in range(first, begin + len(raw_line.rstrip()))
-                         if not raw_line[i - begin].isspace())
-        (size, bold), _ = styles.most_common(1)[0]
-        out.append(Line(repair(stripped), round(left, 1), round(height - top, 1), size, bold))
+# one picture is often cut into tiles: boxes that touch or nearly touch are one region
+def _merged(boxes: list[tuple], sx: float, sy: float) -> list[tuple]:
+    out = list(boxes)
+    joined = True
+    while joined:
+        joined = False
+        for a in range(len(out)):
+            for b in range(a + 1, len(out)):
+                p, q = out[a], out[b]
+                if p[0] - sx <= q[2] and q[0] - sx <= p[2] and p[1] - sy <= q[3] and q[1] - sy <= p[3]:
+                    out[a] = (min(p[0], q[0]), min(p[1], q[1]), max(p[2], q[2]), max(p[3], q[3]))
+                    del out[b]
+                    joined = True
+                    break
+            if joined:
+                break
     return out
 
 
-def page_lines(path: Path, pages: list[int] | None = None) -> dict[int, list[Line]]:
-    return _each_page(path, pages, _lines)
+# an image inside a form XObject reports the form's coordinates, so only top-level image and form objects are read
+def pictures(page, textpage) -> list[tuple[float, float, float, float]]:
+    w, h = page.get_size()
+    boxes = []
+    for obj in page.get_objects(filter=[pdfium_raw.FPDF_PAGEOBJ_IMAGE, pdfium_raw.FPDF_PAGEOBJ_FORM], max_depth=0):
+        left, bottom, right, top = obj.get_bounds()
+        boxes.append((max(left, 0.0), max(h - top, 0.0), min(right, w), min(h - bottom, h)))
+    return [b for b in _merged(boxes, 0.01 * w, 0.01 * h) if b[0] < b[2] and b[1] < b[3]
+            and (b[2] - b[0]) * (b[3] - b[1]) >= PICTURE_MIN_AREA * w * h and b[2] - b[0] < 0.98 * w]
+
+
+# picture regions in points from the page's top-left, by page index
+def page_pictures(path: Path, pages: list[int] | None = None) -> dict[int, list[tuple[float, float, float, float]]]:
+    return each_page(path, pages, pictures)
 
 
 # Cyrillic stored as cp1251 but read as Latin-1 ("Áîãäàí" for "Богдан"), seen on a cover's layer
@@ -263,30 +193,6 @@ def _cp1251(text: str) -> str:
         return fixed if cyrillic >= sum(c.isalpha() for c in fixed) * 0.8 else m.group(0)
 
     return MOJIBAKE.sub(fix, text)
-
-
-def letters(text: str) -> int:
-    return sum(c.isalpha() for c in text)
-
-
-def has_layer(text: str) -> bool:
-    return letters(text) >= LAYER_MIN_LETTERS
-
-
-# letters a font with a shifted encoding maps to: phonetic signs and private-use code points; no shelf book had any
-SHIFTED_SHARE = 0.3
-
-
-def _shifted(text: str) -> bool:
-    found = [c for c in text if c.isalpha()]
-    odd = sum(0x250 <= ord(c) <= 0x2AF or 0xE000 <= ord(c) <= 0xF8FF for c in found)
-    return len(found) >= LAYER_MIN_LETTERS and odd >= SHIFTED_SHARE * len(found)
-
-
-# almost no letters, or letters in a shifted encoding: a broken layer, recognised again rather than trusted
-def garbled(text: str) -> bool:
-    printable = sum(c.isprintable() and not c.isspace() for c in text)
-    return (printable >= LAYER_MIN_LETTERS and not has_layer(text)) or _shifted(text)
 
 
 @_serialised
