@@ -55,6 +55,7 @@ The sources without word lists first, the tree's last step and the dictionaries.
 
 ## Phase 3: Reading and assembly
 
+- [ ] T260 Each element of a book lives in one module under `app/elements/`: how the book sets it (learned from the book's own pages), how it is set into the blocks, how the report measures it; running heads and folios, footnotes, captions, code and a chapter's contents block move there first, `assembly/passes.py` keeps only the order of the passes, and formulas and asides join as elements; output byte-identical on the 47 reassemblies (owner 2026-10-18: first after the PR)
 - [ ] T252 (the asides, after P1) A listing's callouts become an attribute of its code block, margin notes and rubrics are kept as notes; line numbers, contents lines and margin running heads stay dropped per FR-006, FR-063 (partial) · the footnotes half closed for P1 (Phase 1)
 - [ ] T151 keep MinerU's all-caps boxes out of the headings as a book knob in app/assembly/passes.py, measured on book 9 (13 long headings) per Constitution IV (partial) · parked by the owner (no per-book knobs for now); measured offline: heading_max_words 12 turns 19 headings of book 9 into paragraphs, all boxed tasks, long_headings 13 to 0, lost and subs unchanged; patch kept outside the repo
 - [ ] T158 Break a referee tie in app/assembly/referee.py per_page without favouring Docling by list order, gated on every text book with out_of_order as a column per FR-045 (partial)
