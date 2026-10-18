@@ -7,7 +7,7 @@ page by page, give its chapters well enough to be the last try before that failu
 ## Outcome
 
 The method works where it is used, as the last try before a book fails, and it is in the code on by default (the
-book knob `toc.from_headings` turns it off). On the 20 development books read as pictures, with every change below,
+book knob `structure.from_headings` turns it off). On the 20 development books read as pictures, with every change below,
 it finds 310 of 331 counted chapters (94%); 45 of them sit below the top level and 53 extra lines stand as chapters
 over all 20 books. On the four text books of the third gate, never looked at before, it finds 39 of 46 (85%), where
 the stage itself with bookmarks off finds 41 of 46 through their printed contents; on 21, where the stage finds none,
@@ -196,11 +196,11 @@ the cover's title. It misses the bar on below the top.
 
 ## In the code
 
-E with 6, 7, L, R, T and V is the toc source `headings` (`app/stages/toc/sources/headings.py`, thresholds in
-`config/toc.yaml` under `scan_layer.headings`), tried after every other source and before one chapter or "structure
+E with 6, 7, L, R, T and V is the structure source `headings` (`app/stages/structure/sources/headings.py`, thresholds in
+`config/structure.yaml` under `scan_layer.headings`), tried after every other source and before one chapter or "structure
 not recognised". It was off by default while the gates ran; after the third gate the owner put it on by default as
 the last try before that failure, since it only meets books that would fail otherwise; the book knob
-`toc.from_headings` turns it off for one book. A guard measured on every read book: more top entries than half the
+`structure.from_headings` turns it off for one book. A guard measured on every read book: more top entries than half the
 pages is no structure (55, the UNIX manual, 0.81 a page; the highest of the rest 0.43). On the 20 books read as pictures it gives the same entries as the probe measured here.
 
 ## The front cut

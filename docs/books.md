@@ -41,7 +41,7 @@ both engines to a bundle.
 | 25 | Free Pascal Programmer’s Guide | Michaël Van Canneyt | 2021 | English | 187 | text | pdfTeX-1.40.20; LaTeX with hyperref | printed contents | structure, bookmarks-off gold |
 | 26 | Free Pascal Run-Time Library (RTL) Reference guide | Michaël Van Canneyt | 2021 | English | 2191 | text | pdfTeX-1.40.20; LaTeX with hyperref | printed contents | structure, bookmarks-off gold |
 | 27 | Free Pascal User’s Guide | Michaël Van Canneyt et al. | 2021 | English | 217 | text | pdfTeX-1.40.20; LaTeX with hyperref | printed contents | structure, bookmarks-off gold |
-| 28 | Dynamo: Amazon’s Highly Available Key-value Store | Giuseppe DeCandia et al. | 2007 | English | 16 | text | Acrobat Distiller 7.0.5 (Windows); PScript5.dll Version 5.2.2 | whole book | structure |
+| 28 | Dynamo: Amazon’s Highly Available Key-value Store | Giuseppe DeCandia et al. | 2007 | English | 16 | text | Acrobat Distiller 7.0.5 (Windows); PScript5.dll Version 5.2.2 | text headings | structure |
 | 29 | The Google File System | Sanjay Ghemawat et al. | 2003 | English | 15 | text | Acrobat Distiller 4.05 for Windows; dvips(k) 5.86 Copyright 1999 Radical Eye Software | whole book | structure, full run |
 | 30 | Algorithms Notes for Professionals |  |  | English | 257 | text | 3-Heights(TM) PDF Optimization Shell 4.8.25.2; TCPDF | printed contents | structure, bookmarks-off gold |
 | 31 | Bash Notes for Professionals |  |  | English | 204 | text | 3-Heights(TM) PDF Optimization Shell 4.8.25.2; TCPDF | printed contents | structure, bookmarks-off gold, full run |
@@ -74,7 +74,7 @@ both engines to a bundle.
 | 58 | Graph Theory and Complex Networks: An Introduction | Maarten van Steen | 2010 | English | 299 | text | pdfTeX-1.40.26; LaTeX with hyperref | printed contents | structure, bookmarks-off gold, full run |
 | 59 | Operating Systems: Three Easy Pieces | Remzi H. Arpaci-Dusseau et al. | 2008 | English | 801 | text | macOS Version 13.5.2 (Build 22G91) Quartz PDFContext; Preview; GPL Ghostscript 10.02.1; dvips(k) 2023.1 (TeX Live 2023)  Copyright 2023 Radical Eye Software; GPL Ghostscript 10.04.0; dvips(k) 2025.1 (TeX Live 2025)  Copyright 2025 Radical Eye Software; GPL Ghostscript 9.55.0; dvips(k) 2022.1 (TeX Live 2022)  Copyright 2022 Radical Eye Software | files | structure |
 | 60 | A bird that flies with two wings | Miranda Forsyth | 2009 | English | 318 | text | GPL Ghostscript 9.25; XEP 3.8.4 Client Academic | printed contents | structure, bookmarks-off gold |
-| 61 | A kind of mending |  | 2010 | English | 324 | text | GPL Ghostscript 9.25; QuarkXPress(tm) 6.1 | bookmarks | structure, bookmarks-off gold |
+| 61 | A kind of mending |  | 2010 | English | 324 | text | GPL Ghostscript 9.25; QuarkXPress(tm) 6.1 | printed contents | structure, bookmarks-off gold |
 | 62 | Access Controlled: The Shaping of Power, Rights, and Rule in Cybers... | Ronald Deibert et al. | 2010 | English | 635 | text | GPL Ghostscript 9.25; 3B2 Total Publishing System 7.51a/W | printed contents | structure, bookmarks-off gold |
 | 63 | Access to Justice and Legal Empowerment | Ineke van de Meene et al. | 2008 | English | 33 | text | GPL Ghostscript 9.25; Arbortext Advanced Print Publisher 9.0.114/W Unicode | bookmarks | structure, bookmarks-off gold |
 | 64 | Access to knowledge in the age of intellectual property |  | 2010 | English | 652 | text | GPL Ghostscript 9.25; Adobe InDesign CS4 (6.0.5) | bookmarks | structure, bookmarks-off gold |
@@ -85,9 +85,9 @@ both engines to a bundle.
 | 69 | 农业和食品安全在中国：WTO入世与区域贸易协定的影响 | 陈春来 et al. | 2008 | English | 440 | text | GPL Ghostscript 9.25; Adobe InDesign CS2 (4.0.4) | printed contents | structure, bookmarks-off gold |
 | 70 | Al-Haq: A Global History of the First Palestinian Human Rights Orga... | Lynn Welchman | 2021 | English | 331 | text | GPL Ghostscript 9.25; Adobe InDesign 14.0 (Windows) | printed contents | structure, bookmarks-off gold |
 | 71 | Amicus Curiae before International Courts and Tribunals | Astrid Wiik | 2018 | English | 734 | text | GPL Ghostscript 9.25; Nomos Verlag | printed contents | structure, bookmarks-off gold, metadata gold |
-| 72 | Analogy and Exemplary Reasoning in Legal Discourse | Hendrik Kaptein et al. | 2018 | English | 197 | text | GPL Ghostscript 9.25; Adobe InDesign CC 13.0 (Windows) | bookmarks | structure, bookmarks-off gold, full run |
-| 73 | Antitrust Enforcement and Standard Essential Patents: Moving beyond... | Haris Tsilikas | 2017 | English | 78 | text | GPL Ghostscript 9.25; Nomos Verlag | bookmarks | structure, bookmarks-off gold, full run |
-| 74 | Applicable Law in Investor–State Arbitration: The Interplay Between... | Hege Elisabeth Kjos | 2013 | English | 343 | text | GPL Ghostscript 9.25; PScript5.dll Version 5.2.2 | printed contents | structure, bookmarks-off gold |
+| 72 | Analogy and Exemplary Reasoning in Legal Discourse | Hendrik Kaptein et al. | 2018 | English | 197 | text | GPL Ghostscript 9.25; Adobe InDesign CC 13.0 (Windows) | printed contents | structure, bookmarks-off gold, full run |
+| 73 | Antitrust Enforcement and Standard Essential Patents: Moving beyond... | Haris Tsilikas | 2017 | English | 78 | text | GPL Ghostscript 9.25; Nomos Verlag | printed contents | structure, bookmarks-off gold, full run |
+| 74 | Applicable Law in Investor-State Arbitration: The Interplay Between... | Hege Elisabeth Kjos | 2013 | English | 343 | text | GPL Ghostscript 9.25; PScript5.dll Version 5.2.2 | printed contents | structure, bookmarks-off gold |
 | 75 | Applying Shari‘a in the West | Maurits S. Berger | 2013 | English | 292 | text | GPL Ghostscript 9.25; Adobe Acrobat Pro 10.1.6 | bookmarks | structure, bookmarks-off gold |
 | 76 | Australian Clinical Legal Education: Designing and Operating a Best... | Adrian Evans et al. | 2017 | English | 264 | text | GPL Ghostscript 9.25; Adobe InDesign CC 2017 (Macintosh) | printed contents | structure, bookmarks-off gold |
 | 77 | Bank Regulation, Risk Management, and Compliance | Alexander Dill | 2020 | English | 341 | text | GPL Ghostscript 9.25; Adobe InDesign CC 14.0 (Windows) | printed contents | structure, bookmarks-off gold |
@@ -115,8 +115,8 @@ both engines to a bundle.
 | 101 | The Endangered Species Act: History, Implementation, Successes, and... | J. Peyton Doub | 2013 | English | 283 | text | GPL Ghostscript 9.25; Adobe InDesign CS4 (6.0.6) | printed contents | structure, bookmarks-off gold |
 | 102 | The Future of the Law of the Sea |  | 2017 | English | 278 | text | GPL Ghostscript 9.25; Adobe InDesign CC 2017 (Windows) | printed contents | structure, bookmarks-off gold |
 | 103 | The Law Applicable to Security Interests in Intermediated Securitie... | Justin Monsenepwo | 2022 | English | 451 | text | GPL Ghostscript 9.25; Acrobat PDFMaker 22 für Word | printed contents | structure, bookmarks-off gold |
-| 104 | The Principle of Purpose Limitation in Data Protection Laws | Maximilian von Grafenstein | 2018 | English | 676 | text | GPL Ghostscript 9.25; Nomos Verlag | bookmarks | structure, bookmarks-off gold |
-| 105 | The Regulation of Megabanks: Legal Frameworks of the USA and EU | Katarzyna M. Parchimowicz | 2023 | English | 246 | text | GPL Ghostscript 9.25; Adobe InDesign 16.4 (Windows) | bookmarks | structure, bookmarks-off gold |
+| 104 | The Principle of Purpose Limitation in Data Protection Laws | Maximilian von Grafenstein | 2018 | English | 676 | text | GPL Ghostscript 9.25; Nomos Verlag | printed contents | structure, bookmarks-off gold |
+| 105 | The Regulation of Megabanks: Legal Frameworks of the USA and EU | Katarzyna M. Parchimowicz | 2023 | English | 246 | text | GPL Ghostscript 9.25; Adobe InDesign 16.4 (Windows) | printed contents | structure, bookmarks-off gold |
 | 106 | The Role of the Patent System in Stimulating Innovation and Technol... | Hee-Eun Kim | 2011 | English | 91 | text | GPL Ghostscript 9.25; Nomos Verlag | printed contents | structure, bookmarks-off gold |
 | 107 | U.S. Federal Income Tax of Individuals | Deborah A. Geier | 2016 | English | 776 | text | GPL Ghostscript 9.25; Acrobat PDFMaker 11 for Word | printed contents | structure, bookmarks-off gold |
 | 108 | UN Human Rights Institutions and the Environment | Sumudu Atapattu | 2023 | English | 347 | text | GPL Ghostscript 9.25 | printed contents | structure, bookmarks-off gold |
@@ -127,7 +127,7 @@ both engines to a bundle.
 | 113 | Сянка и кост | Лий Бардуго | 2012 | Bulgarian | 223 | text | calibre 1.40.0 | bookmarks | structure, bookmarks-off gold, full run |
 | 114 | Престол и щурм | Лий Бардуго | 2013 | Bulgarian | 280 | text | calibre 1.40.0 | bookmarks | structure, bookmarks-off gold, full run |
 | 115 | Падение и подем Кн.3 от поредицата Гриша | Лий Бардуго | 2014 | Bulgarian | 410 | text | calibre 2.22.0 | bookmarks | structure, bookmarks-off gold, full run |
-| 116 | Персидско-русский фразеологический словарь | tmadi |  | Russian, Farsi | 554 | text | PDF-XChange 3.60.0102 (Windows XP) | none (structure not recognised) | structure |
+| 116 | Персидско-русский фразеологический словарь | tmadi |  | Russian, Farsi | 554 | text | PDF-XChange 3.60.0102 (Windows XP) | text headings (read from a garbled layer) | structure |
 | 117 | 体验汉语 | 张如梅 et al. | 2007 | Chinese (read as Russian) | 169 | scan | FreePic2Pdf_Lib - v3.02; Pdg2Pic | bookmarks | structure, bookmarks-off gold |
 | 118 | 新HSK速成强化教程 口试（中级） | 赵延风 | 2014 | English, Chinese | 164 | scan | FreePic2Pdf_Lib - v3.02; Pdg2Pic | printed contents | structure, full run |
 | 119 | خواندن و درک مطلب فارسی |  |  | Farsi | 169 | scan | AxPDF | labels | structure, bookmarks-off gold, full run |
