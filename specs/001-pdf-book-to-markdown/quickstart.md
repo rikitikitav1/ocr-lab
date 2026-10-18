@@ -18,7 +18,8 @@ docker compose up -d
 curl -s localhost:8100/v1/stand | jq
 ```
 
-Expect: postgres, dbmate, api, worker healthy; both converters report a build stamp; no image pull
+Expect: postgres, dbmate, api, worker healthy (`docker compose --profile cpu-workers up -d --scale worker-cpu=2`
+adds workers that take only the cpu lane); both converters report a build stamp; no image pull
 in the compose output.
 
 ## 2. Catalogue three books (User Story 0, SC-010)
@@ -40,8 +41,8 @@ Expect: every field filled with source and confidence, or null with every source
 
 ```bash
 curl -s -XPOST localhost:8100/v1/books/1/runs -d '{"format": "markdown"}' \
-     -H 'content-type: application/json' | jq '.run.id, .job.id'
-curl -s 'localhost:8100/v1/jobs/<job>/wait?timeout=3600' | jq '.finished'
+     -H 'content-type: application/json' | jq '.run.id'
+curl -s 'localhost:8100/v1/runs/wait?ids=<run>&timeout=3600' | jq '.settled, .runs[0].status'
 curl -s localhost:8100/v1/runs/<run>/report | jq '.numbers, .images'
 ```
 
@@ -59,17 +60,18 @@ Expect: zero broken links, zero unreferenced images.
 
 ## 5. Kill and resume (User Story 2, SC-005)
 
-Start a run on a long book, wait until `GET /runs/<id>/nodes` shows some nodes done, then
-`docker compose kill worker && docker compose up -d worker`, then
-`POST /runs/<id>/resume`. Expect: done pieces keep their artifacts (same sha), only the
-interrupted piece reruns, and the final bundle is byte-identical to an uninterrupted run of the
-same book and profile (test `tests/stand/test_kill_resume.py`).
+Start a run on a long book, wait until `GET /runs/<id>/nodes?brief=true` shows some pieces done, then kill every
+worker (`docker compose kill worker worker-cpu`, or a cpu worker takes the pieces over) and start them again.
+The jobs the dead workers held go back to the queue by themselves; `POST /runs/<id>/resume` is for a run in
+attention or cancelled. Expect: done pieces keep their artifacts (same row, same sha), only the interrupted pieces rerun,
+and the bundle's `.md` and `structure.json` are byte-identical to an uninterrupted run of the same book and
+profile; `report.json` differs only in the run's id, its timings and the code stamps.
 
 ## 6. Rerun one node (User Story 1, scenario 6)
 
 ```bash
 curl -s -XPOST localhost:8100/v1/runs/<run>/nodes/4/rerun \
-     -d '{"overrides": {"blocks.sidebars": "blockquote"}}' -H 'content-type: application/json'
+     -d '{"overrides": {"assembly.tables_from": "docling"}}' -H 'content-type: application/json'
 ```
 
 Expect: only the artifacts of the piece holding node 4 are new; book metrics recomputed; the answer names
@@ -77,9 +79,11 @@ Expect: only the artifacts of the piece holding node 4 are new; book metrics rec
 
 ## 7. Evaluation with a gate (User Story 4)
 
-Create a set from the first evaluation books (`research.md` R15), register a gate, run a baseline,
-change one shared option, run again. Expect: `GET /eval/runs/<id>` lists each worse member with
-reasons and counts members whose output changed although the change did not fire.
+Built today: the structure stage scored on its own (`POST /eval/structure` with `bookmarks_off`, `contents_off`
+or `hips`, two jobs side by side with `GET /eval/structure/compare?job_a=..&job_b=..`) and the engines per
+element (`POST /eval/elements`). Run one before a change and one after, then compare. Expect: totals and the
+books that moved. Sets, registered gates and `GET /eval/runs/<id>` with worse members and their reasons are
+planned, not built.
 
 ## 8. Gate for the repo
 

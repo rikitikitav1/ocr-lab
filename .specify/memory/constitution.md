@@ -12,7 +12,7 @@ sits between the two.
 - The agent, not the user, assembles the book's profile (Principle II), runs the conversion and
   judges the result.
 - When the agent cannot reach acceptable quality, it still produces the bundle and says so in the
-  report's numbers, naming the chapters they come from and the knobs it tried. Poor quality never
+  report's numbers, naming the pieces they come from and the knobs it tried. Poor quality never
   stops a run.
 - A failure is different from poor quality: when a step still crashes after its retries, the run
   finishes what it can, then waits for attention, visible through the doors with the error, until
@@ -23,8 +23,8 @@ sits between the two.
 Every book is processed by its own profile: a nested tree of knobs, each answering one question
 about this book.
 
-- Knobs are grouped by question, for example: where the table of contents comes from; how a
-  chapter title, a section heading, a code block, a note or sidebar, a table, a caption, a running
+- Knobs are grouped by question, for example: where the book's structure comes from; how a
+  node's title, a section heading, a code block, a note or sidebar, a table, a caption, a running
   head is recognised; how images are cut and named. Each group holds knobs, and a knob holds a
   value or a nested group.
 - Every knob is declared in one registry with its options, a one-line explanation, and the probe
@@ -48,10 +48,10 @@ about this book.
 No output ships without a measurement. Every conversion writes a machine-readable quality report
 next to the document.
 
-- The report MUST cover at least: structure against the book's table of contents (chapters found,
+- The report MUST cover at least: structure against the book's own structure (nodes found,
   levels, order), text fidelity against the source text layer, heading level sanity (no level past
-  the format's maximum, no chapter below its own sections), image and link integrity. Each is a
-  number per chapter and for the book, with the worst chapters named; the report gives no verdict
+  the format's maximum, no node below its own sections), image and link integrity. Each is a
+  number per piece and for the book, with the worst pieces named; the report gives no verdict
   label, since a label hides how much is wrong (owner's decision, 2026-10-10).
 - Metrics MUST measure structure, not only words. Word similarity on short page cuts stays high
   while heading levels are wrong, so it is never the sole gate.
@@ -59,21 +59,24 @@ next to the document.
 - The same metrics drive knob selection (Principle II), so the agent optimises what the report
   shows and not a private score.
 - Gold references are preferred where they come free: books with PDF bookmarks serve as gold for
-  the other table-of-contents sources, which are run with bookmarks switched off.
+  the other structure sources, which are run with bookmarks switched off.
 
 ### IV. Structure Matches the Book
 
-The sections of the output match the sections of the book: same chapters, same nesting, same order.
+The sections of the output match the sections of the book: the same nodes at the levels the book gives
+them, the same nesting, the same order.
 
-- The table of contents is acquired first and from several sources, then reconciled: PDF
+- The structure is a tree of nodes, each with its level, its parent and its order, as many levels as
+  the book gives and no part or chapter kinds; how deep it goes is the book's own metadata.
+- The structure is acquired first and from several sources, then reconciled: PDF
   bookmarks, the printed contents pages, numbering in the text, typography, and a model reading
   the contents pages as the last source. Sources are ranked; the contents printed in the book outrank
   the PDF's bookmarks once the text confirms them, and the bookmarks give the levels where an entry
   has one.
 - Each heading carries the source that decided its level, and the report counts headings per
   source.
-- Heading levels are decided across the whole book, never per processing chunk. Chunking, when an
-  engine needs it, follows chapter boundaries.
+- Heading levels are decided across the whole book, never per processing chunk. Reading in pieces,
+  when an engine needs it, follows the tree's nodes.
 - Running heads, footers, sidebars and captions MUST NOT become headings. Duplicate pages are
   removed and reported.
 
@@ -116,7 +119,7 @@ only through gates.
 The same source, profile and engine versions produce the same bundle byte for byte on
 deterministic stages.
 
-- The resolved profile (preset plus overrides), engine versions and table-of-contents sources used
+- The resolved profile (preset plus overrides), engine versions and structure sources used
   are stamped in the bundle.
 - Stochastic stages (model calls) record model id and parameters, and their output is cached so a
   rerun reproduces it.
@@ -127,7 +130,7 @@ deterministic stages.
 Every stage of every run leaves a file behind, so any result can be traced back step by step, and
 an interrupted run resumes from the last saved point.
 
-- Each stage writes its output as an artifact: probe results, the table of contents from each
+- Each stage writes its output as an artifact: probe results, the structure from each
   source and the reconciled one, raw engine output per chunk, the internal model before and after
   each rule, the writer's output, the metrics.
 - The agent's profile search is kept too: every candidate profile it tried, its measurement, and
@@ -174,8 +177,8 @@ Rules for the bundle:
 
 - Every image link in the document resolves to a file in `images/`, and every file in `images/` is
   referenced at least once. The report counts both.
-- Markdown headings use levels 1 to 6 only; the book title is level 1, chapters level 2 unless the
-  book has parts.
+- Markdown headings use levels 1 to 6 only; the book title is level 1 and a structure node of level N
+  is level N + 1, deeper nodes staying at 6.
 - Code blocks, tables and lists keep their type; code is taken from the text layer where one exists.
 - The bundle is self-contained: moving the directory MUST NOT break links.
 - The bundle is the deliverable; the stage artifacts of its run (Principle VIII) live in the run
@@ -214,4 +217,4 @@ the constitution wins until it is amended.
 - Reviews verify that a change ships with its measurement (Principle III) and, for shared
   behaviour, its gate run (Principle VI).
 
-**Version**: 1.2.0 | **Ratified**: 2026-10-05 | **Last Amended**: 2026-10-10
+**Version**: 1.3.0 | **Ratified**: 2026-10-05 | **Last Amended**: 2026-10-17
