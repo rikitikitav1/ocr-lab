@@ -2,6 +2,7 @@
 import artifacts
 import code_version
 import settings
+import text_layer
 from orm.catalogue import LayoutVersion, StructureNode, StructureVersion
 from orm.db import Session
 from sqlalchemy import func, select, update
@@ -15,7 +16,7 @@ PAGE, HEADINGS = "page", "headings"
 
 
 def code_hash() -> str:
-    own = [*sorted((settings.APP_DIR / "stages" / "layout").rglob("*.py")), settings.APP_DIR / "pdf.py",
+    own = [*sorted((settings.APP_DIR / "stages" / "layout").rglob("*.py")),
            settings.APP_DIR / "stages" / "structure" / "sources" / "__init__.py", settings.APP_DIR / "numerals.py",
            settings.APP_DIR / "assembly" / "passes.py"]
     return code_version.files_hash(own).hexdigest()[:16]
@@ -61,12 +62,25 @@ def _lines(book_id: int) -> dict | None:
     return None if structure_collect.scanned(book_id) else book_lines(intake.files_of(book_id))
 
 
+# a layout made from other inputs than today's: its code, the files, and for the heading layout the structure under it
+def stale(book_id: int, kind: str) -> bool:
+    previous = current(book_id, kind)
+    if previous is None:
+        return False
+    structure_version_id = _nodes(book_id)[0] if kind == HEADINGS else None
+    return previous.input_hash != inputs(book_id, kind, structure_version_id).key
+
+
 def collect_page(book_id: int, job_id: int | None = None, force: bool = False) -> int:
     made_from = inputs(book_id, PAGE)
     if (kept := _kept(book_id, PAGE, made_from, force)) is not None:
         return kept
     lines = _lines(book_id)
-    layout = {"skipped": "a scan"} if lines is None else page.measure(lines)[0]
+    if lines is None:
+        layout = {"skipped": "a scan"}
+    else:
+        paths = [settings.DATA_DIR / f.file_path for f in intake.files_of(book_id)]
+        layout = {**page.measure(lines)[0], "monospace": text_layer.monospace(paths)}
     return _write(book_id, PAGE, made_from, layout, job_id)
 
 

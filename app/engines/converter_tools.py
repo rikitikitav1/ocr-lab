@@ -71,16 +71,17 @@ def _mineru_file(base: str, path: Path, residency) -> str:
     if key in _MINERU_FILES:
         return _MINERU_FILES[key]
     blob = path.read_bytes()
-    up = httpx.post(base + "/v1/uploads", timeout=POST_TIMEOUT, json={
+    # the upload is not the job's start, so it goes through the wrapper's retries like every other call
+    up = net.post(base + "/v1/uploads", timeout=POST_TIMEOUT, json={
         "filename": path.name, "bytes": len(blob), "purpose": "parse", "sha256sum": key[3],
         "mime_type": mimetypes.guess_type(path.name)[0] or "application/pdf"})
     up.raise_for_status()
     upload = up.json()
     if not (upload.get("file") or {}).get("id"):
-        httpx.put(f"{base}/v1/uploads/{upload['id']}/content", content=blob,
-                  headers={"Content-Type": "application/octet-stream"}, timeout=POST_TIMEOUT).raise_for_status()
-        done = httpx.post(f"{base}/v1/uploads/{upload['id']}/complete", json={"sha256sum": key[3]},
-                          timeout=POST_TIMEOUT)
+        net.request("PUT", f"{base}/v1/uploads/{upload['id']}/content", content=blob,
+                    headers={"Content-Type": "application/octet-stream"}, timeout=POST_TIMEOUT).raise_for_status()
+        done = net.post(f"{base}/v1/uploads/{upload['id']}/complete", json={"sha256sum": key[3]},
+                        timeout=POST_TIMEOUT)
         done.raise_for_status()
         upload = done.json()
     _MINERU_FILES[key] = upload["file"]["id"]

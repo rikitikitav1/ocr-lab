@@ -33,6 +33,8 @@ MARKER_NUMBER = re.compile(r"(\d+)")
 class Read:
     blocks: list[Block] = field(default_factory=list)
     furniture: list[str] = field(default_factory=list)
+    # the same, with the file page and the engine's type, for the readers that decide by the page layout
+    furniture_at: list[tuple[int, str, str]] = field(default_factory=list)
     # labels the adapter has no block for; their text is kept as prose so nothing is lost
     unknown: Counter = field(default_factory=Counter)
 
@@ -80,6 +82,9 @@ class _Walk:
         item = self.item(ref)
         if item.get("content_layer") == "furniture" or item.get("label") in FURNITURE:
             self.out.furniture.append(item.get("text", ""))
+            provs = item.get("prov") or []
+            self.out.furniture_at.append((provs[0]["page_no"] if provs else self.page, item.get("label", ""),
+                                          item.get("text", "")))
             return
         kind = ref.split("/")[1]
         if kind == "groups":

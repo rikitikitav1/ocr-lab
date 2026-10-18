@@ -75,6 +75,7 @@ def adapt(engine: str, structure: dict, file_ord: int = 0, book_page=lambda page
     for part in adapted[1:]:
         out.blocks += part.blocks
         out.furniture += part.furniture
+        out.furniture_at += part.furniture_at
         out.unknown += part.unknown
     return out
 
