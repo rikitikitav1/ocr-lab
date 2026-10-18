@@ -43,7 +43,10 @@ def test_the_default_profile_is_one_per_book_and_a_derived_one_records_the_manua
     assert first == again
     derived = profiles.derive(first, {"assembly.code_union": True}, {"2": {"assembly.mono_paragraphs": False}})
     assert derived["parent_id"] == first and derived["values"]["assembly.code_union"]["source"] == "manual"
-    assert derived["piece_overrides"] == {"2": {"assembly.mono_paragraphs": False}}
+    assert derived["piece_overrides"] == {"2": {"assembly.mono_paragraphs": {
+        "value": False, "source": "manual", "evidence": f"derived from profile {first}"}}}
+    assert profiles.passes_for({}, derived["piece_overrides"], 2) == {"mono_paragraphs": False}
+    assert profiles.passes_for({}, {"2": {"assembly.mono_paragraphs": False}}, 2) == {"mono_paragraphs": False}
     assert profiles.derive(first, {"assembly.code_union": True}, {"2": {"assembly.mono_paragraphs": False}})["id"] \
         == derived["id"]
 
@@ -53,6 +56,61 @@ def test_knobs_applied_are_the_values_that_differ_from_the_registry_default():
     from stages import bundle
 
     values = {"assembly.code_union": {"value": True, "source": "preset", "evidence": "preset code"},
-              "assembly.mono_paragraphs": {"value": True, "source": "manual", "evidence": "derived"}}
+              "assembly.mono_paragraphs": {"value": False, "source": "manual", "evidence": "derived"}}
     got = bundle.profile_view(Profile(id=1, preset="code", sha256="x", values=values, piece_overrides={}))
     assert got["knobs_applied"] == {"assembly.code_union": True}
+    assert got["knob_sources"] == {"assembly.code_union": "preset"}
+    line = bundle._profile_line({"profile": {**got, "piece_overrides": {"10": {}, "2": {}}}})
+    assert line == "assembly.code_union (preset) / 2, 10"
+
+
+def test_a_knob_no_pass_reads_or_without_help_fails_the_start_and_is_named(monkeypatch):
+    from knobs import registry
+
+    assert registry.validate()["groups"]
+    bad = {"tables": {"question": "q", "knobs": {
+        "tables_from": {"options": ["mineru"], "help": "", "probe": "p", "cost": "cpu"},
+        "nothing_reads_me": {"options": [True], "help": "h", "probe": "p", "cost": "cpu"}}}}
+    monkeypatch.setattr(registry, "_groups", lambda: bad)
+    with pytest.raises(ValueError) as error:
+        registry.validate()
+    assert "tables.tables_from: no help" in str(error.value)
+    assert "tables.nothing_reads_me: no pass reads it" in str(error.value)
+
+
+@needs_db
+def test_a_book_set_in_a_monospace_face_starts_on_the_technical_preset_unless_its_knob_says_otherwise(stand, tmp_path):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    from stages.layout import collect as layout
+    from use_cases import books
+
+    path = tmp_path / "code.pdf"
+    c = canvas.Canvas(str(path), pagesize=A4)
+    for _ in range(6):
+        c.setFont("Helvetica", 10)
+        c.drawString(72, 780, "Every listing in this book is set in a monospace face below the prose")
+        c.setFont("Courier", 10)
+        for k in range(4):
+            c.drawString(72, 750 - 16 * k, f"for (int i = 0; i < count; i++) total += values[{k}];")
+        c.showPage()
+    c.save()
+    book, _ = intake.register([(path, "code.pdf")])
+    layout.collect_page(book, force=True)
+    assert profiles.chosen_preset(book)[0] == "technical"
+    with Session() as session:
+        values = profiles.resolve(session, book).values
+        session.commit()
+    assert values["assembly.code_from_layer"]["value"] is True and values["assembly.mono_paragraphs"]["value"]
+    books.set_book_knobs(book, set={"run.preset": "default"})
+    assert profiles.chosen_preset(book) == ("default", "book knob run.preset")
+    with pytest.raises(job_specs.Refused):
+        books.set_book_knobs(book, set={"run.preset": "code"})
+
+
+def test_the_layer_code_passes_are_off_by_default_and_on_in_technical():
+    defaults = {path: spec["default"] for path, spec in registry.run_knobs().items()}
+    technical = registry.preset("technical")
+    assert defaults["assembly.code_from_layer"] is False and defaults["assembly.mono_paragraphs"] is False
+    assert technical["values"] == {"assembly.code_from_layer": True, "assembly.mono_paragraphs": True}
+    assert defaults["assembly.join_code_across_pages"] is True

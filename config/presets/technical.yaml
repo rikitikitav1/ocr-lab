@@ -1,0 +1,8 @@
+# a book that sets code in a monospace face: the code passes that read the layer's glyphs are on
+help: books whose layer sets letters in a monospace face, chosen by the page layout's share of them
+choose:
+  share: 0.02
+  pages: 5
+values:
+  assembly.code_from_layer: true
+  assembly.mono_paragraphs: true

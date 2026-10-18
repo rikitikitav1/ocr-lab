@@ -2,10 +2,12 @@
 import hashlib
 import json
 
+import book_knobs
 from knobs import registry
 from orm.catalogue import Profile
 from orm.db import Session
 from sqlalchemy import select
+from stages.layout import collect
 
 # until profile search is built a run says it skipped it, in its start answer and in its report
 SEARCH_SKIPPED = "skipped: profile search is not built"
@@ -36,7 +38,25 @@ def _stored(session, book_id: int, preset: str, values: dict, piece_overrides: d
     return profile
 
 
-def resolve(session, book_id: int, preset: str = "default") -> Profile:
+# the book's own knob first, then a preset whose `choose` the page layout's monospace share meets, else the default
+def chosen_preset(book_id: int) -> tuple[str, str]:
+    if (named := book_knobs.of(book_id).get("run.preset")) is not None:
+        return named, "book knob run.preset"
+    layout = collect.current(book_id, collect.PAGE)
+    kept = layout.layout if layout else {}
+    if "monospace" not in kept:
+        return "default", ("no page layout" if layout is None else "a scan" if "skipped" in kept
+                           else "page layout older than the monospace measure")
+    mono = kept["monospace"]
+    for preset in registry.presets():
+        need = preset.get("choose")
+        if need and mono["share"] >= need["share"] and mono["pages"] >= need["pages"]:
+            return preset["name"], f"monospace share {mono['share']} on {mono['pages']} pages"
+    return "default", f"monospace share {mono['share']} on {mono['pages']} pages meets no preset"
+
+
+def resolve(session, book_id: int, preset: str | None = None) -> Profile:
+    preset = preset or chosen_preset(book_id)[0]
     chosen = registry.preset(preset)
     values = {}
     for path, spec in registry.run_knobs().items():
@@ -57,7 +77,9 @@ def derive(id: int, set: dict | None = None, pieces: dict | None = None) -> dict
             values[path] = {"value": value, "source": "manual", "evidence": f"derived from profile {id}"}
         overrides = dict(parent.piece_overrides)
         for ord, knobs in (pieces or {}).items():
-            overrides[str(ord)] = {**overrides.get(str(ord), {}), **registry.check(knobs)}
+            manual = {path: {"value": value, "source": "manual", "evidence": f"derived from profile {id}"}
+                      for path, value in registry.check(knobs).items()}
+            overrides[str(ord)] = {**overrides.get(str(ord), {}), **manual}
         profile = _stored(session, parent.book_id, parent.preset, values, overrides, parent.id)
         session.commit()
         return view(profile)
@@ -71,9 +93,15 @@ def get(id: int) -> dict:
         return view(profile)
 
 
+# a piece override kept as a value with its source, or bare as profiles made before sources were kept
+def _value(override):
+    return override["value"] if isinstance(override, dict) and "source" in override else override
+
+
 # the pass switches one piece assembles with: the profile's values under the piece's own overrides
 def passes_for(values: dict, piece_overrides: dict, ord: int) -> dict:
     out = {path.removeprefix(registry.RUN_PREFIX): v["value"] for path, v in values.items()}
-    out.update({path.removeprefix(registry.RUN_PREFIX): v for path, v in piece_overrides.get(str(ord), {}).items()})
+    own = piece_overrides.get(str(ord), {})
+    out.update({path.removeprefix(registry.RUN_PREFIX): _value(v) for path, v in own.items()})
     return out
 

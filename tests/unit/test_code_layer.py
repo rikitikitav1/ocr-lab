@@ -144,3 +144,28 @@ def test_a_code_block_cut_by_the_page_is_joined_but_two_blocks_mid_page_are_not(
     assert n == 1 and out[0].text == "SELECT a,\n       b FROM t;" and len(out) == 2
     mid = Code(text="x", where=Where(page=1, box=(0.1, 0.4, 0.9, 0.5), engine="d"))
     assert passes.join_code_across_pages([mid, PageMarker(book_page=2, file_ord=0, file_page=2), high])[1] == 0
+
+
+def test_a_space_the_layer_holds_stays_where_a_bold_glyph_leaves_less_than_a_cell():
+    bold = [(*g, False) for g in row("SELECT", 0.1)]
+    name = [(x0 - 0.7 * W, y0, x1 - 0.7 * W, y1, c, i == 0)
+            for i, (x0, y0, x1, y1, c) in enumerate(row("       Name;", 0.1))]
+    glyphs = [*bold, *name, *[(*g, False) for g in row("FROM t;", 0.13)]]
+    assert code_layer.rebuild(glyphs, (0.0, 0.05, 0.9, 0.2), set()) == "SELECT Name;\nFROM t;"
+    unspaced = [*bold, *[(*g[:5], False) for g in name]]
+    assert code_layer.rebuild(unspaced, (0.0, 0.05, 0.9, 0.2), set()) == "SELECTName;"
+
+
+def test_a_code_fragment_inside_the_listing_next_to_it_goes_but_a_snippet_apart_stays():
+    from assembly import passes
+    from document.model import Code, Where
+
+    def code(text, box):
+        return Code(text=text, where=Where(page=1, box=box, engine="m"))
+
+    whole = code("foo() {\n  local val=${1:?give an argument}\n}", (0.1, 0.1, 0.3, 0.2))
+    fragment = code("val=${1:?give an argument}", (0.18, 0.13, 0.4, 0.15))
+    apart = code("val=${1:?give an argument}", (0.1, 0.5, 0.3, 0.52))
+    closing = code("fi", (0.1, 0.19, 0.12, 0.2))
+    out, dropped = passes.drop_code_fragments([fragment, whole, closing, apart])
+    assert out == [whole, closing, apart] and dropped == 1
