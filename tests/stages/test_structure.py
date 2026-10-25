@@ -186,6 +186,36 @@ def test_a_chapter_number_on_its_own_line_takes_the_title_below_it():
     assert not any(" " in e.title and e.title.split()[0].isdigit() for e in headings.read_lines(lines, 20).entries)
 
 
+def test_a_line_in_the_running_slots_band_is_no_heading_however_rarely_it_repeats():
+    from stages.structure.sources import headings
+
+    names = ["Rivers", "Hills and valleys", "The old town", "A long winter", "Coming home"]
+    lines = {p: [text_layer.Line(f"{p} plain body text of the page goes on", 50, 100, 10, False)] for p in range(1, 21)}
+    for n, name in enumerate(names):
+        lines[3 + 4 * n][:0] = [text_layer.Line(name, 50, 60, 18, False)]
+    # a section's running head set large on the one page after its opening
+    head = text_layer.Line("Hills and valleys in the north", 50, 20, 18, False)
+    lines[8][:0] = [head]
+    assert "Hills and valleys in the north" in [e.title for e in headings.read_lines(lines, 20).entries]
+    kept = [e.title for e in headings.read_lines(lines, 20, band=frozenset({id(head)})).entries]
+    assert kept == names
+
+
+def test_a_lead_paragraph_set_large_is_no_heading_and_a_short_bold_title_at_body_size_is_one():
+    from stages.structure.sources import headings
+
+    names = ["Rivers", "Hills and valleys", "The old town", "A long winter", "Coming home"]
+    body = "plain body text of the page that goes on for a whole line"
+    lines = {p: [text_layer.Line(f"{p} {body}", 50, 100 + 12 * i, 10, False) for i in range(6)] for p in range(1, 21)}
+    for n, name in enumerate(names):
+        lines[3 + 4 * n][:0] = [text_layer.Line(name, 50, 60, 10, True)]
+    # a chapter's lead set large and bold runs on for a paragraph
+    lines[5][:0] = [text_layer.Line(f"lead line {i} of the chapter that runs on", 50, 20 + 12 * i, 12, True)
+                    for i in range(6)]
+    got = [e.title for e in headings.read_lines(lines, 20).entries]
+    assert got == names
+
+
 def test_bookmarks_win_over_printed_contents(stand, tmp_path):
     path = build(tmp_path / "b.pdf", [text_page("Title"), contents(), text_page("One", bookmark="One"),
                                       text_page("Two", bookmark="Two")])

@@ -206,16 +206,57 @@ def read(layouts: dict[int, dict], total: int, text_of, contents: frozenset[int]
     return _levels("headings", cand, style_groups, total, contents)
 
 
+# bold lines of the body's size set apart: a short run of short lines, not a bold paragraph or a dictionary's headwords
+def _apart(lines: dict[int, list], body: float) -> set[int]:
+    c = conf()["text_layer"]["headings"]
+    same = [len(x.text) for ls in lines.values() for x in ls if abs(x.size - body) < c["same_size"] and not x.bold]
+    short = statistics.median(same) * c["bold_short"] if same else 0
+    out = set()
+    for ls in lines.values():
+        run: list = []
+        # in the layer's own order, which keeps a column's lines together where the height on the page does not
+        for x in [*ls, None]:
+            if x is not None and x.bold and abs(x.size - body) < c["same_size"]:
+                run.append(x)
+                continue
+            # a wrapped title's first row runs full width, so the run's last row is the one that must be short
+            if 0 < len(run) <= c["bold_run"] and len(run[-1].text) <= short:
+                out |= {id(r) for r in run}
+            run = []
+    return out
+
+
+# lines of one look running on past a title's rows: a lead paragraph set large or bold is no heading
+def _paragraphs(lines: dict[int, list]) -> set[int]:
+    c = conf()["text_layer"]["headings"]
+    out = set()
+    for ls in lines.values():
+        run: list = []
+        for x in [*ls, None]:
+            if x is not None and run and abs(x.size - run[-1].size) < c["same_size"] and x.bold == run[-1].bold:
+                run.append(x)
+                continue
+            if len(run) > c["para_run"]:
+                out |= {id(r) for r in run}
+            run = [x] if x is not None else []
+    return out
+
+
 # a text layer's lines set apart from the body by size or weight, a wrapped title's lines joined into one block
-def line_blocks(lines: dict[int, list]) -> list[dict]:
+def line_blocks(lines: dict[int, list], band: frozenset[int] = frozenset()) -> list[dict]:
     c = conf()["text_layer"]["headings"]
     body, body_bold = body_style(lines)
+    apart = _apart(lines, body) if not body_bold else set()
+    band = band | _paragraphs(lines)
     out = []
     for page, ls in sorted(lines.items()):
         last = None
         for x in sorted(ls, key=lambda x: x.top):
             text = " ".join(x.text.split())
-            if not text or not (x.size >= body * c["larger"] or (x.bold and not body_bold and x.size >= body)):
+            larger = x.size >= body * c["larger"] or (x.bold and not body_bold and x.size >= body
+                                                      and (x.size >= body + c["same_size"] or id(x) in apart))
+            # a line in the running slots' band is a running head, however rarely it repeats
+            if not text or id(x) in band or not larger:
                 last = None
                 continue
             if last and abs(last["size"] - x.size) < c["same_size"] and last["bold"] == x.bold \
@@ -236,9 +277,9 @@ def _weighted_groups(cand: list[dict]) -> list[list[dict]]:
 
 # a book's top nodes from the headings its text layer sets apart, for a book no contents source holds
 def read_lines(lines: dict[int, list], total: int, contents: frozenset[int] = frozenset(),
-               languages: tuple[str, ...] = ()) -> SourceEntries:
+               languages: tuple[str, ...] = (), band: frozenset[int] = frozenset()) -> SourceEntries:
     c = conf()["scan_layer"]["headings"]
-    bl = [b for b in line_blocks(lines) if b["words"] <= c["max_words"] and not b["text"].startswith(DASHES)]
+    bl = [b for b in line_blocks(lines, band) if b["words"] <= c["max_words"] and not b["text"].startswith(DASHES)]
     key, repeated = _repeats(bl, total)
     seen = _levels("text_headings", _glued([b for b in bl if key(b)[1] and not repeated(b)]), _weighted_groups,
                    total, contents)

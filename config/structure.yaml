@@ -20,6 +20,9 @@ text_layer:
     same_size: 0.3         # a wrapped title's next row is set within this many points of its first
     row_gap: 1.8           # and no further below it than this many of its sizes
     max_words: 15          # a title stops taking rows at this many words
+    bold_run: 2            # a bold line of the body's size is a heading only in a run of at most this many such lines
+    para_run: 3            # more lines than this of one look running on in the layer's order are a paragraph
+    bold_short: 0.7        # its last row shorter than this share of the body's median line length
 scan_layer:
   labels:
     top_share: 0.2         # a chapter label (book knob structure.chapter_label) starts in this top share of a recognised page

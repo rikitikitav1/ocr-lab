@@ -6,6 +6,7 @@ import pytest
 import settings
 import worker
 from stages import assemble
+from stages.elements import collect as layout
 from stages.structure import collect
 from use_cases import runs as runs_use
 
@@ -622,7 +623,9 @@ def test_a_run_reads_and_reports_the_languages_of_the_metadata_it_pinned_not_of_
 def _book(client, inbox, name: str, with_structure: bool = True) -> int:
     pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
     book = client.post("/v1/books", json={"file_paths": [str(build(inbox / name, pages))], "then": []}).json()
+    # in the chain's order: the structure reads the page layout's running slots
     if with_structure:
+        layout.collect_page(book["id"])
         collect.collect(book["id"])
     return book["id"]
 

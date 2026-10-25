@@ -10,9 +10,11 @@ import model_steps
 import numerals
 import settings
 import text_layer
+from elements.running_heads import slots
 from job_signals import Final
-from orm.catalogue import Book, StructureNode, StructureVersion
+from orm.catalogue import Book, LayoutVersion, StructureNode, StructureVersion
 from orm.db import Session
+from sqlalchemy import select
 from structure import tree
 
 from stages import book_stage, intake, versions
@@ -40,8 +42,9 @@ SOURCES = ("bookmarks", "printed_contents", "files", "numbering", "text_headings
 def code_hash() -> str:
     # the structure reads the layer, running heads and numerals, so the code that reads them is its code
     own = [*sorted((settings.APP_DIR / "stages" / "structure").rglob("*.py")), settings.APP_DIR / "model_steps.py",
-           settings.APP_DIR / "elements" / "running_heads" / "book.py", settings.APP_DIR / "numerals.py",
-           settings.APP_DIR / "structure" / "tree.py", settings.APP_DIR / "alphabets.py"]
+           settings.APP_DIR / "elements" / "running_heads" / "book.py", Path(slots.__file__),
+           settings.APP_DIR / "numerals.py", settings.APP_DIR / "structure" / "tree.py",
+           settings.APP_DIR / "alphabets.py"]
     digest = code_version.files_hash(own, ("structure.yaml",))
     digest.update(json.dumps(model_steps.steps()["contents_reader"], sort_keys=True).encode())
     return digest.hexdigest()[:16]
@@ -55,11 +58,28 @@ def inputs(book_id: int) -> artifacts.Inputs:
     # the book's languages tell a broken layer's headings, so a new language list collects the structure again
     parts = {"stage": STAGE, "code": code_hash(), "files": [f.sha256 for f in intake.files_of(book_id)],
              "knobs": knobs, "languages": resolve.known_languages_of(book_id)}
+    # the running slots are read from the page layout: one learned other collects the structure again, the same does not
+    if (kept := _page_layout(book_id)) is not None:
+        parts["layout_page"] = artifacts.short_sha(json.dumps(kept.layout, sort_keys=True).encode())
     if scanned(book_id) or scan.raster_contents(book_id, knobs.get("structure.contents_pages"), run=False) is not None:
         from engines import reading
 
         parts["mineru"] = reading.build("mineru")
     return artifacts.Inputs(parts)
+
+
+def _page_layout(book_id: int) -> LayoutVersion | None:
+    with Session() as session:
+        return session.scalar(select(LayoutVersion).where(LayoutVersion.book_id == book_id,
+                                                          LayoutVersion.kind == "page", LayoutVersion.current))
+
+
+# the lines the page layout's running slots hold by band and size, repeated or not
+def _band(book_id: int, lines: dict) -> frozenset[int]:
+    kept = _page_layout(book_id)
+    if kept is None or "skipped" in kept.layout:
+        return frozenset()
+    return frozenset(slots.claimed_reasons(lines, kept.layout))
 
 
 def current_version(book_id: int) -> StructureVersion | None:
@@ -206,7 +226,8 @@ def _styled(found: dict, lines: dict | None, total: int, contents: frozenset[int
                for source, entries in found.items() if source not in reconcile.VOTES_ONLY)
     if lines is None or held or labelled_by_knob or "text_headings" in off:
         return SourceEntries("text_headings", failed="not read: a scan, a contents source, the label knob, or off")
-    return headings.read_lines(lines, total, contents, tuple(resolve.known_languages_of(book_id)))
+    return headings.read_lines(lines, total, contents, tuple(resolve.known_languages_of(book_id)),
+                               _band(book_id, lines))
 
 
 # chapters opening on neighbouring pages are a list of them (a contents page, a series page), not the book's chapters

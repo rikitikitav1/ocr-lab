@@ -3,6 +3,7 @@ import settings
 from orm.catalogue import Artifact, Book
 from orm.db import Session
 from sqlalchemy import select
+from stages.elements import collect as layout
 from stages.structure import collect
 
 from tests.doors.test_runs import TEXT, _drain, engines
@@ -16,6 +17,7 @@ def _two_runs(client, inbox, monkeypatch) -> tuple[int, int, int]:
     pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
     book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "clean.pdf", pages))],
                                           "then": []}).json()["id"]
+    layout.collect_page(book)
     collect.collect(book)
     engines(monkeypatch)
     first = client.post(f"/v1/books/{book}/runs", json={}).json()["run"]["id"]
