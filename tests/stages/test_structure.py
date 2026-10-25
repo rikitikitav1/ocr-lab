@@ -170,6 +170,22 @@ def test_headings_in_letters_the_book_s_languages_do_not_write_are_a_broken_laye
                                   ()).entries][0] == "Глава первая"
 
 
+def test_a_chapter_number_on_its_own_line_takes_the_title_below_it():
+    from stages.structure.sources import headings
+
+    names = ["Rivers", "Hills and valleys", "The old town", "A long winter", "Coming home"]
+    lines = {p: [text_layer.Line(f"{p} plain body text of the page goes on", 50, 100, 10, False)] for p in range(1, 21)}
+    for n, name in enumerate(names):
+        lines[3 + 4 * n][:0] = [text_layer.Line(f"0{n + 1}", 50, 40, 30, False),
+                                text_layer.Line(name, 50, 60, 18, False)]
+    got = headings.read_lines(lines, 20)
+    assert [(e.title, e.page) for e in got.entries] == [(f"0{n + 1} {name}", 3 + 4 * n) for n, name in enumerate(names)]
+    # numbers that do not count on by one are note marks or table cells, each left on its own
+    for n, number in enumerate(("7", "30", "12", "41", "9")):
+        lines[3 + 4 * n][0] = text_layer.Line(number, 50, 40, 30, False)
+    assert not any(" " in e.title and e.title.split()[0].isdigit() for e in headings.read_lines(lines, 20).entries)
+
+
 def test_bookmarks_win_over_printed_contents(stand, tmp_path):
     path = build(tmp_path / "b.pdf", [text_page("Title"), contents(), text_page("One", bookmark="One"),
                                       text_page("Two", bookmark="Two")])
@@ -656,6 +672,39 @@ def test_headings_give_the_chapters_by_their_look_and_leave_the_running_heads_ou
         (f"Chapter {n} Topic {n}", p) for n, p in enumerate((5, 22, 39, 56, 73, 90), start=1)]
     assert [e.page for e in got.entries if e.level == 2] == [8, 25, 42, 59, 76, 93]
     assert not any(e.title.startswith("The Book") for e in got.entries)
+
+
+def test_a_number_glued_to_its_title_takes_the_title_s_look():
+    from stages.structure.sources import headings
+
+    cand = [b for n in range(1, 6) for b in (
+        {"page": 10 * n, "type": "title", "text": f"0{n}", "size": 17, "bold": False, "words": 1},
+        {"page": 10 * n, "type": "title", "text": f"Topic {n}", "size": 25, "bold": True, "words": 2})]
+    assert {(b["size"], b["bold"]) for b in headings._glued(cand)} == {(25, True)}
+
+
+def test_a_preface_and_an_index_set_like_the_chapters_stand_beside_them_and_sections_below():
+    from stages.structure.sources import headings
+
+    lines = {p: [text_layer.Line(f"{p} plain body text of the page goes on", 50, 100, 10, False)] for p in range(1, 51)}
+    lines[2].insert(0, text_layer.Line("Preface", 50, 60, 18, False))
+    lines[50].insert(0, text_layer.Line("Index", 50, 60, 18, False))
+    for n in range(1, 6):
+        lines[4 + 7 * n].insert(0, text_layer.Line(f"{n} Chapter title {n}", 50, 60, 18, False))
+        lines[6 + 7 * n].insert(0, text_layer.Line(f"A section heading {n}", 50, 60, 14, False))
+    got = {e.title: e.level for e in headings.read_lines(lines, 50).entries}
+    assert got["Preface"] == got["Index"] == got["1 Chapter title 1"] == 1
+    assert got["A section heading 1"] == 2
+
+
+def test_sections_numbered_anew_in_each_article_run_no_chapter_number():
+    from stages.structure.sources import headings
+
+    def group(numbers):
+        return [{"page": 10 * i, "text": f"{n} Section"} for i, n in enumerate(numbers, start=1)]
+
+    assert headings.running_number(group([1, 2, 3, 4, 5, 6, 7, 8]))
+    assert not headings.running_number(group([1, 2, 3, 1, 2, 3, 4, 1, 2, 1, 2, 3]))
 
 
 def test_a_title_stays_a_heading_when_its_running_heads_repeat_its_name():

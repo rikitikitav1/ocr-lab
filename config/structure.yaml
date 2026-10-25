@@ -38,3 +38,5 @@ scan_layer:
     node_spread: 0.4    # spread over at least this share of the book
     numbered_share: 0.6    # a group runs a number when this share of its titles carry one
     rising_share: 0.7      # and this share of the steps between them rise
+    restarts: 3            # a count falling back to 1 this often is sections under unnumbered titles
+    matter_share: 0.7      # a group set like the chapters with this share outside them is front or back matter
