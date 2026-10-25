@@ -220,8 +220,13 @@ def test_recognised_pages_take_one_engine_s_text_and_measure_the_two_engines_agr
     reads = {"docling": read((1, "the quick brown fox"), (2, "noise")), "mineru": read((1, "the quick brown fox"),
                                                                                        (2, "a page of text"))}
     blocks, found, agreement = passes.recognised(reads, "mineru")
-    assert blocks is reads["mineru"].blocks and found == {"pages_recognised": 2, "pages_picture": 0}
+    assert blocks is reads["mineru"].blocks and found == {"pages_recognised": 2, "pages_picture": 0,
+                                                           "pages_empty_mineru": 0, "pages_empty_docling": 0}
     assert agreement == {1: 1.0, 2: 0.0}
+    # an engine with nothing on a page the other read is counted as empty there, the agreement still 0
+    reads["docling"] = read((1, "the quick brown fox"), (2, ""))
+    _, found, agreement = passes.recognised(reads, "mineru")
+    assert found["pages_empty_docling"] == 1 and found["pages_empty_mineru"] == 0 and agreement[2] == 0.0
 
 
 def test_a_recognised_page_with_too_few_words_is_a_picture_with_no_agreement():
@@ -233,10 +238,10 @@ def test_a_recognised_page_with_too_few_words_is_a_picture_with_no_agreement():
 
     reads = {"docling": read((1, "the quick brown fox")), "mineru": read((1, "the quick brown fox"), (2, "Plate IV"))}
     _, found, agreement = passes.recognised(reads, "mineru", min_words=3)
-    assert found == {"pages_recognised": 1, "pages_picture": 1} and agreement == {1: 1.0}
+    assert (found["pages_recognised"], found["pages_picture"]) == (1, 1) and agreement == {1: 1.0}
     reads["docling"] = read((1, "the quick brown fox"), (2, "a page the other engine read"))
     _, found, agreement = passes.recognised(reads, "mineru", min_words=3)
-    assert found == {"pages_recognised": 2, "pages_picture": 0} and agreement[2] == 0.0
+    assert (found["pages_recognised"], found["pages_picture"]) == (2, 0) and agreement[2] == 0.0
 
 
 def test_a_heading_deeper_than_the_writer_allows_is_demoted_and_counted_never_raised():

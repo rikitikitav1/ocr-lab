@@ -428,6 +428,8 @@ def recognised(reads: dict, prefer: str, steps: list | None = None, min_words: i
     pages = {e: referee.by_page(r.blocks) for e, r in reads.items()}
     other = next(e for e in reads if e != prefer)
     agreement, pictures = {}, 0
+    # a page one engine read nothing on is its failure there, not a disagreement, and is counted apart
+    empty = {f"pages_empty_{e}": 0 for e in (prefer, other)}
     for page in pages[prefer]:
         words = {e: Counter(referee.WORD.findall(" ".join(referee.block_text(b) for b in pages[e].get(page, []))
                                                  .lower())) for e in (prefer, other)}
@@ -435,10 +437,12 @@ def recognised(reads: dict, prefer: str, steps: list | None = None, min_words: i
         if max(sum(w.values()) for w in words.values()) < min_words:
             pictures += 1
             continue
+        for e, w in words.items():
+            empty[f"pages_empty_{e}"] += not w
         agreement[page] = round(referee.f1(words[prefer], words[other]), 3)
     blocks, _, cut = cut_boundaries(reads[prefer].blocks, {}, list(boundaries))
     if records is not None:
         records += cut
     if steps is not None:
         steps.append(("recognised", blocks))
-    return blocks, {"pages_recognised": len(agreement), "pages_picture": pictures}, agreement
+    return blocks, {"pages_recognised": len(agreement), "pages_picture": pictures, **empty}, agreement

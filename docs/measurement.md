@@ -105,6 +105,9 @@ engine's words on that page.
   plate, a full-page picture). They get no agreement value, since a caption against nothing is no
   measure of recognition. One engine failing alone stays an agreement of 0 and stays visible. The book's
   figure is the sum of each piece's `pages_picture` pass count.
+- `empty_engine_pages` (by engine): recognised pages where that engine read no word while the other read at least
+  `layer_min_words`. Their agreement is 0 too; the count tells an engine's failure on a page from the two disagreeing.
+  The book's figure is the sum of each piece's `pages_empty_<engine>` pass counts.
 
 - `layer_spacing` (per file): the text layer's letter gaps (90th percentile of adjacent letters inside a word) and
   word gaps (10th percentile of spaces between letters), in em on advance boxes over 25 pages of the file's first
