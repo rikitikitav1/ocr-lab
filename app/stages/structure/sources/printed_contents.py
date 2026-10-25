@@ -4,9 +4,9 @@ from collections import Counter
 
 import numerals
 import text_layer
+from elements import running_heads
 from orm.catalogue import BookFile
 
-from stages import running_heads
 from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, book_lines, conf, pages_of, windows
 from stages.structure.sources.numbering import title_depth
 

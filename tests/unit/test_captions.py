@@ -1,4 +1,4 @@
-from stages import captions
+from elements import captions
 from text_layer import Line
 
 

@@ -6,10 +6,11 @@ from collections import Counter
 import artifacts
 import numerals
 import settings
+from elements import running_heads
 from job_signals import Deferred
 from orm.catalogue import Book
 
-from stages import intake, running_heads
+from stages import intake
 from stages.structure import pages as placing
 from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, conf, pages_of, windows
 from stages.structure.sources.numbering import title_depth

@@ -11,8 +11,9 @@ import job_queue
 import pdf
 import settings
 import text_layer
-from assembly import code_layer, passes
+from assembly import passes
 from document.model import Table
+from elements import geometry, tables
 from engines import converter_tools, reading
 from job_signals import Final
 from knobs import registry
@@ -112,8 +113,8 @@ def _marks(blocks: list, cut: Path) -> dict:
     for b in blocks:
         if isinstance(b, Table) and b.where is not None:
             page = pdf.page_glyphs(cut, b.where.page - 1)
-            layer += sum(passes.is_mark(g[4]) for g in page if code_layer.inside(g, b.where.box))
-            out += sum(passes.is_mark(ch) for row in b.rows for c in row for ch in c.text)
+            layer += sum(tables.is_mark(g[4]) for g in page if geometry.inside(g, b.where.box))
+            out += sum(tables.is_mark(ch) for row in b.rows for c in row for ch in c.text)
     return {"cells_marks_layer": layer, "cells_marks_out": out}
 
 

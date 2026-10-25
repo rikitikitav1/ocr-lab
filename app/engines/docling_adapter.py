@@ -10,7 +10,6 @@ from document.model import (
     Cell,
     Code,
     Figure,
-    Footnote,
     Formula,
     Heading,
     ListBlock,
@@ -20,12 +19,12 @@ from document.model import (
     Table,
     Where,
 )
+from elements import footnotes
 
 PROSE = {"text", "paragraph", "reference", "checkbox_selected", "checkbox_unselected", "handwritten_text"}
 HEADINGS = {"section_header", "title"}
 FURNITURE = {"page_header", "page_footer"}
 LISTS = {"list", "ordered_list"}
-FOOTNOTE_MARK = re.compile(r"^\s*(\d{1,3}|[*†‡§¶]{1,3})\s+(.+)$", re.S)
 MARKER_NUMBER = re.compile(r"(\d+)")
 
 
@@ -45,7 +44,7 @@ class _Walk:
         self.doc, self.file_ord, self.book_page, self.keep_image = doc, file_ord, book_page, keep_image
         self.out = Read()
         self.page: int | None = None
-        self.unmarked = 0
+        self.notes = footnotes.Notes()
 
     # Docling's boxes are points from the bottom left; the model keeps shares of the page from the top left
     def where(self, item: dict) -> Where | None:
@@ -143,7 +142,7 @@ class _Walk:
         elif label == "formula":
             block = Formula(latex=text or item.get("orig", ""))
         elif label == "footnote":
-            block = self.footnote(text)
+            block = self.notes.read(text)
         elif label == "caption":
             block = Caption(text=text)
         else:
@@ -151,13 +150,6 @@ class _Walk:
                 self.out.unknown[label] += 1
             block = Paragraph(text=text)
         self.put(block, item)
-
-    def footnote(self, text: str) -> Footnote:
-        if m := FOOTNOTE_MARK.match(text):
-            return Footnote(mark=m.group(1), text=m.group(2).strip())
-        # a note printed without a mark gets one that cannot clash with the book's own numbers
-        self.unmarked += 1
-        return Footnote(mark=f"note{self.unmarked}", text=text.strip())
 
     def captions(self, item: dict) -> None:
         for ref in item.get("captions", []):
@@ -170,7 +162,7 @@ class _Walk:
         self.captions(item)
         for ref in item.get("footnotes", []):
             note = self.item(ref["$ref"])
-            self.put(self.footnote(note.get("text", "")), note)
+            self.put(self.notes.read(note.get("text", "")), note)
 
     def picture(self, item: dict) -> None:
         self.at(item)

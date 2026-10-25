@@ -32,7 +32,7 @@ layer pages: there is no layer to compare with.
 
 Running heads and page numbers are not text. Before any comparison, the words of the book's own
 furniture are taken off the layer side, read from the layer alone (`app/stages/assemble.py`,
-`app/stages/running_heads.py`):
+`app/elements/running_heads.py`):
 
 - a **running head** is a top or bottom line of a page whose text, with page numbers at its ends
   stripped, is a top or bottom line on 3 or more pages of the book. A top line on the first page where

@@ -3,9 +3,9 @@ import re
 from collections import Counter
 
 import numerals
+from elements import running_heads
 from rapidfuzz import fuzz
 
-from stages import running_heads
 from stages.structure.sources import Entry
 
 MIN_KEY = 8

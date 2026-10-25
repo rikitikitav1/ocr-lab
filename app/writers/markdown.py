@@ -19,6 +19,7 @@ from document.model import (
     Piece,
     Table,
 )
+from elements import figures
 
 MAX_LEVEL = 6
 # a line of text starting like Markdown syntax would turn into a heading, a list or a quote
@@ -91,14 +92,9 @@ def _list(block: ListBlock, indent: str = "") -> str:
     return "\n".join(lines)
 
 
-# a figure is linked only when its image is a file in the bundle
-def image_kept(image: str) -> bool:
-    return re.fullmatch(r"[\w./-]+\.(png|jpe?g|gif|svg|webp)", image) is not None
-
-
 # a figure whose image is not kept as a file yet is marked, since every image link in the bundle must resolve
 def _figure(block: Figure) -> str:
-    if image_kept(block.image):
+    if figures.image_kept(block.image):
         return f"![{block.alt}]({block.image})"
     page = f" page {block.where.page}" if block.where is not None else ""
     return f"<!-- figure{page}: image not kept yet -->"

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from stages import running_heads
+from elements import running_heads
 
 
 def _lines(*texts):

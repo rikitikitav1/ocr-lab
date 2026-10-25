@@ -69,11 +69,6 @@ def test_a_one_page_chapter_keeps_its_text_when_its_neighbour_s_title_reads_alik
     assert [getattr(b, "text", None) for b in got] == [None, "Раздел II", "второй"]
 
 
-def test_a_glyph_read_as_several_characters_is_looked_at_one_by_one():
-    assert passes.is_mark("✓") and passes.is_mark("x≤")
-    assert not passes.is_mark("fi") and not passes.is_mark("")
-
-
 def test_a_title_on_a_shared_first_page_is_counted_once():
     got = Piece(ord=2, title="Two", level=1, first_page=5, last_page=6,
                   blocks=[_page(5), Paragraph(text=LAYER), _page(6), Paragraph(text=LAYER)])
