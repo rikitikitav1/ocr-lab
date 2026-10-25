@@ -86,7 +86,7 @@ def test_text_enters_only_through_the_doors():
     assert not found, found
 
 
-GOLD_FREE = ("stages", "rules", "probes", "assembly")
+GOLD_FREE = ("stages", "rules", "probes", "assembly", "elements")
 GOLD_TOUCH = re.compile(r"^\s*(?:import|from)\s+evaluation\b|SHELF_DIR\s*/\s*[\"']gold", re.MULTILINE)
 
 

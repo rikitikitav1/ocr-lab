@@ -1,5 +1,4 @@
 # MinerU's docvortex.middle read into the stand's blocks page by page; running heads are counted, not kept
-import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -11,7 +10,6 @@ from document.model import (
     Cell,
     Code,
     Figure,
-    Footnote,
     Formula,
     Heading,
     ListBlock,
@@ -21,6 +19,7 @@ from document.model import (
     Table,
     Where,
 )
+from elements import footnotes
 
 FURNITURE = {"header", "footer", "page_number", "aside_text"}
 HEADINGS = {"doc_title", "paragraph_title", "title"}
@@ -28,7 +27,6 @@ PROSE = {"text", "ref_text"}
 FIGURES = {"image", "chart"}
 CAPTIONS = {"image_caption", "chart_caption", "table_caption"}
 NOTES = {"image_footnote", "chart_footnote", "table_footnote"}
-FOOTNOTE_MARK = re.compile(r"^\s*(\d{1,3}|[*†‡§¶]{1,3})\s+(.+)$", re.S)
 
 
 @dataclass
@@ -87,14 +85,7 @@ class _Walk:
     def __init__(self, file_ord: int, book_page: Callable[[int], int], keep_image: Callable[[dict, int], str]):
         self.file_ord, self.book_page, self.keep_image = file_ord, book_page, keep_image
         self.out = Read()
-        self.unmarked = 0
-
-    def footnote(self, text: str) -> Footnote:
-        if m := FOOTNOTE_MARK.match(text):
-            return Footnote(mark=m.group(1), text=m.group(2).strip())
-        # a note printed without a mark gets one that cannot clash with the book's own numbers
-        self.unmarked += 1
-        return Footnote(mark=f"note{self.unmarked}", text=text.strip())
+        self.notes = footnotes.Notes()
 
     def last_paragraph(self) -> Paragraph | None:
         for block in reversed(self.out.blocks):
@@ -131,7 +122,7 @@ class _Walk:
         elif kind in CAPTIONS:
             self.out.blocks.append(Caption(text=text))
         elif kind in NOTES:
-            self.out.blocks.append(self.footnote(text))
+            self.out.blocks.append(self.notes.read(text))
         else:
             self.out.unknown[f"{block['type']}>{kind}"] += 1
             self.out.blocks.append(Paragraph(text=text))
@@ -157,7 +148,7 @@ class _Walk:
             else:
                 self.out.blocks.append(Paragraph(text=text))
         elif kind == "page_footnote":
-            self.out.blocks.append(self.footnote(_spans(block.get("content"))))
+            self.out.blocks.append(self.notes.read(_spans(block.get("content"))))
         elif kind == "equation":
             self.out.blocks.append(Formula(latex=_spans(block.get("content"))))
         elif kind == "index":

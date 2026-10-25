@@ -199,13 +199,3 @@ def test_a_caption_is_found_in_the_block_holding_most_of_its_words_or_lost():
         "captions": 3, "captions_in_caption": 1, "captions_in_paragraph": 1, "captions_in_heading": 0,
         "captions_lost": 1}
 
-
-def test_a_listing_s_line_numbers_are_counted_and_a_lone_number_or_a_year_is_not():
-    from quality import piece as piece_quality
-
-    layer = ("1 void Update() {\n2   for (e : all) {\n3     e.tick();\n4   }\n"
-             "In 1998 the engine\nwas rewritten from scratch\n7 days later\n")
-    assert piece_quality.listing_numbers(layer) == {"1": 1, "2": 1, "3": 1, "4": 1}
-    wrapped = "10 SELECT name,\n   price FROM items\n20 WHERE price > 3\n30 ORDER BY name;\n40 LIMIT 5;\n"
-    assert piece_quality.listing_numbers(wrapped) == {"10": 1, "20": 1, "30": 1, "40": 1}
-    assert piece_quality.listing_numbers("Prose about 3 things.\nMore prose here\nAnd 1998 came.\n") == {}

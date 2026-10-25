@@ -1,4 +1,4 @@
-# repeated top and bottom lines of a book's pages are its running heads; read from the text layer alone
+# the running head element, learned from the book: lines repeated at a page's edge and bare folios
 import re
 from collections import Counter
 

@@ -7,11 +7,11 @@ from functools import cache
 import settings
 import wordfreq
 import yaml
-from assembly import code_layer
-from assembly.passes import same_title
 from assembly.referee import WORD, block_text
-from document.model import Caption, Figure, Heading, PageMarker, Paragraph, Piece
-from stages import running_heads
+from assembly.titles import same_title
+from document.model import Caption, Heading, PageMarker, Paragraph, Piece
+from elements import figures, running_heads
+from elements.code import listing_numbers
 from writers import markdown
 
 
@@ -22,30 +22,6 @@ def conf() -> dict:
 
 def words(text: str) -> Counter:
     return Counter(WORD.findall(text.lower()))
-
-
-# a listing's line numbers in a page of the layer, by the code pass's own test over the longest runs of rows it holds
-def listing_numbers(text: str) -> Counter:
-    lines = text.splitlines()
-    numbers = [code_layer.line_number(line) for line in lines]
-    out, start = Counter(), 0
-    while start < len(lines):
-        best, count, last = None, 0, None
-        for end in range(start, len(lines)):
-            if numbers[end] is not None:
-                if last is not None and numbers[end] < last:
-                    break
-                count, last = count + 1, numbers[end]
-            size = end - start + 1
-            if size >= code_layer.NUMBERED_MIN_LINES and count >= code_layer.NUMBERED_SHARE * size:
-                best = end + 1
-        found = code_layer.line_numbers(lines[start:best]) if best is not None else None
-        if found is None:
-            start += 1
-            continue
-        out.update(str(n) for n in found)
-        start = best
-    return out
 
 
 def _pages(piece: Piece) -> dict[int, list]:
@@ -127,11 +103,6 @@ def _structure(piece: Piece, subs: list[tuple[str, int]]) -> dict:
             "heading_sources": dict(Counter(b.level_source for b in piece.blocks if isinstance(b, Heading)))}
 
 
-def _figures(piece: Piece) -> dict:
-    figures = [b for b in piece.blocks if isinstance(b, Figure)]
-    return {"figures": len(figures), "figures_not_kept": sum(not markdown.image_kept(b.image) for b in figures)}
-
-
 CAPTION_FOUND = 0.6
 CAPTION_KINDS = {Caption: "caption", Paragraph: "paragraph", Heading: "heading"}
 
@@ -159,39 +130,6 @@ def _recognised(agreement: dict[int, float]) -> dict:
         return {"recognised_pages": 0, "agreement": None, "agreement_min": None}
     return {"recognised_pages": len(agreement), "agreement": round(sum(agreement.values()) / len(agreement), 3),
             "agreement_min": min(agreement.values())}
-
-
-# running heads and folios left as a paragraph or an unpinned heading (a node's title is often its head), or glued
-def _heads_in_text(piece: Piece, furniture: dict[str, list[str]]) -> dict:
-    lines = furniture.get("layer", [])
-    heads = {key for h in lines if (key := running_heads.edge_key(h))}
-    folios = {m[1] for h in lines if (m := running_heads.FOLIO.fullmatch(h))}
-    def left(text: str) -> bool:
-        folio = running_heads.FOLIO.fullmatch(text)
-        return running_heads.edge_key(text) in heads or bool(folio and folio[1] in folios)
-
-    phrases = {p for h in lines if len(p := tuple(_head_words(h))) >= GLUED_WORDS}
-    def glued(text: str) -> bool:
-        got = tuple(WORD.findall(text.lower()))
-        return any(len(got) > len(p) and (got[:len(p)] == p or got[-len(p):] == p) for p in phrases)
-
-    alone = sum((isinstance(b, Paragraph) or isinstance(b, Heading) and b.node is None) and left(b.text)
-                for b in piece.blocks)
-    return {"running_heads_in_text": alone,
-            "running_heads_glued": sum(isinstance(b, Paragraph) and glued(b.text) for b in piece.blocks)}
-
-
-GLUED_WORDS = 2
-
-
-# a running head's words without the folio at either end
-def _head_words(line: str) -> list[str]:
-    words = WORD.findall(line.lower())
-    while words and words[0].isdigit():
-        words = words[1:]
-    while words and words[-1].isdigit():
-        words = words[:-1]
-    return words
 
 
 # languages wordfreq cannot split without a segmenter; their share stays unknown rather than wrong
@@ -285,6 +223,6 @@ def check(piece: Piece, subs: list[tuple[str, int]], layer: dict[int, str],
     min_words = conf()["layer_min_words"]
     return {**_layer(piece, layer, furniture or {}, min_words, shared),
             **_shared(piece, layer, furniture or {}, min_words, shared), **_structure(piece, subs),
-            **_figures(piece), **_captions(piece, captions or {}), **_recognised(recognised or {}),
+            **figures.counts(piece), **_captions(piece, captions or {}), **_recognised(recognised or {}),
             **_layerless(piece, layer, min_words), **_repeated(piece), **_order(piece, layer, min_words),
-            **_heads_in_text(piece, furniture or {}), **_dictionary(piece, recognised or {}, languages or [])}
+            **running_heads.in_text(piece, furniture or {}), **_dictionary(piece, recognised or {}, languages or [])}

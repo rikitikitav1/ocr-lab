@@ -10,6 +10,11 @@ from orm.db import Session
 from sqlalchemy import select
 
 
+# a short identity of some bytes, as the gates and the artifact keys compare them
+def short_sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class Owner:
     run_id: int | None = None
@@ -52,7 +57,7 @@ class Inputs:
         return self.stamp or input_hash(**self.parts)
 
     def hashed(self) -> dict:
-        return {name: hashlib.sha256(canonical(value).encode()).hexdigest()[:16]
+        return {name: short_sha(canonical(value).encode())
                 for name, value in sorted(self.parts.items())}
 
 

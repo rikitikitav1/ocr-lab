@@ -48,8 +48,9 @@ def _drain():
 
 
 def test_a_run_assembles_every_chapter_and_writes_the_bundle(client, inbox, monkeypatch):
-    from orm.catalogue import Run
+    from orm.catalogue import Run, StructureVersion
     from orm.db import Session
+    from sqlalchemy import select
 
     pages = [text_page("One", TEXT, bookmark="One"), text_page("Two", TEXT, bookmark="Two")]
     book = client.post("/v1/books", json={"file_paths": [str(build(inbox / "run.pdf", pages))], "then": []}).json()
@@ -91,10 +92,15 @@ def test_a_run_assembles_every_chapter_and_writes_the_bundle(client, inbox, monk
     assert answer["numbers"]["pieces_done"] == 2 and answer["download"].endswith(f"/v1/runs/{run_id}/bundle")
     archive = tarfile.open(fileobj=io.BytesIO(client.get(f"/v1/books/{book['id']}/bundle").content))
     assert {"run.md", "report.json", "report.md"} <= set(archive.getnames())
-    client.patch(f"/v1/books/{book['id']}/knobs", json={"set": {"structure.reading_level": 1}})
-    deeper = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    # a run reads at the level kept with the structure, and the owner's knob wins over it
+    with Session.begin() as session:
+        session.scalars(select(StructureVersion).where(StructureVersion.book_id == book["id"],
+                                                       StructureVersion.current)).one().reading_level = 1
+    kept = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
+    client.patch(f"/v1/books/{book['id']}/knobs", json={"set": {"structure.reading_level": 0}})
+    owners = client.post(f"/v1/books/{book['id']}/runs", json={}).json()["run"]["id"]
     with Session() as session:
-        assert session.get(Run, deeper).reading_level == 1
+        assert (session.get(Run, kept).reading_level, session.get(Run, owners).reading_level) == (1, 0)
 
 
 def test_a_chapter_that_fails_for_good_sends_the_run_to_attention(client, inbox, monkeypatch):

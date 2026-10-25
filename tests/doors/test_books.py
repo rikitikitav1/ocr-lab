@@ -137,8 +137,9 @@ def test_toc_is_collected_alone_and_read_through_the_door(client, inbox):
     assert [(e["title"], e["first_page"], e["last_page"]) for e in got["entries"]] == [("One", 1, 1), ("Two", 2, 2)]
     assert got["chosen"] == "bookmarks"
     assert [e["parent_ord"] for e in got["entries"]] == [None, None] and got["depth"] == 1
+    assert got["reading_level"] == 0
     assert client.get(f"/v1/books/{book['id']}").json()["structure"] == {"version": got["version"], "base": "bookmarks",
-                                                                         "depth": 1, "nodes": 2}
+                                                                         "depth": 1, "reading_level": 0, "nodes": 2}
     by_source = client.get(f"/v1/books/{book['id']}/structure", params={"source": "bookmarks"}).json()
     assert by_source["chosen"] == "bookmarks"
     assert client.get(f"/v1/books/{book['id']}/structure", params={"source": "nope"}).status_code == 404

@@ -1,8 +1,10 @@
 from types import SimpleNamespace
 
+import pdf
 from assembly import passes
 from document.model import Code, Figure, Heading, PageMarker, Paragraph, Where
-from stages import assemble, intake, piece_assembly, running_heads
+from elements import figures, running_heads
+from stages import assemble, intake, piece_assembly
 
 from tests.fixtures import build, text_page
 from tests.real_db import needs_db
@@ -150,7 +152,7 @@ def test_every_block_belongs_to_the_node_last_opened_before_it_and_a_page_set_no
 
 
 def test_a_figure_with_a_box_gets_its_picture_cut_from_the_page_and_named_for_the_bundle(monkeypatch):
-    monkeypatch.setattr(assemble.pdf, "page_crop", lambda path, index, box: f"png {index} {box}".encode())
+    monkeypatch.setattr(pdf, "page_crop", lambda path, index, box: f"png {index} {box}".encode())
     kept: dict = {}
 
     def keep(png):
@@ -158,7 +160,7 @@ def test_a_figure_with_a_box_gets_its_picture_cut_from_the_page_and_named_for_th
         return f"images/07-{len(kept):03d}.png"
 
     placed = Figure(image="picture 1", where=Where(page=3, box=(0.1, 0.2, 0.5, 0.6), engine="mineru"))
-    got = assemble._kept_figures("book.pdf", [placed, Figure(image="no box")], keep)
+    got = figures.kept("book.pdf", [placed, Figure(image="no box")], keep)
     assert [f.image for f in got] == ["images/07-001.png", "no box"]
     assert kept == {"images/07-001.png": b"png 2 (0.1, 0.2, 0.5, 0.6)"}
 
@@ -219,8 +221,13 @@ def test_recognised_pages_take_one_engine_s_text_and_measure_the_two_engines_agr
     reads = {"docling": read((1, "the quick brown fox"), (2, "noise")), "mineru": read((1, "the quick brown fox"),
                                                                                        (2, "a page of text"))}
     blocks, found, agreement = passes.recognised(reads, "mineru")
-    assert blocks is reads["mineru"].blocks and found == {"pages_recognised": 2, "pages_picture": 0}
+    assert blocks is reads["mineru"].blocks and found == {"pages_recognised": 2, "pages_picture": 0,
+                                                           "pages_empty_mineru": 0, "pages_empty_docling": 0}
     assert agreement == {1: 1.0, 2: 0.0}
+    # an engine with nothing on a page the other read is counted as empty there, the agreement still 0
+    reads["docling"] = read((1, "the quick brown fox"), (2, ""))
+    _, found, agreement = passes.recognised(reads, "mineru")
+    assert found["pages_empty_docling"] == 1 and found["pages_empty_mineru"] == 0 and agreement[2] == 0.0
 
 
 def test_a_recognised_page_with_too_few_words_is_a_picture_with_no_agreement():
@@ -232,10 +239,10 @@ def test_a_recognised_page_with_too_few_words_is_a_picture_with_no_agreement():
 
     reads = {"docling": read((1, "the quick brown fox")), "mineru": read((1, "the quick brown fox"), (2, "Plate IV"))}
     _, found, agreement = passes.recognised(reads, "mineru", min_words=3)
-    assert found == {"pages_recognised": 1, "pages_picture": 1} and agreement == {1: 1.0}
+    assert (found["pages_recognised"], found["pages_picture"]) == (1, 1) and agreement == {1: 1.0}
     reads["docling"] = read((1, "the quick brown fox"), (2, "a page the other engine read"))
     _, found, agreement = passes.recognised(reads, "mineru", min_words=3)
-    assert found == {"pages_recognised": 2, "pages_picture": 0} and agreement[2] == 0.0
+    assert (found["pages_recognised"], found["pages_picture"]) == (2, 0) and agreement[2] == 0.0
 
 
 def test_a_heading_deeper_than_the_writer_allows_is_demoted_and_counted_never_raised():
@@ -285,7 +292,7 @@ def test_a_chapter_over_two_files_is_assembled_without_engines(stand, tmp_path, 
     piece = got.steps[-1]
     assert (piece["file"], [name for name, _ in piece["steps"]]) == (
         "piece", ["shared_pages", "without_title", "chapter_contents", "piece_levels", "opened", "series_captions",
-                  "slots_dropped", "owned"])
+                  "slots_dropped", "figures_captioned", "owned"])
     assert piece["steps"][-1][1] == got.piece.blocks
     assert set(got.pages) == {2, 3} and all(set(p["scores"]) == {"docling", "mineru"} for p in got.pages.values())
     assert got.counts.get("pages_docling", 0) + got.counts.get("pages_mineru", 0) == 2
@@ -370,7 +377,7 @@ def test_a_tail_counts_as_cut_from_the_own_re_read_only_where_that_re_read_holds
     monkeypatch.setattr(assemble.reading, "adapt",
                         lambda engine, kept, **kw: SimpleNamespace(blocks=list(marked[kept]), furniture=[]))
     monkeypatch.setattr(assemble.passes, "recognised", lambda reads, *rest: ([], {}, {}))
-    monkeypatch.setattr(assemble, "_kept_figures", lambda path, blocks, keep: blocks)
+    monkeypatch.setattr(figures, "kept", lambda path, blocks, keep: blocks)
     got = assemble.Assembled(piece=None, markdown="")
     f = SimpleNamespace(ord=0, first_page=1, pages=5, file_path="b.pdf")
     assemble._range_blocks(1, f, 4, 5, "scan", ["en"], got, got.counts, None, {"scan_engine": "mineru"},

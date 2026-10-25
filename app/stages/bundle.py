@@ -214,6 +214,10 @@ def _listed(value) -> str:
     return "none" if value in (None, "") else str(value)
 
 
+def _empty(by_engine: dict | None) -> str:
+    return ", ".join(f"{e} {n}" for e, n in (by_engine or {}).items()) or "n/a"
+
+
 def _reading_cost(report: dict) -> str:
     cost = report.get("seconds") or {}
     if not cost.get("per_page"):
@@ -282,6 +286,7 @@ def _summary(report: dict) -> str:
              f"| recognised pages, engines' word agreement, words a dictionary knows | {n['recognised_pages']}, "
              f"{'n/a' if n['agreement'] is None else n['agreement']}, {_percent(n.get('dictionary_share'))} |",
              f"| picture pages on recognised ranges | {n.get('picture_pages', 0)} |",
+             f"| recognised pages one engine left empty | {_empty(n.get('empty_engine_pages'))} |",
              f"| words from pages the layer check does not see | {n.get('layerless_words', 0)} |",
              f"| seconds per page: reading {_reading_cost(report)}, assembly "
              f"{'n/a' if assembly is None else assembly} |",

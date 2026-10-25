@@ -18,9 +18,8 @@ docker compose up -d
 curl -s localhost:8100/v1/stand | jq
 ```
 
-Expect: postgres, dbmate, api, worker healthy (`docker compose --profile cpu-workers up -d --scale worker-cpu=2`
-adds workers that take only the cpu lane); both converters report a build stamp; no image pull
-in the compose output.
+Expect: postgres, dbmate, api, worker and two cpu-lane workers healthy; both converters report a build stamp; no
+image pull in the compose output.
 
 ## 2. Catalogue three books (User Story 0, SC-010)
 

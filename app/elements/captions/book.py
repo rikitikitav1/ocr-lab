@@ -1,22 +1,40 @@
-# a book's captions as its own numbered series ("Figure 2-1", "Рис. 3.2"), learned from the layer's lines alone
+# the caption element, learned from the book: the numbered series its lines set apart, a picture's caption
 import re
 import statistics
 from collections import defaultdict
 from collections.abc import Callable
 
 LABEL = re.compile(r"^([^\W\d_]{2,}\.?)\s*(\d+(?:[.\-–:]\d+)*)[.:]?(\s|$)")
+
+
 # a contents or list line ends in its page number
 PAGE_TAIL = re.compile(r"[\s.·…_]{2,}\d+\s*$|\s\d+\s*$")
+
+
 MIN_LINES = 5
+
+
 MIN_WORDS = 3
+
+
 RISING = 0.8
+
+
 # a series is the book's captions when half its lines or more stand by a picture or a drawing
 WITH_NEIGHBOUR = 0.5
+
+
 # a caption stands this close above or below a picture or a drawn diagram, in points, and overlaps it across
 BY_DRAWING = 30.0
+
+
 # a caption runs on over rows of its own size, no further apart than this, at most this many rows
 ROW_GAP = 1.6
+
+
 MAX_ROWS = 3
+
+
 # a page holding this many series lines and no neighbour by any is a list of figures, not captions
 LIST_LINES = 3
 
@@ -98,3 +116,36 @@ def learn(lines: dict[int, list], titles: frozenset[str] = frozenset(),
                 continue
             out[page] += [" ".join(r.text for r in rows(ln, lines[page])) for ln, _ in got]
     return dict(out)
+
+
+MAX_WORDS = 60
+
+
+# the caption's reach from its picture and the rows it runs on over are the book's caption series' own
+def _caption(box: tuple, lines: list, body: float) -> str | None:
+    x0, y0, x1, y1 = box
+    beside = [x for x in lines if x0 - 20 <= x.x <= x1]
+    below = sorted((x for x in beside if y1 - 2 <= x.top <= y1 + BY_DRAWING), key=lambda x: x.top)
+    above = sorted((x for x in beside if y0 - BY_DRAWING <= x.top + x.size <= y0 + 2), key=lambda x: x.top)
+    if below:
+        found = _apart(rows(below[0], lines), body)
+        if found:
+            return found
+    return _apart(above[-1:], body) if above else None
+
+
+# a caption's rows are set apart from the body the way the caption series' own lines are
+def _apart(run: list, body: float) -> str | None:
+    text = " ".join(x.text for x in run)
+    return text if len(text.split()) <= MAX_WORDS and apart(run[0], body) else None
+
+
+# captions by book page, from the pictures on each page and the layer's lines there
+def by_page(pictures: dict[int, list[tuple]], lines: dict[int, list]) -> dict[int, list[str]]:
+    body = body_size(lines)
+    out = {}
+    for page, boxes in pictures.items():
+        found = [c for c in (_caption(box, lines.get(page, []), body) for box in boxes) if c]
+        if found:
+            out[page] = found
+    return out

@@ -84,6 +84,8 @@ def numbers(pieces: list[dict], doubled: list[dict]) -> dict:
             **{k: total(k) for k in ("captions", "captions_in_caption", "captions_in_paragraph", "captions_in_heading",
                                      "captions_lost")},
             "picture_pages": sum((k.get("passes") or {}).get("pages_picture", 0) for k in checks),
+            "empty_engine_pages": {e: sum((k.get("passes") or {}).get(f"pages_empty_{e}", 0) for k in checks)
+                                   for e in settings.ENGINES},
             "recognised_pages": recognised, "agreement": round(agreed / recognised, 3) if recognised else None,
             "dictionary_share": _share(round(sum((k.get("dictionary_share") or 0) * (k.get("dictionary_words") or 0)
                                                  for k in checks if k.get("dictionary_share") is not None)),

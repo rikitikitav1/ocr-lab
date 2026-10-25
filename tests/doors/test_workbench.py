@@ -89,6 +89,12 @@ def test_reassembly_with_a_knob_reports_each_chapter_before_and_after_and_leaves
     assert result["pieces"][0]["against_kept"]["lines"] == []
     against = client.get(f"/v1/jobs/{same.json()['job_id']}").json()["result"]
     assert against["pieces_changed"] == [] and against["kept_text_changed"] == [] and against["pieces"]
+    # a fresh reassembly makes the book-level lists anew and writes the same text as one reading them back
+    fresh = client.post(f"/v1/runs/{run_id}/reassemble", json={"knobs": {}, "fresh": True})
+    _drain()
+    anew = client.get(f"/v1/jobs/{fresh.json()['job_id']}").json()["result"]
+    assert {"running_heads.json", "captions.json"} <= set(anew["book_lists"]) and against["book_lists"] == {}
+    assert [c["text_sha"] for c in anew["pieces"]] == [c["text_sha"] for c in against["pieces"]]
     scratch = settings.DATA_DIR / "scratch" / "reassemble" / f"job-{done['id']}.json"
     assert json.loads(scratch.read_text())["pieces_changed"] == [2]
     level = client.post(f"/v1/runs/{run_id}/reassemble", json={"knobs": {}, "reading_level": 0, "reread": True})
@@ -122,3 +128,35 @@ def test_a_worker_reload_is_asked_only_when_the_worker_runs_older_code(client):
         session.commit()
     assert client.post("/v1/stand/worker/reload").json()["requested"] is True
     assert code_version.reload_requested("w")
+
+
+def _drain_deferred(job_id: int) -> None:
+    # a gate defers itself while its reassemblies run; in a test its wait is cut short and the queue drained again
+    for _ in range(5):
+        _drain()
+        with Session.begin() as session:
+            session.execute(text("UPDATE jobs SET apply_since = now() WHERE id = :id AND status = 'new'"),
+                            {"id": job_id})
+    _drain()
+
+
+def test_a_reassembly_gate_keeps_its_record_and_finds_nothing_moved_against_an_earlier_gate(client, inbox,
+                                                                                           monkeypatch):
+    book = _book(client, inbox, "gate.pdf")
+    intake.probe(book)
+    collect.collect(book)
+    engines(monkeypatch)
+    run_id = client.post(f"/v1/books/{book}/runs", json={}).json()["run"]["id"]
+    _drain()
+    assert client.post("/v1/gates/reassembly", json={"run_ids": [run_id + 10_000]}).status_code == 404
+    first = client.post("/v1/gates/reassembly", json={"run_ids": [run_id]}).json()["job_id"]
+    _drain_deferred(first)
+    done = client.get(f"/v1/jobs/{first}").json()
+    assert done["status"] == "done" and done["result"]["books"] == 1 and "moved" not in done["result"]
+    record = json.loads((settings.DATA_DIR / done["result"]["record"]).read_text())
+    assert list(record["books"]) == [str(book)] and record["books"][str(book)]["pieces"]
+    assert client.post("/v1/gates/reassembly", json={"run_ids": [run_id], "base_job_id": run_id}).status_code == 400
+    second = client.post("/v1/gates/reassembly", json={"run_ids": [run_id], "base_job_id": first}).json()["job_id"]
+    _drain_deferred(second)
+    again = client.get(f"/v1/jobs/{second}").json()["result"]
+    assert again["moved"] == 0 and again["report"][-1] == "books moved: 0 of 1"

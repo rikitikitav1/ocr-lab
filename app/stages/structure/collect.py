@@ -38,7 +38,7 @@ STAGE = "structure"
 def code_hash() -> str:
     # the structure reads the layer, running heads and numerals, so the code that reads them is its code
     own = [*sorted((settings.APP_DIR / "stages" / "structure").rglob("*.py")), settings.APP_DIR / "model_steps.py",
-           settings.APP_DIR / "stages" / "running_heads.py", settings.APP_DIR / "numerals.py",
+           settings.APP_DIR / "elements" / "running_heads" / "book.py", settings.APP_DIR / "numerals.py",
            settings.APP_DIR / "structure" / "tree.py", settings.APP_DIR / "alphabets.py"]
     digest = code_version.files_hash(own, ("structure.yaml",))
     digest.update(json.dumps(model_steps.steps()["contents_reader"], sort_keys=True).encode())
@@ -305,6 +305,7 @@ def write_version(book_id: int, made_from: artifacts.Inputs, entries: list[dict]
         number = version.version
         levels = [row["level"] for row in entries]
         version.depth = tree.depth(levels)
+        version.reading_level = tree.reading_level(levels)
         for row in with_parents(entries):
             session.add(StructureNode(structure_version_id=version.id, **row))
         session.flush()

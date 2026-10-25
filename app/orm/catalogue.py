@@ -68,6 +68,7 @@ class StructureVersion(Base):
     current: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     depth: Mapped[int] = mapped_column(Integer, default=0)
+    reading_level: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class LayoutVersion(Base):

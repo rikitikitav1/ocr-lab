@@ -3,6 +3,7 @@ import json
 import re
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -13,8 +14,10 @@ import numerals
 import pdf
 import settings
 import text_layer
-from assembly import caption_series, passes, referee
-from document.model import Code, Figure, Heading, Node, PageMarker, Piece, Table
+from assembly import passes, referee
+from document.model import Code, Heading, Node, PageMarker, Piece, Table
+from elements import captions as book_captions
+from elements import contents, figures, footnotes, running_heads
 from engines import converter_tools, reading
 from job_signals import Final
 from orm.catalogue import Artifact, Book, BookFile, LayoutVersion, StructureNode
@@ -22,8 +25,7 @@ from orm.db import Session
 from quality import piece as piece_quality
 from writers import markdown
 
-from stages import captions as layer_captions
-from stages import intake, running_heads
+from stages import intake
 from stages.layout import collect as layout_collect
 from stages.layout import page as layout_page
 from stages.metadata import resolve
@@ -314,12 +316,35 @@ def _layout(book_id: int, versions: Pinned) -> tuple[LayoutVersion | None, dict]
     return kept, kept.layout if kept is not None and "skipped" not in kept.layout else {}
 
 
+# the modules each book-level list is made by: a list keyed by a file its make no longer reads is served stale
+LIST_CODE = {"running_heads.json": (running_heads.book, layout_page, sources),
+             "slot_lines.json": (layout_page, sources),
+             "note_lines.json": (footnotes.book, layout_page, sources), "captions.json": (book_captions.book, sources),
+             "series_captions.json": (book_captions.book, sources)}
+
+
+# set by a gate: the book-level lists are made anew, not read back, and each one's hash is kept here by name
+class Fresh:
+    def __init__(self):
+        self.made: dict[tuple[str, str], str] = {}
+        self.hashes: dict[str, str] = {}
+
+
+FRESH: ContextVar[Fresh | None] = ContextVar("fresh_lists", default=None)
+
+
 # a book-level list by page kept under its inputs: made once, read back with its page keys as numbers again
-def _by_page(book_id: int, name: str, parts: dict, code: list[Path], make: Callable,
-             row: Callable = lambda v: v) -> dict:
+def _by_page(book_id: int, name: str, parts: dict, make: Callable, row: Callable = lambda v: v) -> dict:
     files = intake.files_of(book_id)
+    code = [Path(m.__file__) for m in LIST_CODE[name]]
     made_from = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], **parts,
                                   "code": code_version.files_hash(code).hexdigest()[:16]})
+    if (fresh := FRESH.get()) is not None:
+        if (name, made_from.key) not in fresh.made:
+            made = make(files)
+            fresh.made[(name, made_from.key)] = json.dumps(made, ensure_ascii=False)
+            fresh.hashes[name] = artifacts.short_sha(json.dumps(made, ensure_ascii=False, sort_keys=True).encode())
+        return {int(k): row(v) for k, v in json.loads(fresh.made[(name, made_from.key)]).items()}
     owner = artifacts.Owner(book_id=book_id)
     done = artifacts.find_done(owner, STAGE, name, made_from.key)
     if done is not None:
@@ -343,8 +368,7 @@ def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
                 on_page.append(line.text)
         return heads
 
-    return _by_page(book_id, "running_heads.json", {"layout": kept.id if kept is not None else None},
-                    [Path(running_heads.__file__), Path(layout_page.__file__)], make)
+    return _by_page(book_id, "running_heads.json", {"layout": kept.id if kept is not None else None}, make)
 
 
 # the slot lines the page layout claims by reason (folio, repeat, side), by book page, for the slot reader
@@ -364,11 +388,11 @@ def slot_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[tuple
             out.setdefault(page, []).append((line.text, reason, round(line.top / heights[page], 4)))
         return out
 
-    return _by_page(book_id, "slot_lines.json", {"layout": kept.id, "with": "top"}, [Path(layout_page.__file__)],
-                    make, lambda v: [tuple(x) for x in v])
+    return _by_page(book_id, "slot_lines.json", {"layout": kept.id, "with": "top"}, make,
+                    lambda v: [tuple(x) for x in v])
 
 
-# the lines the page layout reads as notes, per book page, joined and spaced for a word-bounded search
+# the lines the page layout reads as notes, per book page, kept for the note pass
 def note_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, str]:
     kept, layout = _layout(book_id, versions)
     if not layout.get("notes"):
@@ -377,10 +401,9 @@ def note_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, str]:
     def make(files) -> dict:
         lines = sources.book_lines(files)
         notes = layout_page.claimed(lines, layout) - layout_page.claimed(lines, {**layout, "notes": None})
-        return {p: " " + " ".join(" ".join(x.text for x in ls if id(x) in notes).split()).casefold() + " "
-                for p, ls in lines.items() if any(id(x) in notes for x in ls)}
+        return footnotes.note_text(lines, notes)
 
-    return _by_page(book_id, "note_lines.json", {"layout": kept.id}, [Path(layout_page.__file__)], make)
+    return _by_page(book_id, "note_lines.json", {"layout": kept.id}, make)
 
 
 # the book's picture captions by page, read from the PDF's pictures and the layer's lines beside them
@@ -391,11 +414,10 @@ def captions(book_id: int) -> dict[int, list[str]]:
         for f in files:
             pictures = {f.first_page + i: b for i, b in pdf.page_pictures(settings.DATA_DIR / f.file_path).items() if b}
             if pictures:
-                found |= layer_captions.by_page(pictures, sources.book_lines([f], set(pictures)))
+                found |= book_captions.by_page(pictures, sources.book_lines([f], set(pictures)))
         return found
 
-    return _by_page(book_id, "captions.json", {},
-                    [Path(layer_captions.__file__), Path(caption_series.__file__), Path(sources.__file__)], make)
+    return _by_page(book_id, "captions.json", {}, make)
 
 
 # the book's captions in its own numbered series, by book page, read from the layer's lines alone
@@ -415,25 +437,13 @@ def series_captions(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[
             index = page - f.first_page
             return text_layer.page_drawings(settings.DATA_DIR / f.file_path, [index]).get(index, [])
 
-        return caption_series.learn(sources.book_lines(files), titles, cache(drawings))
+        return book_captions.learn(sources.book_lines(files), titles, cache(drawings))
 
-    return _by_page(book_id, "series_captions.json", {"structure": version},
-                    [Path(caption_series.__file__), Path(sources.__file__)], make)
+    return _by_page(book_id, "series_captions.json", {"structure": version}, make)
 
 
 def builds() -> dict:
     return {engine: _build(engine) for engine in ENGINES}
-
-
-# a figure's picture is cut from the page by its box, so it does not depend on what an engine exports
-def _kept_figures(path, blocks: list, keep: Callable[[bytes], str]) -> list:
-    out = []
-    for block in blocks:
-        if isinstance(block, Figure) and block.where is not None and not markdown.image_kept(block.image):
-            block = block.model_copy(update={"image": keep(pdf.page_crop(path, block.where.page - 1,
-                                                                          block.where.box))})
-        out.append(block)
-    return out
 
 
 # the readings the piece's read jobs named, or, without them (an evaluation), the ones kept for today's key
@@ -560,7 +570,7 @@ def _range_blocks(book_id: int, f: BookFile, a: int, b: int, regime: str, langua
     for engine, r in reads.items():
         counts[f"furniture_{engine}"] = counts.get(f"furniture_{engine}", 0) + len(r.furniture)
         got.furniture.setdefault(engine, []).extend(r.furniture)
-    return _kept_figures(path, blocks, keep)
+    return figures.kept(path, blocks, keep)
 
 
 def _node(row: dict) -> dict:
@@ -711,7 +721,7 @@ def assemble(book_id: int, ord: int, title: str, level: int, first_page: int, la
     step("without_title")
     # a chapter's own section list is set apart before the pins, so no node is pinned to its line in it
     if nodes and knobs.get("chapter_contents"):
-        blocks, counts["chapter_contents"] = passes.chapter_contents(blocks, list(nodes), got.layer)
+        blocks, counts["chapter_contents"] = contents.chapter_contents(blocks, list(nodes), got.layer)
     step("chapter_contents")
     own_pages = [(r["first_page"], r["last_page"]) for r in list(nodes)[1:]] if nodes else None
     pinned = passes.pins(blocks, [t for t, _ in subs], counts, own_pages)
@@ -724,10 +734,12 @@ def assemble(book_id: int, ord: int, title: str, level: int, first_page: int, la
     counts.update(fired)
     step("opened")
     if knobs.get("caption_series"):
-        blocks, counts["series_captions"] = passes.series_captions(blocks, series_captions(book_id, versions))
+        blocks, counts["series_captions"] = book_captions.series_captions(blocks, series_captions(book_id, versions))
     step("series_captions")
-    blocks, counts["slot_dropped"] = passes.drop_slots(blocks)
+    blocks, counts["slot_dropped"] = running_heads.drop_slots(blocks)
     step("slots_dropped")
+    blocks, counts["figures_captioned"] = figures.captioned(blocks)
+    step("figures_captioned")
     counts["reread_cut"] = int(reread_end and bool(counts.get("shared_cut_end")))
     blocks = _owned(blocks, nodes[0]["ord"] if nodes else ord, shared_start and not counts["shared_cut_start"])
     step("owned")

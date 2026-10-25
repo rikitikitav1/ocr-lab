@@ -113,13 +113,29 @@ class ReadRangeOptions(BookOptions):
 MAX_READING_LEVEL = 9
 
 
-# a finished run's pieces assembled again from their kept readings with run knobs set over the profile's
-class ReassembleOptions(RunOptions):
+# what a reassembly is asked for, the door's body and the job's options alike
+class Reassembly(_Spec):
     knobs: dict
     ords: list[int] | None = None
     # cut the run at this tree level instead of its own; the re-read off cuts as runs read before it were cut
     reading_level: int | None = Field(None, ge=0, le=MAX_READING_LEVEL)
     reread: bool = True
+    # the book-level lists made anew instead of read back, their hashes in the result, for a gate
+    fresh: bool = False
+
+
+# a finished run's pieces assembled again from their kept readings with run knobs set over the profile's
+class ReassembleOptions(RunOptions, Reassembly):
+    pass
+
+
+# a byte-identity gate over finished runs, compared with an earlier gate's record when one is named
+class ReassemblyGateOptions(_Spec):
+    run_ids: list[int] = Field(min_length=1)
+    knobs: dict = {}
+    base_job_id: int | None = None
+    # counts the change is meant to move, named so that nothing else moves unseen
+    ignore: list[str] = []
 
 
 class CleanupOptions(_Spec):
@@ -161,6 +177,7 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     "book_metrics": (RunOptions, "cpu"),
     "read_range": (ReadRangeOptions, "gpu"),
     "reassemble": (ReassembleOptions, "cpu"),
+    "reassembly_gate": (ReassemblyGateOptions, "cpu"),
     "eval_run": (EmptyOptions, "cpu"),
     "structure_eval": (StructureEvalOptions, "cpu"),
     # the engines read on the card, so the measurement runs on the GPU lane

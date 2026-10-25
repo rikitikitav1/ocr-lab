@@ -77,7 +77,8 @@ Book-level results are versioned (FR-052).
 metadata edit (FR-051) creates a new metadata version that copies the rest.
 
 `structure_versions` holds the book's structure as a tree of nodes; `depth` is the number of levels the structure
-found, book metadata (FR-064).
+found and `reading_level` the tree level a new run reads at unless the book's knob `structure.reading_level` names
+another, both book metadata set when the structure is collected (FR-064).
 
 ## layout_versions
 

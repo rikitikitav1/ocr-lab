@@ -1,6 +1,5 @@
 # a book's top nodes from the headings of its pages read as pictures: headings grouped by look, one group the top nodes
 import collections
-import functools
 import math
 import re
 import statistics
@@ -17,16 +16,40 @@ NUMBERED = re.compile(r"^(\d{1,3}(?:\.\d{1,3})*)[.)]?\s+\S")
 # a number standing alone: "SQL" holds no L and "BASIC 3" runs 3
 RUNNING = re.compile(rf"(?<!\w)(?=\w)({NUMBER})(?!\w)")
 DASHES = ("—", "-", "–")
+# a chapter number set on its own line above the title, as "01"
+BARE_NUMBER = re.compile(r"^\d{1,3}\.?$")
 
 
-# a bare "Chapter 3" block, its word one of the configured part and chapter labels
-@functools.cache
-def _bare_label() -> re.Pattern:
-    words = (*conf()["text_layer"]["numbering"]["part"], *conf()["text_layer"]["numbering"]["chapter"])
-    alternatives = "|".join(re.escape(w) for w in words)
-    if not alternatives:
-        return re.compile(r"(?!)")
-    return re.compile(rf"^(?:{alternatives})\s+(?:{NUMBER}|(?-i:[A-Z]))\.?$", re.I)
+# a bare "Chapter 3" or "Appendix B" block: a word and its number, nothing else
+BARE_LABEL = re.compile(rf"^([^\W\d_]{{3,}})\s+({NUMBER}|[A-Z])\.?$")
+
+
+# the share of steps that rise, or that go on by exactly one
+def _rising(nums: list[int], by_one: bool = False) -> float:
+    steps = list(zip(nums, nums[1:], strict=False))
+    return sum(b == a + 1 if by_one else b > a for a, b in steps) / len(steps) if steps else 0.0
+
+
+# a label's numbers: all single capitals are letters ("Appendix A, B, C, D"), else digits or Roman numerals
+def _label_values(numbers: list[str]) -> list[int]:
+    if all(len(n) == 1 and n.isalpha() for n in numbers):
+        return [ord(n) - ord("A") + 1 for n in numbers]
+    return [v for n in numbers if (v := numerals.value(n)) is not None]
+
+
+# the words a book sets alone before numbers that mostly rise are its labels; two count when they go on by one
+def _labels(cand: list[dict]) -> frozenset[str]:
+    c = conf()["scan_layer"]["headings"]
+    numbers = collections.defaultdict(list)
+    for b in cand:
+        if m := BARE_LABEL.match(b["text"]):
+            numbers[m[1].lower()].append(m[2])
+    out = set()
+    for word, raw in numbers.items():
+        ns = _label_values(raw)
+        if (len(ns) >= c["label_min"] and _rising(ns) >= c["rising_share"]) or (len(ns) == 2 and _rising(ns, True)):
+            out.add(word)
+    return frozenset(out)
 
 
 def _norm(text: str) -> str:
@@ -89,16 +112,32 @@ def candidates(bl: list[dict], total: int) -> tuple[float, list[dict]]:
     return body, _glued(kept)
 
 
-# a bare "Chapter n" block takes the next candidate on its page as its title, keeping its own size and type
+# bare numbers counting on by one through the book are chapter numbers, not note marks or table cells
+def _counting(cand: list[dict]) -> bool:
+    c = conf()["scan_layer"]["headings"]
+    nums = [int(b["text"].rstrip(".")) for b in cand if BARE_NUMBER.match(b["text"])]
+    return len(nums) >= c["min_nodes"] and _rising(nums, True) >= c["rising_share"]
+
+
+# a bare "Chapter n", or a bare number of a counting run, takes the next candidate on its page as its title and look
 def _glued(cand: list[dict]) -> list[dict]:
+    counting, labels = _counting(cand), _labels(cand)
+
+    def _bare(text: str) -> bool:
+        m = BARE_LABEL.match(text)
+        return bool((m and m[1].lower() in labels) or (counting and BARE_NUMBER.match(text)))
+
     out, skip = [], False
     for i, b in enumerate(cand):
         if skip:
             skip = False
             continue
         nxt = cand[i + 1] if i + 1 < len(cand) else None
-        if _bare_label().match(b["text"]) and nxt and nxt["page"] == b["page"] and not _bare_label().match(nxt["text"]):
-            out.append({**b, "text": f"{b['text']} {nxt['text']}", "words": b["words"] + nxt["words"]})
+        if _bare(b["text"]) and nxt and nxt["page"] == b["page"] and not _bare(nxt["text"]):
+            # grouped by the larger part's look: a small label over its title must not pull the title down
+            larger = max(b, nxt, key=lambda x: x["size"])
+            look = {k: larger[k] for k in ("size", "bold") if k in larger}
+            out.append({**b, **look, "text": f"{b['text']} {nxt['text']}", "words": b["words"] + nxt["words"]})
             skip = True
         else:
             out.append(b)
@@ -139,7 +178,7 @@ def style_groups(cand: list[dict]) -> list[list[dict]]:
     return sorted(groups, key=lambda g: -statistics.median(x["size"] for x in g))
 
 
-# most titles carry a number, and the numbers mostly rise in page order
+# most titles carry a number, and the numbers mostly rise in page order without starting again
 def running_number(group: list[dict]) -> bool:
     c = conf()["scan_layer"]["headings"]
     nums = []
@@ -150,7 +189,10 @@ def running_number(group: list[dict]) -> bool:
     nums = [n for n in nums if n is not None]
     if len(nums) < c["numbered_share"] * len(group) or len(nums) < 2:
         return False
-    return sum(b > a for a, b in zip(nums, nums[1:], strict=False)) >= c["rising_share"] * (len(nums) - 1)
+    steps = list(zip(nums, nums[1:], strict=False))
+    if sum(b == 1 and a > 1 for a, b in steps) >= c["restarts"]:
+        return False
+    return _rising(nums) >= c["rising_share"]
 
 
 # the pages up to a contents printed at the book's start are its front matter: title, series, publisher lines
@@ -229,15 +271,25 @@ def _levels(source: str, cand: list[dict], grouped, total: int, contents: frozen
                       f"{c['node_spread']:.0%} of the book among {len(cand)} candidates")
         return out
     pick = next((i for i in eligible if running_number(groups[i])), eligible[0])
+
+    first, last = min(b["page"] for b in groups[pick]), max(b["page"] for b in groups[pick])
+
+    # a preface before the chapters or an index after them, set like the chapters but unnumbered, is one of them
+    def like_pick(g):
+        size, pick_size = statistics.median(b["size"] for b in g), statistics.median(b["size"] for b in groups[pick])
+        outside = sum(not first <= b["page"] <= last for b in g) >= c["matter_share"] * len(g)
+        return outside and max(size, pick_size) < min(size, pick_size) * c["style_step"] and \
+            g[0].get("bold") == groups[pick][0].get("bold")
+
     entries = []
     for i, g in enumerate(groups):
         # a larger group joins the top nodes unless it runs a number (parts); a smaller one sits below them
         if i < pick:
             level = 0 if len(g) >= c["min_nodes"] and running_number(g) else 1
-        elif i == pick:
+        elif i == pick or like_pick(g):
             level = 1
         else:
-            level = 2 + sum(1 for j in range(pick + 1, i) if len(groups[j]) >= 2)
+            level = 2 + sum(1 for j in range(pick + 1, i) if len(groups[j]) >= 2 and not like_pick(groups[j]))
         entries += [(b["page"], level, b["text"]) for b in g]
     top = min(level for _, level, _ in entries)
     tops = sum(level == top for _, level, _ in entries)

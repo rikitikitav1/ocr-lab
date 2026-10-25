@@ -126,7 +126,8 @@ app/
 │   └── bundle.py             # whole-book numbers, report, bundle
 ├── engines/                  # borrowed from rag-lab and adapted: converter client, card handover, adapters, model client
 ├── document/                 # document model (pydantic blocks)
-├── assembly/                 # passes.py (knob options that transform the model), referee.py (per-page engine pick), code_layer.py
+├── assembly/                 # passes.py (the order of the range passes, boundaries, title, pins, levels, scans), referee.py (per-page engine pick)
+├── elements/                 # one module per book element: code, tables, contents, captions, figures, footnotes, running_heads; geometry, folding shared
 ├── structure/tree.py         # parents and depth of a node list
 ├── knobs/registry.py         # the knob registry and its checks
 ├── probes/                   # knob probes (planned)

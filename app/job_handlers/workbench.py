@@ -1,10 +1,16 @@
-# jobs that look at a book or a run without changing it: a page range read through one engine, a scratch reassembly
+# jobs that look at a book or a run without changing it: a page range read, a scratch reassembly, a gate over them
+import json
+from pathlib import Path
 
 import artifacts
+import job_queue
 import settings
+from evaluation import byte_gate
+from job_signals import Deferred, Final
 from knobs import registry
 from orm.catalogue import Artifact, Piece, Run
 from orm.db import Session
+from orm.jobs import Job
 from sqlalchemy import select
 from stages import assemble, run_pieces, run_state
 from stages.piece_assembly import assembled
@@ -54,6 +60,11 @@ def _against_kept(run_id: int, ord: int, markdown: str, checks: dict) -> dict:
             "line_counts": [len(old), len(new)]}
 
 
+# the text names the images only, so a crop moved by a box is told by the bytes
+def _images_sha(images: dict[str, bytes]) -> str:
+    return artifacts.short_sha(b"".join(name.encode() + b"\0" + png for name, png in sorted(images.items())))
+
+
 def _piece(run_id: int, ord: int, overrides: dict, level: int | None, reread: bool) -> dict:
     got, checks, _ = assembled(run_id, ord, None, level, reread)
     kept = _against_kept(run_id, ord, got.markdown, checks)
@@ -62,7 +73,8 @@ def _piece(run_id: int, ord: int, overrides: dict, level: int | None, reread: bo
         got, checks, _ = assembled(run_id, ord, overrides, level, reread)
     after = _numbers(checks, got.counts)
     changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
-    return {"ord": ord, "changed": changed, "before": before, "after": after, "against_kept": kept}
+    return {"ord": ord, "changed": changed, "before": before, "after": after, "against_kept": kept,
+            "text_sha": artifacts.short_sha(got.markdown.encode()), "images_sha": _images_sha(got.images)}
 
 
 # a piece cut at another level or without the re-read page has other page ranges than the run read
@@ -94,7 +106,12 @@ def reassemble(options: dict) -> dict:
         pieces = [c["ord"] for c in run_pieces.pieces(session, session.get(Run, run_id), level, reread)]
     wanted = options["ords"] if options["ords"] is not None else (pieces if level is not None else done)
     unread = {ord: missing for ord in wanted if ord in done if (missing := _unread(run_id, ord, level, reread))}
-    rebuilt = [_piece(run_id, ord, overrides, level, reread) for ord in wanted if ord in done and ord not in unread]
+    fresh = assemble.FRESH.set(assemble.Fresh() if options["fresh"] else None)
+    try:
+        rebuilt = [_piece(run_id, ord, overrides, level, reread) for ord in wanted if ord in done and ord not in unread]
+        lists = dict(made.hashes) if (made := assemble.FRESH.get()) is not None else {}
+    finally:
+        assemble.FRESH.reset(fresh)
     out = {"run_id": run_id, "knobs": options["knobs"], "reading_level": level, "reread": reread,
            "units_not_pieces": [o for o in done if o not in pieces] if level is not None else [],
            "skipped": [o for o in wanted if o not in done],
@@ -102,6 +119,54 @@ def reassemble(options: dict) -> dict:
            "pieces": rebuilt, "pieces_changed": [c["ord"] for c in rebuilt if c["changed"]],
            "kept_text_changed": [c["ord"] for c in rebuilt if c["against_kept"]["text_changed"]],
            "kept_numbers_changed": [c["ord"] for c in rebuilt if c["against_kept"]["numbers_changed"]],
-           "kept_headings_moved": sum(c["against_kept"]["headings_moved"] or 0 for c in rebuilt)}
+           "kept_headings_moved": sum(c["against_kept"]["headings_moved"] or 0 for c in rebuilt),
+           "book_lists": lists}
     artifacts.atomic_write(settings.DATA_DIR / "scratch" / "reassemble" / f"job-{options['_job_id']}.json", out)
+    return out
+
+
+REPORT_LINES = 60
+
+
+def _gate_path(job_id: int) -> Path:
+    return settings.DATA_DIR / "scratch" / "gates" / f"{job_id}.json"
+
+
+def gate_record(job_id: int) -> dict:
+    path = _gate_path(job_id)
+    if not path.exists():
+        raise Final(f"no gate record of job {job_id}")
+    return json.loads(path.read_text())
+
+
+# the gate waits on its reassemblies without holding a worker; children run on one code, or the gate refuses
+@register("reassembly_gate")
+def reassembly_gate(options: dict) -> dict:
+    job_id = options["_job_id"]
+    with Session() as session:
+        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "reassemble")
+                                   .order_by(Job.id)).all()
+        books = dict(session.execute(select(Run.id, Run.book_id).where(Run.id.in_(options["run_ids"]))).all())
+    if not children:
+        for run_id in options["run_ids"]:
+            job_queue.enqueue("reassemble", {"run_id": run_id, "knobs": options["knobs"], "fresh": True},
+                              parent_id=job_id, run_id=run_id, book_id=books.get(run_id))
+        raise Deferred(f"waiting for {len(options['run_ids'])} reassemblies", delay_seconds=30)
+    left = [c.id for c in children if c.status not in job_queue.FINISHED]
+    if left:
+        raise Deferred(f"waiting for {len(left)} of {len(children)} reassemblies", delay_seconds=30)
+    if failed := [c.id for c in children if c.status != "done"]:
+        raise Final(f"reassemblies not done: {failed}")
+    codes = sorted({c.code_hash for c in children})
+    if len(codes) != 1:
+        raise Final(f"the reassemblies ran on several codes {codes}: reload the workers and gate again")
+    record = {"knobs": options["knobs"], "code": codes[0],
+              "books": {str(books[c.run_id]): byte_gate.entry(c.id, c.result) for c in children}}
+    artifacts.atomic_write(_gate_path(job_id), record)
+    out = {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "code": codes[0],
+           "books": len(record["books"])}
+    if options["base_job_id"] is not None:
+        moved, lines = byte_gate.compare(gate_record(options["base_job_id"])["books"], record["books"],
+                                         tuple(options["ignore"]))
+        out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
     return out
