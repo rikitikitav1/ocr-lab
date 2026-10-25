@@ -32,7 +32,7 @@ def start(session, id: int, format: str, structure: StructureVersion, profile_id
     run = Run(book_id=id, profile_id=profile_id, structure_version_id=structure.id, format=format,
               metadata_version_id=meta.id if meta is not None else None, dir="", status="queued",
               reading_level=units_of_run.level_for(book_knobs.of(id)["structure.reading_level"],
-                                                  units_of_run.rows(session, structure.id)))
+                                                  structure.reading_level))
     session.add(run)
     session.flush()
     run.dir = str(artifacts.run_dir(id, run.id))

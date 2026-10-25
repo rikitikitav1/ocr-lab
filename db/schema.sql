@@ -413,7 +413,8 @@ CREATE TABLE public.structure_versions (
     job_id bigint,
     current boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    depth integer DEFAULT 0 NOT NULL
+    depth integer DEFAULT 0 NOT NULL,
+    reading_level integer DEFAULT 0 NOT NULL
 );
 
 

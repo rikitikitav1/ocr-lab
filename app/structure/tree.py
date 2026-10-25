@@ -11,3 +11,8 @@ def parents(levels: list[int]) -> list[int | None]:
 
 def depth(levels: list[int]) -> int:
     return max(levels, default=0)
+
+
+# no shape signal for a deeper level is found yet, so every book reads its top nodes
+def reading_level(levels: list[int]) -> int:
+    return 0

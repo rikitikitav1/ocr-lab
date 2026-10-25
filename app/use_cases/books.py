@@ -124,7 +124,7 @@ def _structure(session, book_id: int) -> dict | None:
         return None
     nodes = session.scalar(select(func.count()).select_from(StructureNode)
                            .where(StructureNode.structure_version_id == version.id))
-    return {"version": version.version, "depth": version.depth, "nodes": nodes,
+    return {"version": version.version, "depth": version.depth, "reading_level": version.reading_level, "nodes": nodes,
             "base": evidence.base(session, version.id)}
 
 

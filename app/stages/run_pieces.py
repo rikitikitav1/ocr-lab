@@ -21,14 +21,9 @@ def all_cut(session, run: Run) -> frozenset[int]:
     return frozenset().union(*cut(session, run).values())
 
 
-# no shape signal for a deeper level is found yet, so every book reads its top nodes
-def automatic_level(rows: list[dict]) -> int:
-    return 0
-
-
-# the level a new run of the book reads at: the owner's when set, else the one the tree gives
-def level_for(owners: int | None, rows: list[dict]) -> int:
-    return automatic_level(rows) if owners is None else owners
+# the level a new run of the book reads at: the owner's when set, else the one kept with the structure
+def level_for(owners: int | None, automatic: int) -> int:
+    return automatic if owners is None else owners
 
 
 def pieces(session, run: Run, level: int | None = None, reread: bool = True) -> list[dict]:

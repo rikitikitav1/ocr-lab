@@ -34,7 +34,8 @@ def get_structure(id: int, source: str | None = None, version: int | None = None
         found = _version(session, id, version)
         kept = evidence.read(session, found.id)
         head = {"book_id": id, "version": found.version, "created_at": found.created_at,
-                "chosen": (kept or {}).get("chosen"), "depth": found.depth}
+                "chosen": (kept or {}).get("chosen"), "depth": found.depth,
+                "reading_level": found.reading_level}
         if source is None:
             rows = session.scalars(select(StructureNode).where(StructureNode.structure_version_id == found.id)
                                    .order_by(StructureNode.ord))

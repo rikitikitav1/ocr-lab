@@ -305,6 +305,7 @@ def write_version(book_id: int, made_from: artifacts.Inputs, entries: list[dict]
         number = version.version
         levels = [row["level"] for row in entries]
         version.depth = tree.depth(levels)
+        version.reading_level = tree.reading_level(levels)
         for row in with_parents(entries):
             session.add(StructureNode(structure_version_id=version.id, **row))
         session.flush()

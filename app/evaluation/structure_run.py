@@ -13,6 +13,7 @@ from sqlalchemy import select
 from stages import assemble, intake, run_pieces
 from stages.structure import collect, evidence, scan
 from stages.structure.sources import Entry
+from structure import tree
 
 from evaluation import hips, structure_gold
 
@@ -76,7 +77,8 @@ def _service(got: list[Entry], source: str, pages: int, contents: frozenset[int]
     entries = collect.with_front_matter(got, files)
     rows = collect.with_parents(collect.structure_rows(got, source, pages, files))
     cut = frozenset().union(*assemble.cut_of(rows, contents).values())
-    pieces = assemble.pieces_of(rows, cut, run_pieces.level_for(owners_level, rows))
+    pieces = assemble.pieces_of(rows, cut, run_pieces.level_for(owners_level,
+                                                                  tree.reading_level([r["level"] for r in rows])))
     return [entries[p["ord"] - 1] for p in pieces if p["role"] == "service"]
 
 
