@@ -78,10 +78,10 @@ def reassembly_gate(run_ids: list[int], knobs: dict | None = None, base_job_id: 
 
 
 @tool("structure_gate", "POST /v1/gates/structure",
-      "Queue a CPU job that takes each named book's structure (every book by default) as the structure stage would "
-      "choose it, with the sources in off left out, and keeps the record; with base_job_id it compares the record "
-      "with that earlier structure gate's, and its result gives moved (books whose source or entries moved) and a "
-      "report per moved book. A scan whose contents need the card is recorded as skipped.")
+      "Queue a CPU job that takes each named book's structure (every book by default, one child job a book) as the "
+      "structure stage would choose it, with the sources in off left out, and keeps the record; with base_job_id it "
+      "compares the record with that earlier structure gate's, and its result gives moved (books whose source or "
+      "entries moved) and a report per moved book. A scan whose contents need the card is recorded as skipped.")
 def structure_gate(book_ids: list[int] | None = None, off: list[str] | None = None,
                    base_job_id: int | None = None) -> dict:
     if unknown := sorted(set(off or []) - set(structure_collect.SOURCES)):

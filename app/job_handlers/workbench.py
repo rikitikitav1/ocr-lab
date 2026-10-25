@@ -172,17 +172,37 @@ def reassembly_gate(options: dict) -> dict:
     return out
 
 
-# the structure of each book as choose gives it, kept as a record and compared with an earlier structure gate's
+@register("structure_choose")
+def structure_choose(options: dict) -> dict:
+    return structure_gate.entry(options["book_id"], tuple(options["off"]))
+
+
+# each book's structure as choose gives it, one child job a book, kept as a record and compared with an earlier gate's
 @register("structure_gate")
 def run_structure_gate(options: dict) -> dict:
     job_id = options["_job_id"]
     with Session() as session:
+        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "structure_choose")
+                                   .order_by(Job.id)).all()
         books = options["book_ids"] or list(session.scalars(select(Book.id).order_by(Book.id)))
+    if not children:
+        for book_id in books:
+            job_queue.enqueue("structure_choose", {"book_id": book_id, "off": options["off"]}, parent_id=job_id,
+                              book_id=book_id)
+        raise Deferred(f"waiting for {len(books)} books", delay_seconds=30)
+    left = [c.id for c in children if c.status not in job_queue.FINISHED]
+    if left:
+        raise Deferred(f"waiting for {len(left)} of {len(children)} books", delay_seconds=30)
+    if failed := [c.id for c in children if c.status != "done"]:
+        raise Final(f"books not read: {failed}")
+    codes = sorted({c.code_hash for c in children})
+    if len(codes) != 1:
+        raise Final(f"the books were read on several codes {codes}: reload the workers and gate again")
     off = tuple(options["off"])
-    record = {"off": list(off), "books": {str(b): structure_gate.entry(b, off) for b in books}}
+    record = {"off": list(off), "code": codes[0], "books": {str(c.book_id): c.result for c in children}}
     artifacts.atomic_write(_gate_path(job_id), record)
-    out = {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "books": len(books),
-           "skipped": sum("skipped" in e for e in record["books"].values())}
+    out = {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "code": codes[0],
+           "books": len(record["books"]), "skipped": sum("skipped" in e for e in record["books"].values())}
     if options["base_job_id"] is not None:
         base = gate_record(options["base_job_id"])
         if base.get("off") != record["off"]:

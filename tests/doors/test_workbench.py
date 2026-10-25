@@ -168,7 +168,7 @@ def test_a_structure_gate_keeps_each_books_structure_and_names_a_book_whose_entr
     assert client.post("/v1/gates/structure", json={"off": ["contents"]}).status_code == 400
     assert client.post("/v1/gates/structure", json={"book_ids": [book + 10_000]}).status_code == 404
     first = client.post("/v1/gates/structure", json={"book_ids": [book]}).json()["job_id"]
-    _drain()
+    _drain_deferred(first)
     done = client.get(f"/v1/jobs/{first}").json()
     assert done["status"] == "done" and done["result"]["books"] == 1 and "moved" not in done["result"]
     record = json.loads((settings.DATA_DIR / done["result"]["record"]).read_text())
@@ -176,12 +176,12 @@ def test_a_structure_gate_keeps_each_books_structure_and_names_a_book_whose_entr
     assert [e[0] for e in record["books"][str(book)]["entries"]] == ["One", "Two"]
     assert client.post("/v1/gates/structure", json={"book_ids": [book], "base_job_id": book}).status_code == 400
     same = client.post("/v1/gates/structure", json={"book_ids": [book], "base_job_id": first}).json()["job_id"]
-    _drain()
+    _drain_deferred(same)
     assert client.get(f"/v1/jobs/{same}").json()["result"]["moved"] == 0
     off = client.post("/v1/gates/structure", json={"book_ids": [book], "off": ["bookmarks"]}).json()["job_id"]
-    _drain()
+    _drain_deferred(off)
     assert client.get(f"/v1/jobs/{off}").json()["result"]["books"] == 1
     other = client.post("/v1/gates/structure", json={"book_ids": [book], "off": ["bookmarks"],
                                                      "base_job_id": first}).json()["job_id"]
-    _drain()
+    _drain_deferred(other)
     assert client.get(f"/v1/jobs/{other}").json()["status"] != "done"
