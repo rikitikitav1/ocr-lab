@@ -339,16 +339,43 @@ def test_chapter_files_are_chapters_and_a_part_title_page_gives_the_part(stand, 
     def opening(*lines):
         return {"lines": [*lines, FILLER[:90]]}
 
+    def chapter(number, title):
+        return opening({"text": "CHAPTER", "size": 14}, {"text": str(number), "size": 14}, {"text": title, "size": 22})
+
+    # the labels are learned from the files: CHAPTER alone in every file, PART alone on two files' first pages
     one = build(tmp_path / "1.pdf", [opening({"text": "PART", "size": 18}, {"text": "One", "size": 40}),
-                                     opening({"text": "CHAPTER", "size": 14}, {"text": "Threats", "size": 22}),
-                                     text_page("more")])
-    two = build(tmp_path / "2.pdf", [opening({"text": "Protocols", "size": 22}), text_page("more")])
-    book_id, _ = intake.register([(one, "1.pdf"), (two, "2.pdf")])
+                                     chapter(1, "Threats"), text_page("more")])
+    two = build(tmp_path / "2.pdf", [chapter(2, "Protocols"), text_page("more")])
+    three = build(tmp_path / "3.pdf", [opening({"text": "PART", "size": 18}, {"text": "Two", "size": 40}),
+                                       chapter(3, "Passwords"), text_page("more")])
+    book_id, _ = intake.register([(one, "1.pdf"), (two, "2.pdf"), (three, "3.pdf")])
     found = files.read(intake.files_of(book_id))
-    assert [(e.title, e.level, e.page) for e in found.entries] == [("Part One", 1, 1), ("Threats", 2, 2),
-                                                                    ("Protocols", 2, 4)]
+    assert [(e.title, e.level, e.page) for e in found.entries] == [
+        ("Part One", 1, 1), ("Threats", 2, 2), ("Protocols", 2, 4), ("Part Two", 1, 6), ("Passwords", 2, 7)]
     source, _, _ = collect.choose(book_id)
     assert source == "files"
+
+
+def test_chapter_files_learn_no_part_from_too_few_chapters_or_from_a_name_on_every_file(stand, tmp_path):
+    from stages.structure.sources import files
+
+    def opening(*lines):
+        return {"lines": [*lines, FILLER[:90]]}
+
+    def chapter(number, title, series=()):
+        return opening(*series, {"text": "CHAPTER", "size": 14}, {"text": str(number), "size": 14},
+                       {"text": title, "size": 22})
+
+    two = [build(tmp_path / f"{n}.pdf", [chapter(n, title), text_page("more")])
+           for n, title in ((1, "Threats"), (2, "Protocols"))]
+    book_id, _ = intake.register([(path, path.name) for path in two])
+    assert [(e.title, e.level) for e in files.read(intake.files_of(book_id)).entries] == [
+        ("Threats", 1), ("Protocols", 1)]
+    series = ({"text": "Handbooks", "size": 12},)
+    four = [build(tmp_path / f"s{n}.pdf", [chapter(n, title, series), text_page("more")])
+            for n, title in enumerate(("Threats", "Protocols", "Passwords", "Access"), start=1)]
+    book_id, _ = intake.register([(path, path.name) for path in four])
+    assert all(e.level == 1 for e in files.read(intake.files_of(book_id)).entries)
 
 
 def test_the_root_bookmark_knob_lifts_the_chapters_to_the_top():
@@ -679,7 +706,7 @@ def test_a_number_glued_to_its_title_takes_the_title_s_look():
 
     cand = [b for n in range(1, 6) for b in (
         {"page": 10 * n, "type": "title", "text": f"0{n}", "size": 17, "bold": False, "words": 1},
-        {"page": 10 * n, "type": "title", "text": f"Topic {n}", "size": 25, "bold": True, "words": 2})]
+        {"page": 10 * n, "type": "title", "text": f"Topic {'abcde'[n - 1]}", "size": 25, "bold": True, "words": 2})]
     assert {(b["size"], b["bold"]) for b in headings._glued(cand)} == {(25, True)}
 
 
@@ -802,17 +829,35 @@ def test_contents_running_heads_and_folio_lines_are_known_by_repeat_and_number_n
 
 
 def test_an_empty_label_list_matches_no_title(monkeypatch):
-    from stages.structure.sources import headings, numbering
+    from stages.structure.sources import numbering
 
     empty = {"text_layer": {"numbering": {"part": [], "chapter": []}}}
     monkeypatch.setattr(numbering, "conf", lambda: empty)
-    monkeypatch.setattr(headings, "conf", lambda: empty)
     numbering.label_pattern.cache_clear()
-    headings._bare_label.cache_clear()
     try:
         assert numbering.title_depth("Part One Something") is None
         assert not numbering.label_pattern("part").match(" 3 Topic")
-        assert not headings._bare_label().match(" 3")
     finally:
         numbering.label_pattern.cache_clear()
-        headings._bare_label.cache_clear()
+
+
+def test_a_bare_label_is_the_word_the_book_sets_before_rising_numbers_in_any_language():
+    from stages.structure.sources import headings
+
+    def block(page, text, size=17):
+        return {"page": page, "type": "title", "text": text, "size": size, "bold": False, "words": len(text.split())}
+
+    titles = ["Wstęp do rzeczy", "Dalsza droga", "Środek książki", "Koniec drogi"]
+    cand = [b for n, title in enumerate(titles, start=1)
+            for b in (block(10 * n, f"Rozdział {n}"), block(10 * n, title, 25))]
+    cand += [block(5, "Figure 3"), block(6, "Title under a figure"), block(7, "Figure 8"), block(8, "Another title")]
+    glued = [b["text"] for b in headings._glued(cand)]
+    assert "Rozdział 1 Wstęp do rzeczy" in glued and "Figure 3" in glued and "Title under a figure" in glued
+    two = [block(20, "Part I"), block(20, "Foundations", 25), block(60, "Part II"), block(60, "Practice", 25)]
+    assert [b["text"] for b in headings._glued(two)] == ["Part I Foundations", "Part II Practice"]
+    names = ("Sources", "Maps", "Letters", "Tables")
+    letters = [b for n, (letter, name) in enumerate(zip("ABCD", names, strict=True))
+               for b in (block(90 + n, f"Appendix {letter}"), block(90 + n, name, 25))]
+    assert [b["text"] for b in headings._glued(letters)][2] == "Appendix C Letters"
+    pair = [block(3, "1"), block(3, "Copyright", 25), block(9, "2"), block(9, "Dedication", 25)]
+    assert len(headings._glued(pair)) == 4

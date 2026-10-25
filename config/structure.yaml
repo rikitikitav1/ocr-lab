@@ -40,3 +40,4 @@ scan_layer:
     rising_share: 0.7      # and this share of the steps between them rise
     restarts: 3            # a count falling back to 1 this often is sections under unnumbered titles
     matter_share: 0.7      # a group set like the chapters with this share outside them is front or back matter
+    label_min: 3           # a word alone before a number this often is the book's chapter or part label

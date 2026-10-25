@@ -1,6 +1,5 @@
 # a book's top nodes from the headings of its pages read as pictures: headings grouped by look, one group the top nodes
 import collections
-import functools
 import math
 import re
 import statistics
@@ -21,14 +20,36 @@ DASHES = ("—", "-", "–")
 BARE_NUMBER = re.compile(r"^\d{1,3}\.?$")
 
 
-# a bare "Chapter 3" block, its word one of the configured part and chapter labels
-@functools.cache
-def _bare_label() -> re.Pattern:
-    words = (*conf()["text_layer"]["numbering"]["part"], *conf()["text_layer"]["numbering"]["chapter"])
-    alternatives = "|".join(re.escape(w) for w in words)
-    if not alternatives:
-        return re.compile(r"(?!)")
-    return re.compile(rf"^(?:{alternatives})\s+(?:{NUMBER}|(?-i:[A-Z]))\.?$", re.I)
+# a bare "Chapter 3" or "Appendix B" block: a word and its number, nothing else
+BARE_LABEL = re.compile(rf"^([^\W\d_]{{3,}})\s+({NUMBER}|[A-Z])\.?$")
+
+
+# the share of steps that rise, or that go on by exactly one
+def _rising(nums: list[int], by_one: bool = False) -> float:
+    steps = list(zip(nums, nums[1:], strict=False))
+    return sum(b == a + 1 if by_one else b > a for a, b in steps) / len(steps) if steps else 0.0
+
+
+# a label's numbers: all single capitals are letters ("Appendix A, B, C, D"), else digits or Roman numerals
+def _label_values(numbers: list[str]) -> list[int]:
+    if all(len(n) == 1 and n.isalpha() for n in numbers):
+        return [ord(n) - ord("A") + 1 for n in numbers]
+    return [v for n in numbers if (v := numerals.value(n)) is not None]
+
+
+# the words a book sets alone before numbers that mostly rise are its labels; two count when they go on by one
+def _labels(cand: list[dict]) -> frozenset[str]:
+    c = conf()["scan_layer"]["headings"]
+    numbers = collections.defaultdict(list)
+    for b in cand:
+        if m := BARE_LABEL.match(b["text"]):
+            numbers[m[1].lower()].append(m[2])
+    out = set()
+    for word, raw in numbers.items():
+        ns = _label_values(raw)
+        if (len(ns) >= c["label_min"] and _rising(ns) >= c["rising_share"]) or (len(ns) == 2 and _rising(ns, True)):
+            out.add(word)
+    return frozenset(out)
 
 
 def _norm(text: str) -> str:
@@ -93,18 +114,18 @@ def candidates(bl: list[dict], total: int) -> tuple[float, list[dict]]:
 
 # bare numbers counting on by one through the book are chapter numbers, not note marks or table cells
 def _counting(cand: list[dict]) -> bool:
+    c = conf()["scan_layer"]["headings"]
     nums = [int(b["text"].rstrip(".")) for b in cand if BARE_NUMBER.match(b["text"])]
-    steps = list(zip(nums, nums[1:], strict=False))
-    share = conf()["scan_layer"]["headings"]["rising_share"]
-    return bool(steps) and sum(b == a + 1 for a, b in steps) >= share * len(steps)
+    return len(nums) >= c["min_nodes"] and _rising(nums, True) >= c["rising_share"]
 
 
 # a bare "Chapter n", or a bare number of a counting run, takes the next candidate on its page as its title and look
 def _glued(cand: list[dict]) -> list[dict]:
-    counting = _counting(cand)
+    counting, labels = _counting(cand), _labels(cand)
 
     def _bare(text: str) -> bool:
-        return bool(_bare_label().match(text) or (counting and BARE_NUMBER.match(text)))
+        m = BARE_LABEL.match(text)
+        return bool((m and m[1].lower() in labels) or (counting and BARE_NUMBER.match(text)))
 
     out, skip = [], False
     for i, b in enumerate(cand):
@@ -171,7 +192,7 @@ def running_number(group: list[dict]) -> bool:
     steps = list(zip(nums, nums[1:], strict=False))
     if sum(b == 1 and a > 1 for a, b in steps) >= c["restarts"]:
         return False
-    return sum(b > a for a, b in steps) >= c["rising_share"] * (len(nums) - 1)
+    return _rising(nums) >= c["rising_share"]
 
 
 # the pages up to a contents printed at the book's start are its front matter: title, series, publisher lines
