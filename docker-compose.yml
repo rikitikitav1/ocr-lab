@@ -91,7 +91,7 @@ services:
         condition: service_completed_successfully
     volumes: *app-volumes
 
-  # CPU-lane workers on demand (--profile cpu-workers, --scale worker-cpu=2); the GPU lane stays one worker's
+  # CPU-lane workers, started and stopped with the stand; the GPU lane stays one worker's
   worker-cpu:
     <<: *worker
     # no profile: a plain down skips profiled services and leaves them on the removed network

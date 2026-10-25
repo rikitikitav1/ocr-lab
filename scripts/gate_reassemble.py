@@ -53,13 +53,16 @@ def run(runs_file: str, out: str, knobs: dict) -> None:
     json.dump(record, open(out, "w"), indent=1, sort_keys=True)
 
 
-def compare(base_file: str, new_file: str, ignore: tuple[str, ...] = ()) -> int:
+def compare(base_file: str, new_file: str, ignore: tuple[str, ...] = (), out=None) -> int:
+    def say(*args):
+        print(*args, file=out or sys.stdout)
+
     base, new = json.load(open(base_file))["books"], json.load(open(new_file))["books"]
     moved = 0
     for book in sorted(base.keys() | new.keys(), key=int):
         a, b = base.get(book), new.get(book)
         if a is None or b is None:
-            print(book, "only in", base_file if b is None else new_file)
+            say(book, "only in", base_file if b is None else new_file)
             moved += 1
             continue
         lists = sorted(k for k in a["lists"].keys() | b["lists"].keys() if a["lists"].get(k) != b["lists"].get(k))
@@ -75,10 +78,10 @@ def compare(base_file: str, new_file: str, ignore: tuple[str, ...] = ()) -> int:
                     counts[k] = counts.get(k, 0) + 1
         if lists or text or images or pieces or counts:
             moved += 1
-            print(book, {"lists": lists, "text": sorted(text, key=int)[:20], "texts": len(text),
+            say(book, {"lists": lists, "text": sorted(text, key=int)[:20], "texts": len(text),
                          "images": sorted(images, key=int)[:20],
                          "pieces_apart": pieces, "counts": counts})
-    print("books moved:", moved, "of", len(base.keys() | new.keys()))
+    say("books moved:", moved, "of", len(base.keys() | new.keys()))
     return 1 if moved else 0
 
 

@@ -20,9 +20,9 @@ def rows_of(glyphs: list[Glyph]) -> list[tuple[float, list[Glyph]]]:
     return [(middle, sorted(row, key=lambda g: g[0])) for middle, row in rows]
 
 
+# a glyph belongs to a box its centre falls in, with a little slack for the box's own rounding
 def inside(g: Glyph, box: tuple) -> bool:
-    x, y = (g[0] + g[2]) / 2, (g[1] + g[3]) / 2
-    return box[0] - SLACK <= x <= box[2] + SLACK and box[1] - SLACK <= y <= box[3] + SLACK
+    return centre_in(g, box, SLACK)
 
 
 def overlap(a: tuple, b: tuple) -> float:
@@ -35,9 +35,9 @@ def overlap(a: tuple, b: tuple) -> float:
 OVERLAP = 0.5
 
 
-def centre_in(inner, outer: tuple) -> bool:
+def centre_in(inner, outer: tuple, slack: float = 0.0) -> bool:
     x, y = (inner[0] + inner[2]) / 2, (inner[1] + inner[3]) / 2
-    return outer[0] <= x <= outer[2] and outer[1] <= y <= outer[3]
+    return outer[0] - slack <= x <= outer[2] + slack and outer[1] - slack <= y <= outer[3] + slack
 
 
 # the words the layer draws inside a box, rows by height and a gap of more than a third of a glyph as a space
@@ -56,3 +56,9 @@ def box_words(page_glyphs: list[Glyph], box: tuple) -> list[str]:
 def page_spans(blocks: list) -> list[tuple[int, int]]:
     marks = [i for i, b in enumerate(blocks) if isinstance(b, PageMarker)]
     return [(m, nxt) for m, nxt in zip(marks, [*marks[1:], len(blocks)], strict=True)]
+
+
+# where a block the page holds nothing after goes: before the next page's marker, the range's end on its last page
+def page_end(blocks: list, page: int) -> int:
+    marker = next((i for i, b in enumerate(blocks) if isinstance(b, PageMarker) and b.file_page == page), None)
+    return next((i for i, b in enumerate(blocks) if i > (marker or -1) and isinstance(b, PageMarker)), len(blocks))

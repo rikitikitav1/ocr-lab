@@ -2,8 +2,8 @@
 import re
 
 import numerals
-from assembly import referee
 from document.model import Contents, Heading, ListBlock, Paragraph
+from document.text import block_text
 
 from elements import geometry
 
@@ -65,7 +65,7 @@ def chapter_contents(blocks: list, nodes: list[dict], layer: dict[int, str]) -> 
         inside = [i for i in range(start + 1, end) if isinstance(blocks[i], (Paragraph, Heading, ListBlock))
                   and _within_run(blocks[i], keys)]
         groups = _consecutive(inside)
-        best = max(groups, key=lambda g: sum(len(referee.block_text(blocks[i]).splitlines()) for i in g), default=[])
+        best = max(groups, key=lambda g: sum(len(block_text(blocks[i]).splitlines()) for i in g), default=[])
         if not best:
             continue
         entries = [line for i in best for line in _lines(blocks[i])]

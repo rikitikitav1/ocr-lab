@@ -172,12 +172,7 @@ def code_union(blocks: list, readings: list[list], glyphs: Callable[[int], list]
             out.insert(at, code)
         else:
             later = next((b for b in placed if b.where.box[1] > box[1]), None)
-            if later is not None:
-                out.insert(out.index(later), code)
-            else:
-                marker = next((i for i, b in enumerate(out) if isinstance(b, PageMarker) and b.file_page == page), None)
-                nxt = next((i for i, b in enumerate(out) if i > (marker or -1) and isinstance(b, PageMarker)), len(out))
-                out.insert(nxt, code)
+            out.insert(out.index(later) if later is not None else geometry.page_end(out, page), code)
         added += 1
     return out, added
 

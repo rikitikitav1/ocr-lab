@@ -1,24 +1,40 @@
-# the caption element: a book's own numbered caption series and a picture's caption, learned from the layer and set
+# the caption element, learned from the book: the numbered series its lines set apart, a picture's caption
 import re
 import statistics
 from collections import defaultdict
 from collections.abc import Callable
 
-from document.model import Caption, Code, Figure, Heading, PageMarker, Paragraph, Table
-
 LABEL = re.compile(r"^([^\W\d_]{2,}\.?)\s*(\d+(?:[.\-–:]\d+)*)[.:]?(\s|$)")
+
+
 # a contents or list line ends in its page number
 PAGE_TAIL = re.compile(r"[\s.·…_]{2,}\d+\s*$|\s\d+\s*$")
+
+
 MIN_LINES = 5
+
+
 MIN_WORDS = 3
+
+
 RISING = 0.8
+
+
 # a series is the book's captions when half its lines or more stand by a picture or a drawing
 WITH_NEIGHBOUR = 0.5
+
+
 # a caption stands this close above or below a picture or a drawn diagram, in points, and overlaps it across
 BY_DRAWING = 30.0
+
+
 # a caption runs on over rows of its own size, no further apart than this, at most this many rows
 ROW_GAP = 1.6
+
+
 MAX_ROWS = 3
+
+
 # a page holding this many series lines and no neighbour by any is a list of figures, not captions
 LIST_LINES = 3
 
@@ -133,71 +149,3 @@ def by_page(pictures: dict[int, list[tuple]], lines: dict[int, list]) -> dict[in
         if found:
             out[page] = found
     return out
-
-
-# a caption of the book's series an engine set aside as furniture comes back after the picture, table or listing
-def captions_from_furniture(blocks: list, reads: dict, picked: dict,
-                            captions: dict[int, list[str]]) -> tuple[list, int]:
-    book_page = {b.file_page: b.book_page for b in blocks if isinstance(b, PageMarker)}
-    back: dict[int, list[Caption]] = {}
-    for page, pick in picked.items():
-        wanted = captions.get(book_page.get(page), [])
-        for at, _, text in getattr(reads[pick["picked"]], "furniture_at", []) if wanted else []:
-            if at == page and any(_caption_cut(text, w) is not None for w in wanted):
-                back.setdefault(page, []).append(Caption(text=" ".join(text.split())))
-    out, page, n = [], None, 0
-    for b in blocks:
-        if isinstance(b, PageMarker):
-            page = b.file_page
-        out.append(b)
-        if back.get(page) and isinstance(b, (Figure, Table, Code)):
-            out.append(back[page].pop(0))
-            n += 1
-    return out, n
-
-
-# a block opening with a caption of the book's own series is that caption, the paragraph's rest after it stays
-def series_captions(blocks: list, captions: dict[int, list[str]]) -> tuple[list, int]:
-    out, page, n = [], None, 0
-    for k, b in enumerate(blocks):
-        if isinstance(b, PageMarker):
-            page = b.book_page
-        wanted = captions.get(page, []) if page is not None else []
-        if wanted and isinstance(b, (Paragraph, Heading)) and not (isinstance(b, Heading) and b.node is not None) \
-                and _names_something(blocks, k):
-            cut = next((c for w in wanted if (c := _caption_cut(b.text, w)) is not None), None)
-            if cut is not None:
-                head, rest = b.text[:cut].strip(), b.text[cut:].strip()
-                out.append(Caption(text=head, where=b.where))
-                if rest:
-                    out.append(Paragraph(text=rest, where=b.where))
-                n += 1
-                continue
-        out.append(b)
-    return out, n
-
-
-CAPTION_PREFIX = 0.9
-# a caption stands by what it names: a picture, a table or a listing within this many blocks on its page
-CAPTION_REACH = 2
-
-
-def _names_something(blocks: list, k: int) -> bool:
-    for step in (-1, 1):
-        for j in range(k + step, k + step * (CAPTION_REACH + 1), step):
-            if not 0 <= j < len(blocks) or isinstance(blocks[j], PageMarker):
-                break
-            if isinstance(blocks[j], (Figure, Table, Code)):
-                return True
-    return False
-
-
-# where a caption's letters end inside a block that opens with them, or None when the block does not open with them
-def _caption_cut(text: str, caption: str) -> int | None:
-    at = [i for i, c in enumerate(text) if not c.isspace()]
-    letters, want = "".join(text[i] for i in at), "".join(caption.split())
-    pairs = zip(letters, want, strict=False)
-    same = next((k for k, (a, b) in enumerate(pairs) if a != b), min(len(letters), len(want)))
-    if not want or same < CAPTION_PREFIX * len(want) and same < len(letters):
-        return None
-    return at[same - 1] + 1 if same else None

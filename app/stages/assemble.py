@@ -1,5 +1,4 @@
 # one piece from both engines' readings of its pages, put together by the assembly passes; nothing here sees a gold
-import hashlib
 import json
 import re
 import time
@@ -318,13 +317,20 @@ def _layout(book_id: int, versions: Pinned) -> tuple[LayoutVersion | None, dict]
 
 
 # the modules each book-level list is made by: a list keyed by a file its make no longer reads is served stale
-LIST_CODE = {"running_heads.json": (running_heads, layout_page), "slot_lines.json": (layout_page,),
-             "note_lines.json": (footnotes, layout_page), "captions.json": (book_captions, sources),
-             "series_captions.json": (book_captions, sources)}
+LIST_CODE = {"running_heads.json": (running_heads.book, layout_page, sources),
+             "slot_lines.json": (layout_page, sources),
+             "note_lines.json": (footnotes.book, layout_page, sources), "captions.json": (book_captions.book, sources),
+             "series_captions.json": (book_captions.book, sources)}
 
 
 # set by a gate: the book-level lists are made anew, not read back, and each one's hash is kept here by name
-FRESH: ContextVar[dict | None] = ContextVar("fresh_lists", default=None)
+class Fresh:
+    def __init__(self):
+        self.made: dict[tuple[str, str], str] = {}
+        self.hashes: dict[str, str] = {}
+
+
+FRESH: ContextVar[Fresh | None] = ContextVar("fresh_lists", default=None)
 
 
 # a book-level list by page kept under its inputs: made once, read back with its page keys as numbers again
@@ -334,11 +340,11 @@ def _by_page(book_id: int, name: str, parts: dict, make: Callable, row: Callable
     made_from = artifacts.Inputs({"stage": STAGE, "files": [f.sha256 for f in files], **parts,
                                   "code": code_version.files_hash(code).hexdigest()[:16]})
     if (fresh := FRESH.get()) is not None:
-        if (name, made_from.key) not in fresh:
+        if (name, made_from.key) not in fresh.made:
             made = make(files)
-            fresh[(name, made_from.key)] = json.dumps(made, ensure_ascii=False)
-            fresh[name] = hashlib.sha256(json.dumps(made, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
-        return {int(k): row(v) for k, v in json.loads(fresh[(name, made_from.key)]).items()}
+            fresh.made[(name, made_from.key)] = json.dumps(made, ensure_ascii=False)
+            fresh.hashes[name] = artifacts.short_sha(json.dumps(made, ensure_ascii=False, sort_keys=True).encode())
+        return {int(k): row(v) for k, v in json.loads(fresh.made[(name, made_from.key)]).items()}
     owner = artifacts.Owner(book_id=book_id)
     done = artifacts.find_done(owner, STAGE, name, made_from.key)
     if done is not None:

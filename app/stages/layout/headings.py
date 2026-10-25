@@ -2,7 +2,7 @@
 from collections import Counter, defaultdict
 
 import numerals
-from assembly import passes
+from assembly import titles
 from rapidfuzz import fuzz
 
 LABEL = numerals.LABEL_LINE
@@ -13,7 +13,7 @@ def _pin(ls: list, title: str):
     pairs = [(i, ls[i].text + " " + ls[i + 1].text, True) for i in range(len(ls) - 1)]
     singles = [(i, x.text, False) for i, x in enumerate(ls)]
     fits = [(fuzz.ratio(t.lower(), title.lower()), not joined, i, joined) for i, t, joined in pairs + singles
-            if len(t.split()) <= 2 * len(title.split()) + 2 and passes.same_title(t, title)]
+            if len(t.split()) <= 2 * len(title.split()) + 2 and titles.same_title(t, title)]
     if not fits:
         return None, None
     _, _, i, joined = max(fits)

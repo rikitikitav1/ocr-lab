@@ -18,7 +18,7 @@ PAGE, HEADINGS = "page", "headings"
 def code_hash() -> str:
     own = [*sorted((settings.APP_DIR / "stages" / "layout").rglob("*.py")),
            settings.APP_DIR / "stages" / "structure" / "sources" / "__init__.py", settings.APP_DIR / "numerals.py",
-           settings.APP_DIR / "assembly" / "passes.py"]
+           settings.APP_DIR / "assembly" / "titles.py"]
     return code_version.files_hash(own).hexdigest()[:16]
 
 

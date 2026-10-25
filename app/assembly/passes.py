@@ -12,6 +12,7 @@ from elements import code, footnotes, geometry, running_heads, tables
 from rapidfuzz import fuzz
 
 from assembly import referee
+from assembly.titles import same_title
 
 
 def conf_text() -> str:
@@ -133,14 +134,6 @@ def apply(reads: dict, layer: dict[int, str], glyphs: Callable[[int], list],
     return blocks, counts
 
 
-SUB_ENTRY_SIMILARITY = 90
-
-
-# a heading and a structure title are one when they read alike, spacing and case aside, or alike with no space at all
-def same_title(a: str, b: str) -> bool:
-    if fuzz.WRatio(" ".join(a.split()).lower(), " ".join(b.split()).lower()) >= SUB_ENTRY_SIMILARITY:
-        return True
-    return fuzz.ratio("".join(a.split()).lower(), "".join(b.split()).lower()) >= SUB_ENTRY_SIMILARITY
 MAX_LEVEL = 6
 
 

@@ -7,8 +7,8 @@ from functools import cache
 import settings
 import wordfreq
 import yaml
-from assembly.passes import same_title
 from assembly.referee import WORD, block_text
+from assembly.titles import same_title
 from document.model import Caption, Heading, PageMarker, Paragraph, Piece
 from elements import figures, running_heads
 from elements.code import listing_numbers

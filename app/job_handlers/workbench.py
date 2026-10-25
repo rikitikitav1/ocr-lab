@@ -1,6 +1,5 @@
 # jobs that look at a book or a run without changing it: a page range read through one engine, a scratch reassembly
 
-import hashlib
 
 import artifacts
 import settings
@@ -58,10 +57,7 @@ def _against_kept(run_id: int, ord: int, markdown: str, checks: dict) -> dict:
 
 # the text names the images only, so a crop moved by a box is told by the bytes
 def _images_sha(images: dict[str, bytes]) -> str:
-    digest = hashlib.sha256()
-    for name, png in sorted(images.items()):
-        digest.update(name.encode() + b"\0" + png)
-    return digest.hexdigest()[:16]
+    return artifacts.short_sha(b"".join(name.encode() + b"\0" + png for name, png in sorted(images.items())))
 
 
 def _piece(run_id: int, ord: int, overrides: dict, level: int | None, reread: bool) -> dict:
@@ -73,7 +69,7 @@ def _piece(run_id: int, ord: int, overrides: dict, level: int | None, reread: bo
     after = _numbers(checks, got.counts)
     changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
     return {"ord": ord, "changed": changed, "before": before, "after": after, "against_kept": kept,
-            "text_sha": hashlib.sha256(got.markdown.encode()).hexdigest()[:16], "images_sha": _images_sha(got.images)}
+            "text_sha": artifacts.short_sha(got.markdown.encode()), "images_sha": _images_sha(got.images)}
 
 
 # a piece cut at another level or without the re-read page has other page ranges than the run read
@@ -105,10 +101,10 @@ def reassemble(options: dict) -> dict:
         pieces = [c["ord"] for c in run_pieces.pieces(session, session.get(Run, run_id), level, reread)]
     wanted = options["ords"] if options["ords"] is not None else (pieces if level is not None else done)
     unread = {ord: missing for ord in wanted if ord in done if (missing := _unread(run_id, ord, level, reread))}
-    fresh = assemble.FRESH.set({} if options["fresh"] else None)
+    fresh = assemble.FRESH.set(assemble.Fresh() if options["fresh"] else None)
     try:
         rebuilt = [_piece(run_id, ord, overrides, level, reread) for ord in wanted if ord in done and ord not in unread]
-        lists = {k: v for k, v in (assemble.FRESH.get() or {}).items() if isinstance(k, str)}
+        lists = dict(made.hashes) if (made := assemble.FRESH.get()) is not None else {}
     finally:
         assemble.FRESH.reset(fresh)
     out = {"run_id": run_id, "knobs": options["knobs"], "reading_level": level, "reread": reread,

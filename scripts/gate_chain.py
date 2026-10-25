@@ -35,12 +35,7 @@ def _gate(runs: str, out: Path, base: str, knobs: dict, report: Path, ignore: tu
     cut_file = out.with_suffix(".base.json")
     cut_file.write_text(json.dumps(cut))
     with report.open("w") as f:
-        sys.stdout, saved = f, sys.stdout
-        try:
-            moved = gate_reassemble.compare(str(cut_file), str(out), ignore)
-        finally:
-            sys.stdout = saved
-    return moved
+        return gate_reassemble.compare(str(cut_file), str(out), ignore, f)
 
 
 def main(chain: str, runs: str, base: str, knobs_base: str, out_dir: str, branch: str) -> int:
@@ -49,6 +44,7 @@ def main(chain: str, runs: str, base: str, knobs_base: str, out_dir: str, branch
     log = out / "chain.log"
     steps = [line.split() for line in open(chain) if line.strip() and not line.startswith("#")]
     last: dict[str, str] = {}
+    branch = branch or _git("branch", "--show-current")
     if _git("branch", "--show-current") != branch:
         _log(log, f"STOP: the main tree is not on {branch}")
         return 2
@@ -89,7 +85,7 @@ if __name__ == "__main__":
     parser.add_argument("--base", default="temp_files/gate0_baseline.json")
     parser.add_argument("--knobs-base", default="temp_files/gate0_knobs.json")
     parser.add_argument("--out", default="temp_files/chain")
-    parser.add_argument("--branch", default="007-elements")
+    parser.add_argument("--branch", help="the branch the main tree must be on; the one it is on by default")
     # the tree the stand runs; a copy of this script elsewhere still moves that tree
     parser.add_argument("--tree", default=str(TREE))
     args = parser.parse_args()

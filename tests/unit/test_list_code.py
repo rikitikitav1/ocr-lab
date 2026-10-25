@@ -6,11 +6,11 @@ from stages import assemble
 SOURCES = "stages/structure/sources/__init__.py"
 
 # each book-level list is keyed by the files its make reads; a module that moves rewrites its row here
-MADE_BY = {"running_heads.json": ["elements/running_heads.py", "stages/layout/page.py"],
-           "slot_lines.json": ["stages/layout/page.py"],
-           "note_lines.json": ["elements/footnotes.py", "stages/layout/page.py"],
-           "captions.json": ["elements/captions.py", SOURCES],
-           "series_captions.json": ["elements/captions.py", SOURCES]}
+MADE_BY = {"running_heads.json": ["elements/running_heads/book.py", "stages/layout/page.py", SOURCES],
+           "slot_lines.json": ["stages/layout/page.py", SOURCES],
+           "note_lines.json": ["elements/footnotes/book.py", "stages/layout/page.py", SOURCES],
+           "captions.json": ["elements/captions/book.py", SOURCES],
+           "series_captions.json": ["elements/captions/book.py", SOURCES]}
 
 
 def test_each_book_level_list_is_keyed_by_the_modules_that_make_it():

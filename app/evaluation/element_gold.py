@@ -4,7 +4,7 @@ import unicodedata
 from collections import Counter
 
 from assembly import referee
-from assembly.passes import same_title
+from assembly.titles import same_title
 from document.model import Figure, Formula, PageMarker, Paragraph
 from rapidfuzz import fuzz
 

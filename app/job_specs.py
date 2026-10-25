@@ -113,8 +113,8 @@ class ReadRangeOptions(BookOptions):
 MAX_READING_LEVEL = 9
 
 
-# a finished run's pieces assembled again from their kept readings with run knobs set over the profile's
-class ReassembleOptions(RunOptions):
+# what a reassembly is asked for, the door's body and the job's options alike
+class Reassembly(_Spec):
     knobs: dict
     ords: list[int] | None = None
     # cut the run at this tree level instead of its own; the re-read off cuts as runs read before it were cut
@@ -122,6 +122,11 @@ class ReassembleOptions(RunOptions):
     reread: bool = True
     # the book-level lists made anew instead of read back, their hashes in the result, for a gate
     fresh: bool = False
+
+
+# a finished run's pieces assembled again from their kept readings with run knobs set over the profile's
+class ReassembleOptions(RunOptions, Reassembly):
+    pass
 
 
 class CleanupOptions(_Spec):

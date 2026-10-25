@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pdf
 from assembly import passes
 from document.model import Code, Figure, Heading, PageMarker, Paragraph, Where
 from elements import figures, running_heads
@@ -151,7 +152,7 @@ def test_every_block_belongs_to_the_node_last_opened_before_it_and_a_page_set_no
 
 
 def test_a_figure_with_a_box_gets_its_picture_cut_from_the_page_and_named_for_the_bundle(monkeypatch):
-    monkeypatch.setattr(figures.pdf, "page_crop", lambda path, index, box: f"png {index} {box}".encode())
+    monkeypatch.setattr(pdf, "page_crop", lambda path, index, box: f"png {index} {box}".encode())
     kept: dict = {}
 
     def keep(png):

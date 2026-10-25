@@ -2,7 +2,6 @@
 import re
 from collections.abc import Callable
 
-import pdf
 from document.model import Caption, Figure, Piece
 
 
@@ -13,6 +12,9 @@ def image_kept(image: str) -> bool:
 
 # a figure's picture is cut from the page by its box, so it does not depend on what an engine exports
 def kept(path, blocks: list, keep: Callable[[bytes], str]) -> list:
+    # the renderer is loaded here, so the Markdown writer, which only asks image_kept, runs without PyMuPDF
+    import pdf
+
     out = []
     for block in blocks:
         if isinstance(block, Figure) and block.where is not None and not image_kept(block.image):
