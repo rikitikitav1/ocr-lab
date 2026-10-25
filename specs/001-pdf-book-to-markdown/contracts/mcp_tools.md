@@ -34,6 +34,7 @@ error text starts with the same kind the route returns: `refused:`, `busy:`, `mi
 | `report(id, pieces=false)` | GET `/runs/{id}/report` | |
 | `bundle(id)` | GET `/runs/{id}/bundle` | returns the bundle path |
 | `reassemble(id, knobs, ords?, reading_level?, reread=true)` | POST `/runs/{id}/reassemble` | |
+| `reassembly_gate(run_ids, knobs?, base_job_id?, ignore?)` | POST `/gates/reassembly` | |
 | `run_artifacts(id, stage?, node?, used=false, heavy=false, name?)` | GET `/runs/{id}/artifacts` | `used` adds the book's artifacts the run was made from, marked used; per-pass dumps only with `heavy`; `name` keeps the names holding it |
 | `run_artifact(id, artifact_id)` | GET `/runs/{id}/artifacts/{aid}` | the whole file as text; the route sends it raw |
 | `artifact(id)` | GET `/artifacts/{id}` | any kept artifact, a book's too, with its file content as text |

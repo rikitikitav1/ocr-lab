@@ -5,6 +5,10 @@ import os
 import sys
 import time
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
+from evaluation import byte_gate  # noqa: E402
 
 API = os.getenv("OCR_LAB_API", "http://localhost:8100/v1")
 WAIT = 300
@@ -43,45 +47,14 @@ def run(runs_file: str, out: str, knobs: dict) -> None:
         job = _call(f"/jobs/{job_id}")
         if job["status"] != "done":
             sys.exit(f"book {book} job {job_id}: {job['status']} {job.get('error')}")
-        result = job["result"]
-        record["books"][str(book)] = {
-            "run": result["run_id"], "job": job_id, "lists": result["book_lists"], "not_kept": result["not_kept"],
-            "kept_text_changed": result["kept_text_changed"], "kept_numbers_changed": result["kept_numbers_changed"],
-            "pieces": {str(p["ord"]): {"text_sha": p["text_sha"], "images_sha": p["images_sha"], "counts": p["after"]}
-                       for p in result["pieces"]}}
-        print(book, job_id, len(result["pieces"]), flush=True)
+        record["books"][str(book)] = byte_gate.entry(job_id, job["result"])
+        print(book, job_id, len(job["result"]["pieces"]), flush=True)
     json.dump(record, open(out, "w"), indent=1, sort_keys=True)
 
 
 def compare(base_file: str, new_file: str, ignore: tuple[str, ...] = (), out=None) -> int:
-    def say(*args):
-        print(*args, file=out or sys.stdout)
-
-    base, new = json.load(open(base_file))["books"], json.load(open(new_file))["books"]
-    moved = 0
-    for book in sorted(base.keys() | new.keys(), key=int):
-        a, b = base.get(book), new.get(book)
-        if a is None or b is None:
-            say(book, "only in", base_file if b is None else new_file)
-            moved += 1
-            continue
-        lists = sorted(k for k in a["lists"].keys() | b["lists"].keys() if a["lists"].get(k) != b["lists"].get(k))
-        text = [o for o in a["pieces"] if o in b["pieces"] and a["pieces"][o]["text_sha"] != b["pieces"][o]["text_sha"]]
-        images = [o for o in a["pieces"] if o in b["pieces"]
-                  and a["pieces"][o]["images_sha"] != b["pieces"][o]["images_sha"]]
-        pieces = sorted(a["pieces"].keys() ^ b["pieces"].keys(), key=int)
-        counts: dict[str, int] = {}
-        for o in a["pieces"].keys() & b["pieces"].keys():
-            x, y = a["pieces"][o]["counts"], b["pieces"][o]["counts"]
-            for k in (x.keys() | y.keys()) - set(ignore):
-                if x.get(k, "absent") != y.get(k, "absent"):
-                    counts[k] = counts.get(k, 0) + 1
-        if lists or text or images or pieces or counts:
-            moved += 1
-            say(book, {"lists": lists, "text": sorted(text, key=int)[:20], "texts": len(text),
-                         "images": sorted(images, key=int)[:20],
-                         "pieces_apart": pieces, "counts": counts})
-    say("books moved:", moved, "of", len(base.keys() | new.keys()))
+    moved, lines = byte_gate.compare(json.load(open(base_file))["books"], json.load(open(new_file))["books"], ignore)
+    print("\n".join(lines), file=out or sys.stdout)
     return 1 if moved else 0
 
 

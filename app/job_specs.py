@@ -129,6 +129,15 @@ class ReassembleOptions(RunOptions, Reassembly):
     pass
 
 
+# a byte-identity gate over finished runs, compared with an earlier gate's record when one is named
+class ReassemblyGateOptions(_Spec):
+    run_ids: list[int] = Field(min_length=1)
+    knobs: dict = {}
+    base_job_id: int | None = None
+    # counts the change is meant to move, named so that nothing else moves unseen
+    ignore: list[str] = []
+
+
 class CleanupOptions(_Spec):
     dry_run: bool = True
 
@@ -168,6 +177,7 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     "book_metrics": (RunOptions, "cpu"),
     "read_range": (ReadRangeOptions, "gpu"),
     "reassemble": (ReassembleOptions, "cpu"),
+    "reassembly_gate": (ReassemblyGateOptions, "cpu"),
     "eval_run": (EmptyOptions, "cpu"),
     "structure_eval": (StructureEvalOptions, "cpu"),
     # the engines read on the card, so the measurement runs on the GPU lane

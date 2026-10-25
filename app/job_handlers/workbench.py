@@ -1,11 +1,16 @@
-# jobs that look at a book or a run without changing it: a page range read through one engine, a scratch reassembly
-
+# jobs that look at a book or a run without changing it: a page range read, a scratch reassembly, a gate over them
+import json
+from pathlib import Path
 
 import artifacts
+import job_queue
 import settings
+from evaluation import byte_gate
+from job_signals import Deferred, Final
 from knobs import registry
 from orm.catalogue import Artifact, Piece, Run
 from orm.db import Session
+from orm.jobs import Job
 from sqlalchemy import select
 from stages import assemble, run_pieces, run_state
 from stages.piece_assembly import assembled
@@ -117,4 +122,51 @@ def reassemble(options: dict) -> dict:
            "kept_headings_moved": sum(c["against_kept"]["headings_moved"] or 0 for c in rebuilt),
            "book_lists": lists}
     artifacts.atomic_write(settings.DATA_DIR / "scratch" / "reassemble" / f"job-{options['_job_id']}.json", out)
+    return out
+
+
+REPORT_LINES = 60
+
+
+def _gate_path(job_id: int) -> Path:
+    return settings.DATA_DIR / "scratch" / "gates" / f"{job_id}.json"
+
+
+def gate_record(job_id: int) -> dict:
+    path = _gate_path(job_id)
+    if not path.exists():
+        raise Final(f"no gate record of job {job_id}")
+    return json.loads(path.read_text())
+
+
+# the gate waits on its reassemblies without holding a worker; children run on one code, or the gate refuses
+@register("reassembly_gate")
+def reassembly_gate(options: dict) -> dict:
+    job_id = options["_job_id"]
+    with Session() as session:
+        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "reassemble")
+                                   .order_by(Job.id)).all()
+        books = dict(session.execute(select(Run.id, Run.book_id).where(Run.id.in_(options["run_ids"]))).all())
+    if not children:
+        for run_id in options["run_ids"]:
+            job_queue.enqueue("reassemble", {"run_id": run_id, "knobs": options["knobs"], "fresh": True},
+                              parent_id=job_id, run_id=run_id, book_id=books.get(run_id))
+        raise Deferred(f"waiting for {len(options['run_ids'])} reassemblies", delay_seconds=30)
+    left = [c.id for c in children if c.status not in job_queue.FINISHED]
+    if left:
+        raise Deferred(f"waiting for {len(left)} of {len(children)} reassemblies", delay_seconds=30)
+    if failed := [c.id for c in children if c.status != "done"]:
+        raise Final(f"reassemblies not done: {failed}")
+    codes = sorted({c.code_hash for c in children})
+    if len(codes) != 1:
+        raise Final(f"the reassemblies ran on several codes {codes}: reload the workers and gate again")
+    record = {"knobs": options["knobs"], "code": codes[0],
+              "books": {str(books[c.run_id]): byte_gate.entry(c.id, c.result) for c in children}}
+    artifacts.atomic_write(_gate_path(job_id), record)
+    out = {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "code": codes[0],
+           "books": len(record["books"])}
+    if options["base_job_id"] is not None:
+        moved, lines = byte_gate.compare(gate_record(options["base_job_id"])["books"], record["books"],
+                                         tuple(options["ignore"]))
+        out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
     return out

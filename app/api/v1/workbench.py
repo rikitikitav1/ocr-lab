@@ -18,6 +18,11 @@ def read_range(id: int, body: ReadRange):
     return workbench.read_range(id, body.engine, body.first_page, body.last_page, body.force_raster_only)
 
 
+@router.post("/gates/reassembly", status_code=202)
+def reassembly_gate(body: job_specs.ReassemblyGateOptions):
+    return workbench.reassembly_gate(body.run_ids, body.knobs, body.base_job_id, body.ignore)
+
+
 @router.post("/runs/{id}/reassemble", status_code=202)
 def reassemble(id: int, body: job_specs.Reassembly):
     return workbench.reassemble(id, body.knobs, body.ords, body.reading_level, body.reread, body.fresh)

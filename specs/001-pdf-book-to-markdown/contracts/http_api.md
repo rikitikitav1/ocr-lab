@@ -53,6 +53,7 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 | GET | `/runs/{id}/artifacts/{artifact_id}` | file content | raw |
 | GET | `/runs/{id}/bundle` | bundle as a tar stream | `application/x-tar` |
 | POST | `/runs/{id}/reassemble` | `{"knobs": {...}, "ords": [...], "reading_level": 0, "reread": true}` (CPU lane; the level cuts the run at that tree level instead of its own, reread false leaves out the next piece's first page, as runs read before the re-read were cut, units_not_pieces names the run's units no piece matches, not_kept the pieces whose pages the run did not read that way); assembles the run's nodes again from their kept readings with run knobs set, each node's numbers before and after, and today's code against what the run kept (numbers and text changed, headings moved, the anchors left out); empty knobs give only the latter; the run untouched | `202 {job_id}` |
+| POST | `/gates/reassembly` | `{"run_ids": [...], "knobs": {...}, "base_job_id": 0, "ignore": [...]}` (CPU lane); each run reassembled fresh under the gate job, the record of every piece's text and image hashes, counts and the book-level lists kept in `data/scratch/gates/<job>.json`; with a base gate the result gives `moved` and a report per moved book; refused when the reassemblies ran on more than one code | `202 {job_id}` |
 | GET | `/artifacts/{id}` | any kept artifact by id: stage, name, book, run, node, meta and its text | `{artifact}` |
 
 ## Profiles, knobs, presets

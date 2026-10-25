@@ -5,6 +5,8 @@ from knobs import registry
 from mcp_tools import tool
 from orm.catalogue import Artifact, Book, Run
 from orm.db import Session
+from orm.jobs import Job
+from sqlalchemy import select
 
 
 # the reading lands in the job's result by range key and artifact id, which the artifact door reads
@@ -47,6 +49,29 @@ def reassemble(id: int, knobs: dict, ords: list[int] | None = None, reading_leve
             raise LookupError(f"no run {id}")
         book_id = run.book_id
     return {"job_id": job_queue.enqueue("reassemble", options, book_id=book_id)}
+
+
+# the gate lives on the stand, so a dropped caller loses nothing; its record is the next gate's base
+@tool("reassembly_gate", "POST /v1/gates/reassembly",
+      "Queue a CPU job that reassembles each named finished run fresh (as reassemble with fresh) with the given knobs"
+      " and keeps the record of every piece's text and image hashes, counts and the book-level lists; with"
+      " base_job_id it compares the record with that earlier gate's, and its result gives moved (books that moved)"
+      " and a report per moved book; ignore names counts the change is meant to move. The reassemblies must run on"
+      " one code, else the gate refuses; reload the workers before gating new code.")
+def reassembly_gate(run_ids: list[int], knobs: dict | None = None, base_job_id: int | None = None,
+                    ignore: list[str] | None = None) -> dict:
+    knobs = knobs or {}
+    registry.check(knobs)
+    options = job_specs.check("reassembly_gate", {"run_ids": run_ids, "knobs": knobs, "base_job_id": base_job_id,
+                                                  "ignore": ignore or []})
+    with Session() as session:
+        missing = sorted(set(run_ids) - set(session.scalars(select(Run.id).where(Run.id.in_(run_ids)))))
+        base = session.get(Job, base_job_id) if base_job_id is not None else None
+    if missing:
+        raise LookupError(f"no runs {missing}")
+    if base_job_id is not None and (base is None or base.type != "reassembly_gate" or base.status != "done"):
+        raise job_specs.Refused(f"job {base_job_id} is no finished reassembly gate")
+    return {"job_id": job_queue.enqueue("reassembly_gate", options)}
 
 
 # any kept artifact by id, a book's readings included; a tool cannot carry bytes, so it gets the file as text
