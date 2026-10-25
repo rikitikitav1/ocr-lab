@@ -41,7 +41,7 @@ furniture are taken off the layer side, read from the layer alone (`app/stages/a
   marks around it allowed) whose page minus number gives the same shift on 3 or more pages. A "5" in a
   query's output does not rise with the pages and stays text;
 - a **slot line** is a page's edge line that the book's page layout (the version the run started on) claims for
-  one of its running slots, by folio, repeat or side (`app/stages/layout/page.py`).
+  one of its running slots, by folio, repeat or side (`app/elements/running_heads/slots.py`).
 
 What an engine set aside as furniture is not subtracted. See
 [lost text against the book's own heads](experiments/2026-10-10_run-and-report.md#lost-text-against-the-books-own-running-heads-and-folios).

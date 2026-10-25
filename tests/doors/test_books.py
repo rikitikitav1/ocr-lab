@@ -115,7 +115,7 @@ def test_a_shelf_snapshot_names_the_books_whose_toc_or_metadata_moved(client, in
     kept = client.get(f"/v1/shelf/snapshots/{taken['id']}").json()["books"][str(book["id"])]
     assert set(kept) == {"structure", "metadata", "layout_page", "layout_headings"}
     assert client.get("/v1/shelf/snapshots/999999").status_code == 404
-    from stages.layout import collect as layout
+    from stages.elements import collect as layout
     layout.collect_page(still["id"], force=True)
     layout.collect_page(still["id"], force=True)
     moved = client.get(f"/v1/shelf/snapshots/{taken['id']}/changes", params={"book_ids": [still["id"]]}).json()

@@ -82,7 +82,7 @@ def test_a_knob_no_pass_reads_or_without_help_fails_the_start_and_is_named(monke
 def test_a_book_set_in_a_monospace_face_starts_on_the_technical_preset_unless_its_knob_says_otherwise(stand, tmp_path):
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
-    from stages.layout import collect as layout
+    from stages.elements import collect as layout
     from use_cases import books
 
     path = tmp_path / "code.pdf"

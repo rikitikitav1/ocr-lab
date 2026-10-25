@@ -11,7 +11,7 @@ from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import select
 from stages import assemble, bundle, piece_assembly, run_pieces, run_state
-from stages.layout import collect as layout_collect
+from stages.elements import collect as layout_collect
 from stages.metadata import resolve
 from stages.structure import collect
 

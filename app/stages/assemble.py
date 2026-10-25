@@ -18,6 +18,7 @@ from assembly import passes, referee
 from document.model import Code, Heading, Node, PageMarker, Piece, Table
 from elements import captions as book_captions
 from elements import contents, figures, footnotes, running_heads
+from elements.running_heads import slots
 from engines import converter_tools, reading
 from job_signals import Final
 from orm.catalogue import Artifact, Book, BookFile, LayoutVersion, StructureNode
@@ -26,8 +27,8 @@ from quality import piece as piece_quality
 from writers import markdown
 
 from stages import intake
-from stages.layout import collect as layout_collect
-from stages.layout import page as layout_page
+from stages.elements import collect as layout_collect
+from stages.elements import page as layout_page
 from stages.metadata import resolve
 from stages.structure import collect as structure_collect
 from stages.structure import evidence, scan, sources
@@ -317,10 +318,9 @@ def _layout(book_id: int, versions: Pinned) -> tuple[LayoutVersion | None, dict]
 
 
 # the modules each book-level list is made by: a list keyed by a file its make no longer reads is served stale
-LIST_CODE = {"running_heads.json": (running_heads.book, layout_page, sources),
-             "slot_lines.json": (layout_page, sources),
-             "note_lines.json": (footnotes.book, layout_page, sources), "captions.json": (book_captions.book, sources),
-             "series_captions.json": (book_captions.book, sources)}
+LIST_CODE = {"running_heads.json": (running_heads.book, slots, sources), "slot_lines.json": (slots, sources),
+             "note_lines.json": (footnotes.book, slots, layout_page, sources),
+             "captions.json": (book_captions.book, sources), "series_captions.json": (book_captions.book, sources)}
 
 
 # set by a gate: the book-level lists are made anew, not read back, and each one's hash is kept here by name
@@ -362,7 +362,7 @@ def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
         lines = sources.book_lines(files)
         heads = running_heads.layer_heads(lines)
         page_of = {id(x): p for p, ls in lines.items() for x in ls}
-        for key, (line, _) in layout_page.claimed_reasons(lines, layout).items() if layout else ():
+        for key, (line, _) in slots.claimed_reasons(lines, layout).items() if layout else ():
             on_page = heads.setdefault(page_of[key], [])
             if line.text not in on_page:
                 on_page.append(line.text)
@@ -383,7 +383,7 @@ def slot_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[tuple
         heights = {f.first_page + i: h for f in files
                    for i, (_, h) in enumerate(pdf.page_sizes(settings.DATA_DIR / f.file_path))}
         out: dict[int, list[tuple[str, str, float]]] = {}
-        for key, (line, reason) in layout_page.claimed_reasons(lines, layout).items():
+        for key, (line, reason) in slots.claimed_reasons(lines, layout).items():
             page = page_of[key]
             out.setdefault(page, []).append((line.text, reason, round(line.top / heights[page], 4)))
         return out

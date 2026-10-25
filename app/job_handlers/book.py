@@ -4,7 +4,7 @@ import job_specs
 import logging_setup
 from engines import card
 from stages import intake, run_start
-from stages.layout import collect as layout
+from stages.elements import collect as layout
 from stages.metadata import resolve
 from stages.structure import collect
 

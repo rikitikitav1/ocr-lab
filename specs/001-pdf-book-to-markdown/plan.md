@@ -116,7 +116,7 @@ app/
 │   │                         # model_reader.py, language.py, candidates.py (field list)
 │   ├── structure/            # the structure: sources/*.py, pages.py (printed pages to book pages), scan.py, reconcile.py, collect.py,
 │   │                         # outlines.py, compare.py (structure diffs for every door)
-│   ├── layout/               # page.py (body, slots, notes), headings.py (level styles from pins), collect.py
+│   ├── elements/             # the book's elements in order: page.py (body size, slots and notes), collect.py (a version per step)
 │   ├── profile_search.py     # probes, presets, sampled coordinate search (planned)
 │   ├── assemble.py           # one piece: engine, adapter, rules, checks
 │   ├── run_start.py          # a run created on the book's current versions, its book_run queued
@@ -127,7 +127,7 @@ app/
 ├── engines/                  # borrowed from rag-lab and adapted: converter client, card handover, adapters, model client
 ├── document/                 # document model (pydantic blocks)
 ├── assembly/                 # passes.py (the order of the range passes, boundaries, title, pins, levels, scans), referee.py (per-page engine pick)
-├── elements/                 # one module per book element: code, tables, contents, captions, figures, footnotes, running_heads; geometry, folding shared
+├── elements/                 # one module per book element: code, tables, contents, captions, figures, footnotes, running_heads, headings; geometry, folding shared
 ├── structure/tree.py         # parents and depth of a node list
 ├── knobs/registry.py         # the knob registry and its checks
 ├── probes/                   # knob probes (planned)

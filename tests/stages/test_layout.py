@@ -1,16 +1,24 @@
 import json
 
-from stages.layout import headings, page
+from elements.headings import book as headings
+from elements.running_heads import slots
+from stages.elements import page
 from text_layer import Line
 
-LETTERS = "abcdefghijklmnopqrstuvwxyzabcd"
+
+# a slot counts repeats with digits dropped, so lines told apart by a number would all repeat; letters do not
+def _tag(n: int) -> str:
+    out = chr(97 + n % 26)
+    while n := n // 26:
+        out = chr(97 + n % 26) + out
+    return out
 
 
 def _book(pages: int = 20, foot=None) -> dict:
     out = {}
     for p in range(1, pages + 1):
         lines = [Line(f"Chapter {p % 3}   {p + 2}", 50, 40.6, 9, False)]
-        lines += [Line(f"a body line {LETTERS[i]} of the page {LETTERS[p]}", 50, 100 + 12 * i, 10, False)
+        lines += [Line(f"a body line {_tag(i)} of the page {_tag(p)}", 50, 100 + 12 * i, 10, False)
                   for i in range(30)]
         lines += foot(p) if foot else []
         out[p] = lines
@@ -25,9 +33,9 @@ def test_the_top_slot_carries_the_folio_and_the_body_is_not_a_slot():
 
 
 def test_notes_open_with_a_marker_and_code_under_the_body_is_no_note():
-    notes, _ = page.measure(_book(foot=lambda p: [Line(f"1 See {LETTERS[p]} on the source.", 50, 500, 8, False)]))
+    notes, _ = page.measure(_book(foot=lambda p: [Line(f"1 See {_tag(p)} on the source.", 50, 500, 8, False)]))
     assert notes["notes"] == {"size": 8.0, "pages": 20, "lines": 20}
-    code, _ = page.measure(_book(foot=lambda p: [Line(f"Program Example{LETTERS[p]};", 50, 500, 8, False)]))
+    code, _ = page.measure(_book(foot=lambda p: [Line(f"Program Example{_tag(p)};", 50, 500, 8, False)]))
     assert code["notes"] is None and code["bottom"] is None
 
 
@@ -48,7 +56,7 @@ def test_a_heading_on_its_own_line_is_not_pinned_to_the_bigger_line_above():
 
 
 def test_a_kept_page_layout_claims_the_same_lines_it_was_measured_on():
-    lines = _book(foot=lambda p: [Line(f"1 See {LETTERS[p]} on the source.", 50, 500, 8, False)])
+    lines = _book(foot=lambda p: [Line(f"1 See {_tag(p)} on the source.", 50, 500, 8, False)])
     found, taken = page.measure(lines)
     kept = json.loads(json.dumps(found))
     assert taken and page.claimed(lines, kept) == taken
@@ -57,7 +65,7 @@ def test_a_kept_page_layout_claims_the_same_lines_it_was_measured_on():
 def test_a_layout_made_from_other_inputs_is_stale_and_one_never_made_is_not(monkeypatch):
     from types import SimpleNamespace
 
-    from stages.layout import collect
+    from stages.elements import collect
 
     kept = {collect.PAGE: SimpleNamespace(input_hash="old"), collect.HEADINGS: None}
     monkeypatch.setattr(collect, "current", lambda book_id, kind: kept[kind])
@@ -92,12 +100,12 @@ def test_a_head_set_on_its_side_is_a_side_band_and_does_not_take_the_top_slot():
 def test_a_claimed_slot_line_has_a_reason_and_a_band_line_by_place_alone_has_none():
     book = _book()
     found, _ = page.measure(book)
-    reasons = page.claimed_reasons(book, found)
+    reasons = slots.claimed_reasons(book, found)
     assert {why for _, why in reasons.values()} == {"folio"}
     assert len(reasons) == len(book)
-    stray = {p: [Line(f"a body line {LETTERS[p]} that ends the page", 50, 40.6, 9, False)] + lines[1:]
+    stray = {p: [Line(f"a body line {_tag(p)} that ends the page", 50, 40.6, 9, False)] + lines[1:]
              for p, lines in book.items()}
-    assert page.claimed_reasons(stray, found) == {}
+    assert slots.claimed_reasons(stray, found) == {}
 
 
 def test_the_front_matter_s_roman_folios_are_their_own_sequence_before_the_first_arabic_one():
@@ -113,6 +121,6 @@ def test_the_front_matter_s_roman_folios_are_their_own_sequence_before_the_first
     found, _ = page.measure(book)
     assert found["bottom"]["folio"]["offset"] == 6
     assert found["bottom"]["roman"] == {"offset": 0, "pages": 6, "before": 7}
-    reasons = page.claimed_reasons(book, found)
+    reasons = slots.claimed_reasons(book, found)
     assert sorted(x.text for x, why in reasons.values() if why == "folio")[:3] == ["1", "10", "11"]
     assert {x.text for x, _ in reasons.values()} >= set(romans)
