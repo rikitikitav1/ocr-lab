@@ -89,6 +89,12 @@ def test_reassembly_with_a_knob_reports_each_chapter_before_and_after_and_leaves
     assert result["pieces"][0]["against_kept"]["lines"] == []
     against = client.get(f"/v1/jobs/{same.json()['job_id']}").json()["result"]
     assert against["pieces_changed"] == [] and against["kept_text_changed"] == [] and against["pieces"]
+    # a fresh reassembly makes the book-level lists anew and writes the same text as one reading them back
+    fresh = client.post(f"/v1/runs/{run_id}/reassemble", json={"knobs": {}, "fresh": True})
+    _drain()
+    anew = client.get(f"/v1/jobs/{fresh.json()['job_id']}").json()["result"]
+    assert {"running_heads.json", "captions.json"} <= set(anew["book_lists"]) and against["book_lists"] == {}
+    assert [c["text_sha"] for c in anew["pieces"]] == [c["text_sha"] for c in against["pieces"]]
     scratch = settings.DATA_DIR / "scratch" / "reassemble" / f"job-{done['id']}.json"
     assert json.loads(scratch.read_text())["pieces_changed"] == [2]
     level = client.post(f"/v1/runs/{run_id}/reassemble", json={"knobs": {}, "reading_level": 0, "reread": True})

@@ -33,12 +33,14 @@ def read_range(id: int, engine: str, first_page: int, last_page: int, force_rast
       " code against what the run kept; empty knobs give only the latter. reading_level cuts the run at that tree"
       " level instead of its own (units_not_pieces names the run's units no piece matches), reread false leaves out"
       " the next piece's first page, as runs read before the re-read were cut; a piece whose pages the run did not"
-      " read that way is not rebuilt and not_kept names the readings it lacks.")
+      " read that way is not rebuilt and not_kept names the readings it lacks. fresh makes the book-level lists"
+      " (running heads, slots, notes, captions) anew instead of reading them back and gives their hashes in"
+      " book_lists; each piece gives text_sha, the hash of its Markdown, so two code versions compare byte for byte.")
 def reassemble(id: int, knobs: dict, ords: list[int] | None = None, reading_level: int | None = None,
-               reread: bool = True) -> dict:
+               reread: bool = True, fresh: bool = False) -> dict:
     registry.check(knobs)
     options = job_specs.check("reassemble", {"run_id": id, "knobs": knobs, "ords": ords,
-                                             "reading_level": reading_level, "reread": reread})
+                                             "reading_level": reading_level, "reread": reread, "fresh": fresh})
     with Session() as session:
         run = session.get(Run, id)
         if run is None:

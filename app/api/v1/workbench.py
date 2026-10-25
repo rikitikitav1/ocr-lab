@@ -18,6 +18,7 @@ class Reassemble(BaseModel):
     ords: list[int] | None = None
     reading_level: int | None = Field(None, ge=0, le=job_specs.MAX_READING_LEVEL)
     reread: bool = True
+    fresh: bool = False
 
 
 @router.post("/books/{id}/read_range", status_code=202)
@@ -27,7 +28,7 @@ def read_range(id: int, body: ReadRange):
 
 @router.post("/runs/{id}/reassemble", status_code=202)
 def reassemble(id: int, body: Reassemble):
-    return workbench.reassemble(id, body.knobs, body.ords, body.reading_level, body.reread)
+    return workbench.reassemble(id, body.knobs, body.ords, body.reading_level, body.reread, body.fresh)
 
 
 @router.get("/artifacts/{id}")

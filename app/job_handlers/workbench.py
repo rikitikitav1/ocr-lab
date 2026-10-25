@@ -1,5 +1,7 @@
 # jobs that look at a book or a run without changing it: a page range read through one engine, a scratch reassembly
 
+import hashlib
+
 import artifacts
 import settings
 from knobs import registry
@@ -54,6 +56,14 @@ def _against_kept(run_id: int, ord: int, markdown: str, checks: dict) -> dict:
             "line_counts": [len(old), len(new)]}
 
 
+# the text names the images only, so a crop moved by a box is told by the bytes
+def _images_sha(images: dict[str, bytes]) -> str:
+    digest = hashlib.sha256()
+    for name, png in sorted(images.items()):
+        digest.update(name.encode() + b"\0" + png)
+    return digest.hexdigest()[:16]
+
+
 def _piece(run_id: int, ord: int, overrides: dict, level: int | None, reread: bool) -> dict:
     got, checks, _ = assembled(run_id, ord, None, level, reread)
     kept = _against_kept(run_id, ord, got.markdown, checks)
@@ -62,7 +72,8 @@ def _piece(run_id: int, ord: int, overrides: dict, level: int | None, reread: bo
         got, checks, _ = assembled(run_id, ord, overrides, level, reread)
     after = _numbers(checks, got.counts)
     changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
-    return {"ord": ord, "changed": changed, "before": before, "after": after, "against_kept": kept}
+    return {"ord": ord, "changed": changed, "before": before, "after": after, "against_kept": kept,
+            "text_sha": hashlib.sha256(got.markdown.encode()).hexdigest()[:16], "images_sha": _images_sha(got.images)}
 
 
 # a piece cut at another level or without the re-read page has other page ranges than the run read
@@ -94,7 +105,12 @@ def reassemble(options: dict) -> dict:
         pieces = [c["ord"] for c in run_pieces.pieces(session, session.get(Run, run_id), level, reread)]
     wanted = options["ords"] if options["ords"] is not None else (pieces if level is not None else done)
     unread = {ord: missing for ord in wanted if ord in done if (missing := _unread(run_id, ord, level, reread))}
-    rebuilt = [_piece(run_id, ord, overrides, level, reread) for ord in wanted if ord in done and ord not in unread]
+    fresh = assemble.FRESH.set({} if options["fresh"] else None)
+    try:
+        rebuilt = [_piece(run_id, ord, overrides, level, reread) for ord in wanted if ord in done and ord not in unread]
+        lists = {k: v for k, v in (assemble.FRESH.get() or {}).items() if isinstance(k, str)}
+    finally:
+        assemble.FRESH.reset(fresh)
     out = {"run_id": run_id, "knobs": options["knobs"], "reading_level": level, "reread": reread,
            "units_not_pieces": [o for o in done if o not in pieces] if level is not None else [],
            "skipped": [o for o in wanted if o not in done],
@@ -102,6 +118,7 @@ def reassemble(options: dict) -> dict:
            "pieces": rebuilt, "pieces_changed": [c["ord"] for c in rebuilt if c["changed"]],
            "kept_text_changed": [c["ord"] for c in rebuilt if c["against_kept"]["text_changed"]],
            "kept_numbers_changed": [c["ord"] for c in rebuilt if c["against_kept"]["numbers_changed"]],
-           "kept_headings_moved": sum(c["against_kept"]["headings_moved"] or 0 for c in rebuilt)}
+           "kept_headings_moved": sum(c["against_kept"]["headings_moved"] or 0 for c in rebuilt),
+           "book_lists": lists}
     artifacts.atomic_write(settings.DATA_DIR / "scratch" / "reassemble" / f"job-{options['_job_id']}.json", out)
     return out

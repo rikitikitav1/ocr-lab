@@ -120,6 +120,8 @@ class ReassembleOptions(RunOptions):
     # cut the run at this tree level instead of its own; the re-read off cuts as runs read before it were cut
     reading_level: int | None = Field(None, ge=0, le=MAX_READING_LEVEL)
     reread: bool = True
+    # the book-level lists made anew instead of read back, their hashes in the result, for a gate
+    fresh: bool = False
 
 
 class CleanupOptions(_Spec):
