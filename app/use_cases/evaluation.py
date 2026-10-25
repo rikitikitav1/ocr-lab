@@ -48,10 +48,14 @@ def _structure_rows(result: dict) -> dict[int, dict]:
     return out
 
 
-# two structure evaluations of one set side by side: the totals with their deltas and every book whose row moved
+COMMON_TOTALS = ("top_nodes", "top_nodes_found", "top_nodes_below_top", "extra_top_nodes")
+
+
+# two structure evaluations of one set side by side; a probe on a few books compares with a shelf run on its books
 @tool("structure_eval_compare", "GET /v1/eval/structure/compare",
-      "Two structure evaluations of one set side by side: the totals with deltas and every book whose row moved; "
-      "refuses jobs of different sets or not done.")
+      "Two structure evaluations of one set side by side: the totals with deltas, the totals over the books both "
+      "evaluated (common), and every book of both whose row moved; books only one evaluated are named apart "
+      "(only_a, only_b); refuses jobs of different sets or not done.")
 def structure_eval_compare(job_a: int, job_b: int) -> dict:
     a, b = _structure_result(job_a), _structure_result(job_b)
     if a.get("set") != b.get("set"):
@@ -60,15 +64,20 @@ def structure_eval_compare(job_a: int, job_b: int) -> dict:
                   "delta": round(b[k] - a[k], 3) if isinstance(a.get(k), int | float)
                   and isinstance(b.get(k), int | float) else None} for k in STRUCTURE_TOTALS}
     rows_a, rows_b = _structure_rows(a), _structure_rows(b)
+    both = sorted(rows_a.keys() & rows_b.keys())
     moved = []
-    for book_id in sorted(rows_a.keys() | rows_b.keys()):
-        before, after = rows_a.get(book_id), rows_b.get(book_id)
+    for book_id in both:
+        before, after = rows_a[book_id], rows_b[book_id]
         if before != after:
-            changed = sorted(k for k in (before or {}).keys() | (after or {}).keys()
-                             if (before or {}).get(k) != (after or {}).get(k))
+            changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
             moved.append({"book_id": book_id, "changed": changed, "a": before, "b": after})
-    return {"set": a.get("set"), "job_a": job_a, "job_b": job_b, "totals": totals, "moved": moved,
-            "unchanged": len(rows_a.keys() | rows_b.keys()) - len(moved)}
+    common = {}
+    for k in COMMON_TOTALS:
+        sums = [sum(rows[b].get(k) or 0 for b in both) for rows in (rows_a, rows_b)]
+        common[k] = {"a": sums[0], "b": sums[1], "delta": sums[1] - sums[0]}
+    return {"set": a.get("set"), "job_a": job_a, "job_b": job_b, "totals": totals,
+            "common": {"books": len(both), **common}, "moved": moved, "unchanged": len(both) - len(moved),
+            "only_a": sorted(rows_a.keys() - rows_b.keys()), "only_b": sorted(rows_b.keys() - rows_a.keys())}
 
 
 # rows land in data/eval/elements/job-<id>.json, totals per engine and language in the job's result

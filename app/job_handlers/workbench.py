@@ -5,10 +5,10 @@ from pathlib import Path
 import artifacts
 import job_queue
 import settings
-from evaluation import byte_gate
+from evaluation import byte_gate, structure_gate
 from job_signals import Deferred, Final
 from knobs import registry
-from orm.catalogue import Artifact, Piece, Run
+from orm.catalogue import Artifact, Book, Piece, Run
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import select
@@ -168,5 +168,25 @@ def reassembly_gate(options: dict) -> dict:
     if options["base_job_id"] is not None:
         moved, lines = byte_gate.compare(gate_record(options["base_job_id"])["books"], record["books"],
                                          tuple(options["ignore"]))
+        out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
+    return out
+
+
+# the structure of each book as choose gives it, kept as a record and compared with an earlier structure gate's
+@register("structure_gate")
+def run_structure_gate(options: dict) -> dict:
+    job_id = options["_job_id"]
+    with Session() as session:
+        books = options["book_ids"] or list(session.scalars(select(Book.id).order_by(Book.id)))
+    off = tuple(options["off"])
+    record = {"off": list(off), "books": {str(b): structure_gate.entry(b, off) for b in books}}
+    artifacts.atomic_write(_gate_path(job_id), record)
+    out = {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "books": len(books),
+           "skipped": sum("skipped" in e for e in record["books"].values())}
+    if options["base_job_id"] is not None:
+        base = gate_record(options["base_job_id"])
+        if base.get("off") != record["off"]:
+            raise Final(f"the base gate read with {base.get('off')} off, this one with {record['off']}")
+        moved, lines = structure_gate.compare(base["books"], record["books"])
         out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
     return out

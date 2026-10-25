@@ -28,7 +28,7 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 | POST | `/shelf/snapshots` | `{"book_ids": null}`; the structure, metadata and layout (page, headings) versions of every book now, kept to compare a change against | `{snapshot}` |
 | GET | `/shelf/snapshots` | the snapshots taken: id, when, books | `[snapshot]` |
 | GET | `/shelf/snapshots/{id}` | one snapshot: per book its structure, metadata and layout versions | `{snapshot}` |
-| GET | `/shelf/snapshots/{id}/changes` | books whose structure or metadata moved since the snapshot, with their layout versions if they moved; `layouts_moved` for books whose layouts alone moved | `{changes}` |
+| GET | `/shelf/snapshots/{id}/changes` | books whose structure or metadata moved since the snapshot, with their layout versions if they moved; `layouts_moved` for books whose layouts alone moved, each layout with `same` (content unchanged); `layouts_learned_other` counts books with a layout whose content moved | `{changes}` |
 
 ## Runs
 
@@ -54,6 +54,7 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 | GET | `/runs/{id}/bundle` | bundle as a tar stream | `application/x-tar` |
 | POST | `/runs/{id}/reassemble` | `{"knobs": {...}, "ords": [...], "reading_level": 0, "reread": true}` (CPU lane; the level cuts the run at that tree level instead of its own, reread false leaves out the next piece's first page, as runs read before the re-read were cut, units_not_pieces names the run's units no piece matches, not_kept the pieces whose pages the run did not read that way); assembles the run's nodes again from their kept readings with run knobs set, each node's numbers before and after, and today's code against what the run kept (numbers and text changed, headings moved, the anchors left out); empty knobs give only the latter; the run untouched | `202 {job_id}` |
 | POST | `/gates/reassembly` | `{"run_ids": [...], "knobs": {...}, "base_job_id": 0, "ignore": [...]}` (CPU lane); each run reassembled fresh under the gate job, the record of every piece's text and image hashes, counts and the book-level lists kept in `data/scratch/gates/<job>.json`; with a base gate the result gives `moved` and a report per moved book; refused when the reassemblies ran on more than one code | `202 {job_id}` |
+| POST | `/gates/structure` | `{"book_ids": [...], "off": [...], "base_job_id": 0}` (CPU lane); each book's structure as the structure stage would choose it with the sources in `off` left out (every book by default), kept in `data/scratch/gates/<job>.json`, a scan whose contents need the card recorded as skipped; with a base gate the result gives `moved` and a report per moved book; refused for an unknown source or a base read with other sources off | `202 {job_id}` |
 | GET | `/artifacts/{id}` | any kept artifact by id: stage, name, book, run, node, meta and its text | `{artifact}` |
 
 ## Profiles, knobs, presets
@@ -88,7 +89,7 @@ job and are followed with `GET /v1/jobs/{id}/wait`.
 | POST | `/eval/runs` | (planned, not built) `{"set_id", "gate_id", "baseline_id"}` | `202 {job}` |
 | POST | `/eval/structure` | `{"set": "...", "book_ids": [...]}` with set `bookmarks_off`, `contents_off` or `hips`; intake and structure on each book, scored against the gold, the bookmarks, or the structure the bookmarks or printed contents gave with both switched off, before assembly exists (FR-058) | `202 {job}` |
 | POST | `/eval/elements` | `{"engines": ["docling", "mineru", "assembled"], "ids": [...], "knobs": {}}`; each engine over rag-lab's converter_gold sections through the stand's adapters, and `assembled` the stand's own assembly of both made with the run knobs in `knobs`, scored per element (code, table cells, headings, text, running heads) against the gold | `202 {job}` |
-| GET | `/eval/structure/compare?job_a=...&job_b=...` | two structure evaluations of one set side by side, totals and the books that moved | `{comparison}` |
+| GET | `/eval/structure/compare?job_a=...&job_b=...` | two structure evaluations of one set side by side: totals, totals over the books both evaluated (`common`), the books of both that moved, the books only one evaluated (`only_a`, `only_b`) | `{comparison}` |
 | GET | `/eval/runs/{id}` | (planned, not built) rows, worse members with reasons, unexpected changes, gate result (FR-028) | `{evaluation_run}` |
 
 ## Stand

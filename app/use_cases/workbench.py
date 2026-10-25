@@ -7,6 +7,9 @@ from orm.catalogue import Artifact, Book, Run
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import select
+from stages.structure import collect as structure_collect
+
+from use_cases import known
 
 
 # the reading lands in the job's result by range key and artifact id, which the artifact door reads
@@ -72,6 +75,25 @@ def reassembly_gate(run_ids: list[int], knobs: dict | None = None, base_job_id: 
     if base_job_id is not None and (base is None or base.type != "reassembly_gate" or base.status != "done"):
         raise job_specs.Refused(f"job {base_job_id} is no finished reassembly gate")
     return {"job_id": job_queue.enqueue("reassembly_gate", options)}
+
+
+@tool("structure_gate", "POST /v1/gates/structure",
+      "Queue a CPU job that takes each named book's structure (every book by default) as the structure stage would "
+      "choose it, with the sources in off left out, and keeps the record; with base_job_id it compares the record "
+      "with that earlier structure gate's, and its result gives moved (books whose source or entries moved) and a "
+      "report per moved book. A scan whose contents need the card is recorded as skipped.")
+def structure_gate(book_ids: list[int] | None = None, off: list[str] | None = None,
+                   base_job_id: int | None = None) -> dict:
+    if unknown := sorted(set(off or []) - set(structure_collect.SOURCES)):
+        raise job_specs.Refused(f"unknown sources {unknown}; known: {list(structure_collect.SOURCES)}")
+    options = job_specs.check("structure_gate", {"book_ids": book_ids, "off": off or [], "base_job_id": base_job_id})
+    with Session() as session:
+        if book_ids:
+            known.check_books(session, book_ids)
+        base = session.get(Job, base_job_id) if base_job_id is not None else None
+    if base_job_id is not None and (base is None or base.type != "structure_gate" or base.status != "done"):
+        raise job_specs.Refused(f"job {base_job_id} is no finished structure gate")
+    return {"job_id": job_queue.enqueue("structure_gate", options)}
 
 
 # any kept artifact by id, a book's readings included; a tool cannot carry bytes, so it gets the file as text

@@ -33,6 +33,8 @@ from stages.structure.sources import (
 from stages.structure.sources.numbering import title_depth
 
 STAGE = "structure"
+# the names `off` takes in choose: each leaves one source or step out
+SOURCES = ("bookmarks", "printed_contents", "files", "numbering", "text_headings", "outlines", "labels", "headings")
 
 
 def code_hash() -> str:

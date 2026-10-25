@@ -69,6 +69,14 @@ def _structure_change(session, book_id: int, before: int | None, after: int | No
     return {"version": [before, after], **moved} if moved else None
 
 
+# a layout learned again on new code keeps its version number moving; whether it learned the same is the question
+def _layout_change(session, book_id: int, name: str, before: int | None, after: int | None) -> dict:
+    mine = (LayoutVersion.book_id == book_id) & (LayoutVersion.kind == name.removeprefix("layout_"))
+    kept = [session.scalar(select(LayoutVersion.layout).where(mine, LayoutVersion.version == v)) if v is not None
+            else None for v in (before, after)]
+    return {"version": [before, after], "same": kept[0] == kept[1]}
+
+
 def _fields(session, version_id: int | None) -> dict:
     if version_id is None:
         return {}
@@ -86,8 +94,9 @@ def _metadata_change(session, book_id: int, before: int | None, after: int | Non
 # the books whose structure nodes or metadata values differ now from the snapshot; a new version alone is no change
 @tool("shelf_changes", "GET /v1/shelf/snapshots/{id}/changes",
       "The books whose structure nodes, structure base or metadata values moved since a snapshot, with what moved "
-      "and their layout versions; books whose layouts alone got new versions are listed apart in layouts_moved, and "
-      "with_new_versions counts every book with any new version.")
+      "and their layout versions; books whose layouts alone got new versions are listed apart in layouts_moved, each "
+      "layout with same (its content unchanged); layouts_learned_other counts books with a layout whose content "
+      "moved, and with_new_versions counts every book with any new version.")
 def shelf_changes(id: int, book_ids: list[int] | None = None) -> dict:
     path = _dir() / f"{id}.json"
     if not path.is_file():
@@ -108,14 +117,17 @@ def shelf_changes(id: int, book_ids: list[int] | None = None) -> dict:
                       if now["structure"] != before["structure"] else None,
                       "metadata": _metadata_change(session, book_id, before["metadata"], now["metadata"])
                       if now["metadata"] != before["metadata"] else None}
-            layouts = {name: [before[name], now[name]] for name in ("layout_page", "layout_headings")
-                       if name in before and before[name] != now[name]}
+            layouts = {name: _layout_change(session, book_id, name, before[name], now[name])
+                       for name in ("layout_page", "layout_headings") if name in before and before[name] != now[name]}
             if change["structure"] or change["metadata"]:
                 moved.append({"book_id": book_id, **change, **({"layouts": layouts} if layouts else {})})
             elif layouts:
                 layouts_only[book_id] = layouts
+    every = [m.get("layouts", {}) for m in moved] + list(layouts_only.values())
+    learned_other = sum(any(not c["same"] for c in layouts.values()) for layouts in every)
     return {"snapshot": id, "taken_at": snapshot["taken_at"], "books": len(taken),
-            "with_new_versions": new_versions, "moved": moved, "layouts_moved": layouts_only}
+            "with_new_versions": new_versions, "moved": moved, "layouts_moved": layouts_only,
+            "layouts_learned_other": learned_other}
 
 
 @tool("shelf_snapshots", "GET /v1/shelf/snapshots",

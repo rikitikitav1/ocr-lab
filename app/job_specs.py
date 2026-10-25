@@ -138,6 +138,12 @@ class ReassemblyGateOptions(_Spec):
     ignore: list[str] = []
 
 
+class StructureGateOptions(_Spec):
+    book_ids: list[int] | None = None
+    off: list[str] = []
+    base_job_id: int | None = None
+
+
 class CleanupOptions(_Spec):
     dry_run: bool = True
 
@@ -178,6 +184,7 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     "read_range": (ReadRangeOptions, "gpu"),
     "reassemble": (ReassembleOptions, "cpu"),
     "reassembly_gate": (ReassemblyGateOptions, "cpu"),
+    "structure_gate": (StructureGateOptions, "cpu"),
     "eval_run": (EmptyOptions, "cpu"),
     "structure_eval": (StructureEvalOptions, "cpu"),
     # the engines read on the card, so the measurement runs on the GPU lane
