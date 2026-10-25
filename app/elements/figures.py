@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable
 
 import pdf
-from document.model import Figure, Piece
+from document.model import Caption, Figure, Piece
 
 
 # a figure is linked only when its image is a file in the bundle
@@ -25,3 +25,18 @@ def kept(path, blocks: list, keep: Callable[[bytes], str]) -> list:
 def counts(piece: Piece) -> dict:
     figures = [b for b in piece.blocks if isinstance(b, Figure)]
     return {"figures": len(figures), "figures_not_kept": sum(not image_kept(b.image) for b in figures)}
+
+
+# a caption block right by a figure on its page, the one after it first, is that figure's own; each is taken once
+def captioned(blocks: list) -> tuple[list, int]:
+    out, taken, n = list(blocks), set(), 0
+    for k, b in enumerate(out):
+        if not isinstance(b, Figure) or b.caption:
+            continue
+        for j in (k + 1, k - 1):
+            if 0 <= j < len(out) and j not in taken and isinstance(out[j], Caption) and not out[j].slot:
+                out[k] = b.model_copy(update={"caption": out[j].text})
+                taken.add(j)
+                n += 1
+                break
+    return out, n

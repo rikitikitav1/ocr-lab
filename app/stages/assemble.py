@@ -732,6 +732,8 @@ def assemble(book_id: int, ord: int, title: str, level: int, first_page: int, la
     step("series_captions")
     blocks, counts["slot_dropped"] = running_heads.drop_slots(blocks)
     step("slots_dropped")
+    blocks, counts["figures_captioned"] = figures.captioned(blocks)
+    step("figures_captioned")
     counts["reread_cut"] = int(reread_end and bool(counts.get("shared_cut_end")))
     blocks = _owned(blocks, nodes[0]["ord"] if nodes else ord, shared_start and not counts["shared_cut_start"])
     step("owned")

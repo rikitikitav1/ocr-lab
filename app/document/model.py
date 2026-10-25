@@ -70,6 +70,8 @@ class Figure(Placed):
     type: Literal["figure"] = "figure"
     image: str
     alt: str = ""
+    # the caption the book sets by the picture, kept with it so the source page can be rebuilt
+    caption: str | None = None
 
 
 class Caption(Placed):

@@ -286,7 +286,7 @@ def test_a_chapter_over_two_files_is_assembled_without_engines(stand, tmp_path, 
     piece = got.steps[-1]
     assert (piece["file"], [name for name, _ in piece["steps"]]) == (
         "piece", ["shared_pages", "without_title", "chapter_contents", "piece_levels", "opened", "series_captions",
-                  "slots_dropped", "owned"])
+                  "slots_dropped", "figures_captioned", "owned"])
     assert piece["steps"][-1][1] == got.piece.blocks
     assert set(got.pages) == {2, 3} and all(set(p["scores"]) == {"docling", "mineru"} for p in got.pages.values())
     assert got.counts.get("pages_docling", 0) + got.counts.get("pages_mineru", 0) == 2
