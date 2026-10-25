@@ -246,8 +246,7 @@ Hugging Face и книги с полки rag-lab. Ничего не скачив
 
 ```bash
 cp .env.example .env                      # optional key: a cloud model
-docker compose up -d                      # postgres, migrations, api, worker, ollama, converters
-docker compose --profile cpu-workers up -d --scale worker-cpu=2   # optional: workers for the CPU lane only
+docker compose up -d                      # postgres, migrations, api, workers, ollama, converters
 curl -s localhost:8100/v1/stand | jq      # health, engine builds, who holds the GPU, every worker and its code
 ```
 

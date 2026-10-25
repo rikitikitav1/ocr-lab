@@ -94,7 +94,9 @@ services:
   # CPU-lane workers on demand (--profile cpu-workers, --scale worker-cpu=2); the GPU lane stays one worker's
   worker-cpu:
     <<: *worker
-    profiles: ["cpu-workers"]
+    # no profile: a plain down skips profiled services and leaves them on the removed network
+    deploy:
+      replicas: 2
     environment:
       <<: *app-env
       HOME: /tmp
