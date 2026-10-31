@@ -1,4 +1,5 @@
 # jobs that look at a book or a run without changing it: a page range read, a scratch reassembly, a gate over them
+import importlib.util
 import json
 from pathlib import Path
 
@@ -210,3 +211,40 @@ def run_structure_gate(options: dict) -> dict:
         moved, lines = structure_gate.compare(base["books"], record["books"])
         out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
     return out
+
+
+# a probe file gives probe(book_id) -> dict, read afresh for each book
+@register("probe_book")
+def probe_book(options: dict) -> dict:
+    spec = importlib.util.spec_from_file_location("shelf_probe_file", settings.PROBES_DIR / options["file"])
+    module = importlib.util.module_from_spec(spec)
+    # a probe's error repeats on a retry, so the book fails at once and the record names why
+    try:
+        spec.loader.exec_module(module)
+        return module.probe(options["book_id"])
+    except Exception as e:
+        raise Final(f"{type(e).__name__}: {e}") from e
+
+
+# one probe over the books, one child job a book; a book that fails is named in the record and the rest are kept
+@register("shelf_probe")
+def shelf_probe(options: dict) -> dict:
+    job_id = options["_job_id"]
+    with Session() as session:
+        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "probe_book")
+                                   .order_by(Job.id)).all()
+        books = options["book_ids"] or list(session.scalars(select(Book.id).order_by(Book.id)))
+    if not children:
+        for book_id in books:
+            job_queue.enqueue("probe_book", {"file": options["file"], "book_id": book_id}, parent_id=job_id,
+                              book_id=book_id)
+        raise Deferred(f"waiting for {len(books)} books", delay_seconds=30)
+    left = [c.id for c in children if c.status not in job_queue.FINISHED]
+    if left:
+        raise Deferred(f"waiting for {len(left)} of {len(children)} books", delay_seconds=30)
+    failed = {str(c.book_id): (c.error or {}).get("error", c.status) for c in children if c.status != "done"}
+    record = {"file": options["file"], "codes": sorted({c.code_hash for c in children if c.code_hash}),
+              "books": {str(c.book_id): c.result for c in children if c.status == "done"}, "failed": failed}
+    artifacts.atomic_write(_gate_path(job_id), record)
+    return {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "file": options["file"],
+            "books": len(record["books"]), "failed": sorted(failed, key=int), "codes": record["codes"]}

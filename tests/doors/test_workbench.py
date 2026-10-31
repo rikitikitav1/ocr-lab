@@ -185,3 +185,19 @@ def test_a_structure_gate_keeps_each_books_structure_and_names_a_book_whose_entr
                                                      "base_job_id": first}).json()["job_id"]
     _drain_deferred(other)
     assert client.get(f"/v1/jobs/{other}").json()["status"] != "done"
+
+
+def test_a_shelf_probe_keeps_each_books_answer_and_names_a_book_that_failed(client, inbox, tmp_path, monkeypatch):
+    book, other = _book(client, inbox, "probe_one.pdf"), _book(client, inbox, "probe_two.pdf")
+    monkeypatch.setattr(settings, "PROBES_DIR", tmp_path)
+    (tmp_path / "count.py").write_text(
+        f"def probe(book_id):\n    assert book_id != {other}\n    return {{'id': book_id}}\n")
+    assert client.post("/v1/probes/shelf", json={"file": "gone.py"}).status_code == 400
+    assert client.post("/v1/probes/shelf", json={"file": "../count.py"}).status_code == 400
+    assert client.post("/v1/probes/shelf", json={"file": "count.py", "book_ids": [other + 10_000]}).status_code == 404
+    job = client.post("/v1/probes/shelf", json={"file": "count.py", "book_ids": [book, other]}).json()["job_id"]
+    _drain_deferred(job)
+    done = client.get(f"/v1/jobs/{job}").json()
+    assert done["status"] == "done" and done["result"]["books"] == 1 and done["result"]["failed"] == [str(other)]
+    record = json.loads((settings.DATA_DIR / done["result"]["record"]).read_text())
+    assert record["books"] == {str(book): {"id": book}} and str(other) in record["failed"]

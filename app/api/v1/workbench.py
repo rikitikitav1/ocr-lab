@@ -33,6 +33,11 @@ def reassemble(id: int, body: job_specs.Reassembly):
     return workbench.reassemble(id, body.knobs, body.ords, body.reading_level, body.reread, body.fresh)
 
 
+@router.post("/probes/shelf", status_code=202)
+def shelf_probe(body: job_specs.ShelfProbeOptions):
+    return workbench.shelf_probe(body.file, body.book_ids)
+
+
 @router.get("/artifacts/{id}")
 def get_artifact(id: int):
     return workbench.get_artifact(id)

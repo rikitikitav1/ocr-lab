@@ -1,6 +1,7 @@
 import artifacts
 import job_queue
 import job_specs
+import settings
 from knobs import registry
 from mcp_tools import tool
 from orm.catalogue import Artifact, Book, Run
@@ -109,3 +110,18 @@ def get_artifact(id: int) -> dict:
             "run_id": row.run_id, "piece": row.piece_ord, "meta": row.meta,
             "text": artifacts.read(row).decode(errors="replace")}
 
+
+@tool("shelf_probe", "POST /v1/probes/shelf",
+      "Queue a CPU job that runs probe(book_id) -> dict from a file in the probes directory (temp_files) over the "
+      "named books (every book by default), one child job a book, so a measure survives a worker restart. The job's "
+      "waiting_because counts the books left; its result names the record (each book's dict, under books) and the "
+      "books that failed (with their errors in the record).")
+def shelf_probe(file: str, book_ids: list[int] | None = None) -> dict:
+    options = job_specs.check("shelf_probe", {"file": file, "book_ids": book_ids})
+    path = settings.PROBES_DIR / file
+    if path.parent != settings.PROBES_DIR or path.suffix != ".py" or not path.is_file():
+        raise job_specs.Refused(f"{file} is no .py file directly in the probes directory")
+    if book_ids:
+        with Session() as session:
+            known.check_books(session, book_ids)
+    return {"job_id": job_queue.enqueue("shelf_probe", options)}

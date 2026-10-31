@@ -4,6 +4,7 @@ from pathlib import Path
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://postgres@localhost:5433/postgres")
 DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
 SHELF_DIR = Path(os.getenv("SHELF_DIR", "/shelf"))
+PROBES_DIR = Path(os.getenv("PROBES_DIR", Path(__file__).resolve().parents[1] / "temp_files"))
 CONFIG_DIR = Path(os.getenv("CONFIG_DIR", Path(__file__).resolve().parents[1] / "config"))
 APP_DIR = Path(__file__).resolve().parent
 CPU_LANE_THREADS = int(os.getenv("CPU_LANE_THREADS", "4"))

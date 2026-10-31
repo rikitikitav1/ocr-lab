@@ -11,6 +11,7 @@ x-host-user: &host-user "${UID:-1000}:${GID:-1000}"
 x-app-env: &app-env
   DATABASE_URL: postgresql+psycopg://postgres@postgres:5432/postgres
   DATA_DIR: /data
+  PROBES_DIR: /app/temp_files
   SHELF_DIR: /shelf
   CONVERTER_DOCLING_BASE_URL: http://converter-docling:5001
   CONVERTER_MINERU_BASE_URL: http://converter-mineru:5001

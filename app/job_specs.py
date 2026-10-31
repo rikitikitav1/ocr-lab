@@ -149,6 +149,16 @@ class StructureGateOptions(_Spec):
     base_job_id: int | None = None
 
 
+class ShelfProbeOptions(_Spec):
+    file: str
+    book_ids: list[int] | None = None
+
+
+class ProbeBookOptions(_Spec):
+    file: str
+    book_id: int
+
+
 class CleanupOptions(_Spec):
     dry_run: bool = True
 
@@ -191,6 +201,8 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     "reassembly_gate": (ReassemblyGateOptions, "cpu"),
     "structure_gate": (StructureGateOptions, "cpu"),
     "structure_choose": (StructureChooseOptions, "cpu"),
+    "shelf_probe": (ShelfProbeOptions, "cpu"),
+    "probe_book": (ProbeBookOptions, "cpu"),
     "eval_run": (EmptyOptions, "cpu"),
     "structure_eval": (StructureEvalOptions, "cpu"),
     # the engines read on the card, so the measurement runs on the GPU lane
