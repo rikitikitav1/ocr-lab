@@ -897,3 +897,53 @@ def test_a_bare_label_is_the_word_the_book_sets_before_rising_numbers_in_any_lan
     assert [b["text"] for b in headings._glued(letters)][2] == "Appendix C Letters"
     pair = [block(3, "1"), block(3, "Copyright", 25), block(9, "2"), block(9, "Dedication", 25)]
     assert len(headings._glued(pair)) == 4
+
+
+def test_a_contents_lines_dot_leaders_do_not_set_its_level():
+    def row(title, x, leaders, size, bold):
+        tail = " ...... 5" if leaders else ""
+        shown = (10.0, False) if leaders else (size, bold)
+        return (printed_contents.Entry(title, None, printed="5"),
+                text_layer.Line(f"{title}{tail}", x, 10, *shown, head_size=size, head_bold=bold), 1)
+
+    parsed = [row("Chapter 1: One", 0, True, 12.0, True), row("Section 1.1: A", 20, True, 10.0, False),
+              row("Chapter 2: Two", 0, True, 12.0, True), row("Section 2.1: B", 20, True, 10.0, False),
+              row("Chapter 3: Three", 0, False, 12.0, True), row("Section 3.1: C", 20, True, 10.0, False)]
+    entries, _ = printed_contents.levels(parsed)
+    assert [e.level for e in entries] == [1, 2, 1, 2, 1, 2]
+
+
+def test_an_unnumbered_entry_takes_the_depth_of_its_look_not_of_its_neighbour():
+    def row(title, x, size, bold):
+        return (printed_contents.Entry(title, None, printed="5"), text_layer.Line(f"{title} 5", x, 10, size, bold), 1)
+
+    parsed = [row("1 Introduction", 0, 10.0, True), row("1.1 Start", 20, 10.0, False),
+              row("2 Next", 0, 10.0, True), row("2.1 More", 20, 10.0, False), row("2.2 Summary", 20, 10.0, False),
+              row("Index", 0, 10.0, True), row("Bibliography", 25, 10.0, True)]
+    entries, by = printed_contents.levels(parsed)
+    assert by == "numbers"
+    assert [e.level for e in entries] == [1, 2, 1, 2, 2, 1, 1]
+
+
+def test_a_line_at_the_foot_of_every_contents_page_stays_out_of_the_entries():
+    def foot(p, text):
+        return [text_layer.Line(f"Chapter {p} title .... {p * 10}", 50, 100, 10, False),
+                text_layer.Line(f"Section {p} title .... {p * 10 + 1}", 70, 120, 10, False),
+                text_layer.Line(text, 300, 600, 9, False)]
+
+    lines = {5: foot(5, "Table of Contents | v"), 6: foot(6, "vi | Table of Contents"),
+             7: foot(7, "Table of Contents | vii")}
+    parsed, _ = printed_contents.parse([5, 6, 7], lines, 200)
+    assert not [e for e, _, _ in parsed if "Table of Contents" in e.title]
+    assert len(parsed) == 6
+
+
+def test_what_stands_before_the_first_part_goes_up_whole():
+    def row(title, x, size, bold):
+        return (printed_contents.Entry(title, None, printed="5"), text_layer.Line(f"{title} 5", x, 10, size, bold), 1)
+
+    parsed = [row("Preface", 0, 10.0, True), row("Chapter 1. Start", 0, 10.0, True), row("1.1. First", 20, 10.0, False),
+              row("Part I. Main", 0, 12.0, True), row("Chapter 2. Next", 0, 10.0, True),
+              row("2.1. More", 20, 10.0, False), row("Chapter 3. Last", 0, 10.0, True)]
+    entries, _ = printed_contents.levels(parsed)
+    assert [e.level for e in entries] == [1, 1, 2, 1, 2, 3, 2]
