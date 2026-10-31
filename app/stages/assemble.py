@@ -318,7 +318,8 @@ def _layout(book_id: int, versions: Pinned) -> tuple[LayoutVersion | None, dict]
 
 
 # the modules each book-level list is made by: a list keyed by a file its make no longer reads is served stale
-LIST_CODE = {"running_heads.json": (running_heads.book, slots, sources), "slot_lines.json": (slots, sources),
+LIST_CODE = {"running_heads.json": (running_heads.book, slots, footnotes.book, layout_page, sources),
+             "slot_lines.json": (slots, footnotes.book, layout_page, sources),
              "note_lines.json": (footnotes.book, slots, layout_page, sources),
              "captions.json": (book_captions.book, sources), "series_captions.json": (book_captions.book, sources)}
 
@@ -354,7 +355,7 @@ def _by_page(book_id: int, name: str, parts: dict, make: Callable, row: Callable
     return out
 
 
-# the book's running heads by page: lines repeated at a page's edge, and the slot lines its page layout claims by reason
+# the book's running heads by page: lines repeated at a page's edge, and the service lines its page layout claims
 def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
     kept, layout = _layout(book_id, versions)
 
@@ -362,7 +363,7 @@ def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
         lines = sources.book_lines(files)
         heads = running_heads.layer_heads(lines)
         page_of = {id(x): p for p, ls in lines.items() for x in ls}
-        for key, (line, _) in slots.claimed_reasons(lines, layout).items() if layout else ():
+        for key, (line, _) in layout_page.service_lines(lines, layout).items() if layout else ():
             on_page = heads.setdefault(page_of[key], [])
             if line.text not in on_page:
                 on_page.append(line.text)
@@ -371,7 +372,7 @@ def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
     return _by_page(book_id, "running_heads.json", {"layout": kept.id if kept is not None else None}, make)
 
 
-# the slot lines the page layout claims by reason (folio, repeat, side), by book page, for the slot reader
+# the service lines the page layout claims by reason (folio, repeat, side, notice), by book page, for the slot reader
 def slot_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[tuple[str, str, float]]]:
     kept, layout = _layout(book_id, versions)
     if not layout:
@@ -383,7 +384,7 @@ def slot_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[tuple
         heights = {f.first_page + i: h for f in files
                    for i, (_, h) in enumerate(pdf.page_sizes(settings.DATA_DIR / f.file_path))}
         out: dict[int, list[tuple[str, str, float]]] = {}
-        for key, (line, reason) in slots.claimed_reasons(lines, layout).items():
+        for key, (line, reason) in layout_page.service_lines(lines, layout).items():
             page = page_of[key]
             out.setdefault(page, []).append((line.text, reason, round(line.top / heights[page], 4)))
         return out

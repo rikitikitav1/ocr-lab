@@ -8,8 +8,8 @@ SOURCES = "stages/structure/sources/__init__.py"
 
 # each book-level list is keyed by the files its make reads; a module that moves rewrites its row here
 SLOTS, NOTES = "elements/running_heads/slots.py", "elements/footnotes/book.py"
-MADE_BY = {"running_heads.json": ["elements/running_heads/book.py", SLOTS, SOURCES],
-           "slot_lines.json": [SLOTS, SOURCES],
+MADE_BY = {"running_heads.json": ["elements/running_heads/book.py", SLOTS, NOTES, "stages/elements/page.py", SOURCES],
+           "slot_lines.json": [SLOTS, NOTES, "stages/elements/page.py", SOURCES],
            "note_lines.json": [NOTES, SLOTS, "stages/elements/page.py", SOURCES],
            "captions.json": ["elements/captions/book.py", SOURCES],
            "series_captions.json": ["elements/captions/book.py", SOURCES]}

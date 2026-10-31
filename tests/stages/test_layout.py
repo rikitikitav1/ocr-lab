@@ -97,6 +97,28 @@ def test_a_notice_at_every_foot_is_a_service_element_and_no_note():
     assert footnotes.learn(bare, sorted(bare), 10, set())[0] is None
 
 
+def test_a_word_repeated_at_the_foot_at_no_one_place_is_text_and_no_notice():
+    book = _book(foot=lambda p: [Line("begin", 50, 480 + 7 * (p % 9), 8, False)])
+    assert footnotes.learn(book, sorted(book), 10, set())[2] == {}
+
+
+def test_a_notice_is_a_service_line_of_the_kept_layout():
+    notice = "This is an open access version of the publication"
+    book = _book(foot=lambda p: [Line(notice, 50, 540, 8, False)])
+    layout = {"body": 10, "notes": None, "notices": 20, "top": None, "bottom": None, "sides": []}
+    found = page.service_lines(book, layout)
+    assert [(x.text, why) for x, why in found.values()] == [(notice, "notice")] * 20
+
+
+def test_a_footer_on_one_side_of_an_opening_is_a_notice():
+    def foot(p):
+        return [Line("WWW.OSTEP.ORG" if p % 2 else f"p {p}", 50, 540, 8, False)]
+
+    book = _book(foot=foot)
+    found = footnotes.learn(book, sorted(book), 10, set())[2]
+    assert len(found) == 10 and all(x.text == "WWW.OSTEP.ORG" for b in found.values() for x in b)
+
+
 def test_a_label_above_a_heading_is_told_by_its_shape_not_its_size():
     lines = {5: [Line("CHAPTER 2", 50, 100, 30, True), Line("Data Architectures", 50, 140, 20, True),
                  Line("body text here", 50, 200, 10, False)]}

@@ -11,6 +11,10 @@ NOTE_MARKER = re.compile(r"^\s*(\d{1,4}(?=\s|[^\W\d])|\*+|[†‡§])\s*(?=[^\W\
 GAP = 1.3
 # a part of a book may be set half a point off its body, so a body line is any size within this of it
 SAME = 0.5
+# a notice keeps its place on the page: most of its lines stand within this many points of their middle height
+PLACE = 2.0
+# a footer set on one side of an opening stands on half the pages, so a notice holds over this share of the book's
+NOTICE_SHARE = 0.25
 
 
 def _body_line(x, body: float) -> bool:
@@ -58,10 +62,18 @@ def _in_order(marks: list[str]) -> bool:
     return not nums or (bool(pairs) and sum(b > a or b == 1 for a, b in pairs) * 2 > len(pairs))
 
 
-# a line standing word for word at the foot of most pages that have a foot is a notice, a service element of the page
-def _notices(feet: dict) -> set[str]:
-    seen = Counter(t for below, _, _ in feet.values() for t in {x.text for x in below})
-    return {t for t, n in seen.items() if n * 2 > len(feet)} if len(feet) > 1 else set()
+def _one_place(tops: list[float]) -> bool:
+    middle = statistics.median(tops)
+    return sum(abs(t - middle) <= PLACE for t in tops) * 2 > len(tops)
+
+
+# a line standing word for word at one place at the foot of many of a book's pages is a notice, a service element
+def _notices(feet: dict, pages: int) -> set[str]:
+    tops: dict[str, list[float]] = {}
+    for below, _, _ in feet.values():
+        for text, top in {x.text: x.top for x in below}.items():
+            tops.setdefault(text, []).append(top)
+    return {t for t, at in tops.items() if len(at) > NOTICE_SHARE * pages and _one_place(at)}
 
 
 # the notes block below a page's last body line read on all its factors at once, with no count of pages, and the notices
@@ -73,7 +85,7 @@ def learn(lines: dict, pages: list[int], body: float, taken: set[int],
         foot = _foot(sorted((x for x in lines[p] if id(x) not in taken), key=lambda x: x.top), body)
         if foot[0]:
             feet[p] = foot
-    repeated = _notices(feet)
+    repeated = _notices(feet, len(pages))
     notices = {p: kept for p, f in feet.items() if (kept := [x for x in f[0] if x.text in repeated])}
     below_body, marked = {}, {}
     for p, (below, last, text) in feet.items():

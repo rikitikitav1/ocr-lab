@@ -1,4 +1,4 @@
-from document.model import Heading, ListBlock, ListItem, PageMarker, Paragraph
+from document.model import Footnote, Heading, ListBlock, ListItem, PageMarker, Paragraph, Where
 from elements import code, running_heads
 
 
@@ -63,3 +63,25 @@ def test_a_returned_note_does_not_keep_a_listing_from_joining_across_the_page():
               _page(2), block("apiVersion: v1", 2, 0.05, 0.3)]
     got, n = code.join_code_across_pages(blocks)
     assert n == 1 and got[1].text == "kind: ConfigWatcher\napiVersion: v1" and got[2].text == "1 See the operator docs."
+
+
+def test_a_notice_an_engine_joined_or_split_goes_and_the_body_on_its_words_stays():
+    slots = {1: [("This is an open access", "notice", 0.9), ("version of it", "notice", 0.92),
+                 ("Please contact us", "repeat", 0.94)]}
+    foot = Where(page=1, box=(0.1, 0.9, 0.9, 0.95), engine="docling")
+    body = Where(page=1, box=(0.1, 0.3, 0.9, 0.35), engine="docling")
+    blocks = [_page(1), Paragraph(text="This is an open access version of it Please contact us", where=foot),
+              Footnote(mark="note1", text="version of it Please contact us"),
+              Paragraph(text="an open access version", where=body),
+              Paragraph(text="This is an open access book for you", where=foot), _page(2),
+              Paragraph(text="Please contact us", where=foot)]
+    got, n = running_heads.mark_slots(blocks, slots)
+    assert n == 2 and [getattr(b, "slot", None) for b in got[1:]] == ["notice", "notice", None, None, None, None]
+
+
+def test_a_notice_whose_word_a_line_end_broke_is_marked_as_the_engine_joined_it():
+    slots = {1: [("under the Attribution-Non", "notice", 0.9), ("Commercial licence", "notice", 0.92)],
+             2: [("under the Attribution", "notice", 0.9), ("NonCommercial licence", "notice", 0.92)]}
+    blocks = [_page(1), Footnote(mark="note1", text="under the Attribution-NonCommercial licence"),
+              _page(2), Footnote(mark="note2", text="under the Attribution-NonCommercial licence")]
+    assert running_heads.mark_slots(blocks, slots)[1] == 2

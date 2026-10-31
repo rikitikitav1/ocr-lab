@@ -18,12 +18,28 @@ def measure(lines: dict) -> tuple[dict, set[int]]:
             "notices": sum(map(len, notices.values()))}, taken
 
 
+# the note and notice lines of a kept page layout, nothing learned twice
+def _foot(lines: dict, layout: dict, pages: list[int], taken: set[int]) -> tuple[dict, dict]:
+    size = layout["notes"]["size"] if layout.get("notes") else None
+    _, notes, notices = footnotes.learn(lines, pages, layout["body"], taken, size)
+    return notes, notices
+
+
 # the slot and note lines of a kept page layout, claimed again by its stored band and sizes, nothing learned twice
 def claimed(lines: dict, layout: dict) -> set[int]:
     pages = sorted(p for p in lines if lines[p])
     taken = slots.claimed(lines, layout, pages)
     if layout.get("notes") or layout.get("notices"):
-        size = layout["notes"]["size"] if layout.get("notes") else None
-        _, notes, notices = footnotes.learn(lines, pages, layout["body"], taken, size)
+        notes, notices = _foot(lines, layout, pages, taken)
         taken |= {id(x) for b in (*notes.values(), *notices.values()) for x in b}
     return taken
+
+
+# the service lines a kept page layout claims, by reason: the slots' (folio, repeat, side) and the notices
+def service_lines(lines: dict, layout: dict) -> dict[int, tuple[object, str]]:
+    out = slots.claimed_reasons(lines, layout)
+    if layout.get("notices"):
+        pages = sorted(p for p in lines if lines[p])
+        _, notices = _foot(lines, layout, pages, slots.claimed(lines, layout, pages))
+        out |= {id(x): (x, "notice") for b in notices.values() for x in b}
+    return out
