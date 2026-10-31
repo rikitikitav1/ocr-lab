@@ -17,7 +17,7 @@ import text_layer
 from assembly import passes, referee
 from document.model import Code, Heading, Node, PageMarker, Piece, Table
 from elements import captions as book_captions
-from elements import contents, figures, footnotes, running_heads
+from elements import contents, figures, footnotes, geometry, running_heads
 from elements.running_heads import slots
 from engines import converter_tools, reading
 from job_signals import Final
@@ -461,9 +461,7 @@ def _kept(book_id: int, f: BookFile, a: int, b: int, regime: str, engine: str, l
 
 
 def _segment(blocks: list, page: int) -> tuple[int, int] | None:
-    marks = [i for i, b in enumerate(blocks) if isinstance(b, PageMarker)]
-    return next(((i, j) for i, j in zip(marks, [*marks[1:], len(blocks)], strict=True)
-                 if blocks[i].book_page == page), None)
+    return next(((i, j) for i, j in geometry.page_spans(blocks) if blocks[i].book_page == page), None)
 
 
 # the next piece's reading of a boundary page stands in for this piece's own, so both cut one reading

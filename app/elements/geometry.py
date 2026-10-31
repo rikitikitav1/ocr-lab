@@ -1,4 +1,5 @@
 # where a glyph or a block stands on the page: boxes, rows, overlaps; shared by the code and table elements
+import itertools
 import re
 import statistics
 
@@ -55,7 +56,7 @@ def box_words(page_glyphs: list[Glyph], box: tuple) -> list[str]:
 # each page's run of blocks, from its marker to the next one
 def page_spans(blocks: list) -> list[tuple[int, int]]:
     marks = [i for i, b in enumerate(blocks) if isinstance(b, PageMarker)]
-    return [(m, nxt) for m, nxt in zip(marks, [*marks[1:], len(blocks)], strict=True)]
+    return list(itertools.pairwise([*marks, len(blocks)]))
 
 
 # where a block the page holds nothing after goes: before the next page's marker, the range's end on its last page

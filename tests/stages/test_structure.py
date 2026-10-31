@@ -211,9 +211,14 @@ def test_a_lead_paragraph_set_large_is_no_heading_and_a_short_bold_title_at_body
         lines[3 + 4 * n][:0] = [text_layer.Line(name, 50, 60, 10, True)]
     # a chapter's lead set large and bold runs on for a paragraph
     lines[5][:0] = [text_layer.Line(f"lead line {i} of the chapter that runs on", 50, 20 + 12 * i, 12, True)
-                    for i in range(6)]
+                    for i in range(10)]
     got = [e.title for e in headings.read_lines(lines, 20).entries]
     assert got == names
+    # a title of four short rows is a title, however many rows it takes
+    for n in range(5):
+        lines[3 + 4 * n][:1] = [text_layer.Line(w, 50, 20 + 24 * i, 22, True)
+                                for i, w in enumerate(["the", "long", "title", f"number {n}"])]
+    assert len(headings.read_lines(lines, 20).entries) == 5
 
 
 def test_bookmarks_win_over_printed_contents(stand, tmp_path):

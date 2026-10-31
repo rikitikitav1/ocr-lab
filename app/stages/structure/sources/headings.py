@@ -226,7 +226,7 @@ def _apart(lines: dict[int, list], body: float) -> set[int]:
     return out
 
 
-# lines of one look running on past a title's rows: a lead paragraph set large or bold is no heading
+# lines of one look running on past a title's words: a lead paragraph set large or bold is no heading, a long title is
 def _paragraphs(lines: dict[int, list]) -> set[int]:
     c = conf()["text_layer"]["headings"]
     out = set()
@@ -236,7 +236,7 @@ def _paragraphs(lines: dict[int, list]) -> set[int]:
             if x is not None and run and abs(x.size - run[-1].size) < c["same_size"] and x.bold == run[-1].bold:
                 run.append(x)
                 continue
-            if len(run) > c["para_run"]:
+            if sum(len(r.text.split()) for r in run) > c["para_words"]:
                 out |= {id(r) for r in run}
             run = [x] if x is not None else []
     return out

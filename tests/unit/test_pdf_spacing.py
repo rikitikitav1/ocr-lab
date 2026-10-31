@@ -105,3 +105,26 @@ def test_the_lines_of_a_page_join_with_the_same_words_the_page_s_text_does(tmp_p
     text_layer.page_texts(path)
     text_layer.page_lines(path)
     assert len(seen) == 2 and seen[0] == seen[1] and seen[0][1] == text_layer.solid_words(path)
+
+
+def test_a_small_raised_reference_sits_on_its_word_and_a_number_in_the_text_keeps_its_space(tmp_path):
+    path = tmp_path / "d.pdf"
+    c = canvas.Canvas(str(path), pagesize=A4)
+    y = 780
+    for text, _ in BODY:
+        c.setFont("Helvetica", 12)
+        c.drawString(72, y, text)
+        y -= 30
+    c.setFont("Helvetica", 12)
+    c.drawString(72, y, "stakeholders. ")
+    x = 72 + c.stringWidth("stakeholders.", "Helvetica", 12) + 0.5
+    c.setFont("Helvetica", 7)
+    c.drawString(x, y + 4, "16")
+    c.setFont("Helvetica", 12)
+    c.drawString(x + c.stringWidth("16 ", "Helvetica", 7), y, " The targeted page 16 of it")
+    c.save()
+    text = text_layer.page_texts(path)[0]
+    assert "stakeholders.16" in text and "page 16 of it" in text
+    # the referee weighs the engines against the layer as read, so its text keeps the space
+    layer = text_layer.page_layers(path)[0]
+    assert "stakeholders. 16" in layer.as_read and "stakeholders.16" in layer.joined and layer.rows == []
