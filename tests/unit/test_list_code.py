@@ -22,8 +22,9 @@ def test_each_book_level_list_is_keyed_by_the_modules_that_make_it():
 
 
 LAYOUT = "stages/elements/collect.py"
-READS = {"page": [LAYOUT, "stages/elements/page.py", SLOTS, NOTES, "numerals.py", SOURCES, "text_layer.py"],
-         "headings": [LAYOUT, "elements/headings/book.py", "stages/elements/page.py", SLOTS, NOTES, "numerals.py",
+BODY = "elements/body.py"
+READS = {"page": [LAYOUT, "stages/elements/page.py", SLOTS, NOTES, BODY, "numerals.py", SOURCES, "text_layer.py"],
+         "headings": [LAYOUT, "elements/headings/book.py", "stages/elements/page.py", SLOTS, NOTES, BODY, "numerals.py",
                       SOURCES, "assembly/titles.py"]}
 
 

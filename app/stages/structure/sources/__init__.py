@@ -1,11 +1,11 @@
 # what every structure source returns: entries in book order, pages numbered across files
-from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
 
 import settings
 import text_layer
 import yaml
+from elements import body
 from orm.catalogue import BookFile
 
 # printed page numbers run ahead of the PDF's pages by the front matter's count at most
@@ -62,10 +62,5 @@ def book_lines(files: list[BookFile], pages: set[int] | None = None) -> dict[int
     return out
 
 
-# the body's size and weight, the style that sets the most characters; a heading is read against it
-def body_style(lines: dict) -> tuple[float, bool]:
-    styles: Counter = Counter()
-    for page_lines in lines.values():
-        for line in page_lines:
-            styles[(line.size, line.bold)] += len(line.text)
-    return styles.most_common(1)[0][0] if styles else (0, False)
+# the body's size and weight by the most characters; the text headings read the body element's learner instead
+body_style = body.by_characters

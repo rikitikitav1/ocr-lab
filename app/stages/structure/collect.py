@@ -43,6 +43,7 @@ def code_hash() -> str:
     # the structure reads the layer, running heads and numerals, so the code that reads them is its code
     own = [*sorted((settings.APP_DIR / "stages" / "structure").rglob("*.py")), settings.APP_DIR / "model_steps.py",
            settings.APP_DIR / "elements" / "running_heads" / "book.py", Path(slots.__file__),
+           settings.APP_DIR / "elements" / "body.py",
            settings.APP_DIR / "numerals.py", settings.APP_DIR / "structure" / "tree.py",
            settings.APP_DIR / "alphabets.py"]
     digest = code_version.files_hash(own, ("structure.yaml",))

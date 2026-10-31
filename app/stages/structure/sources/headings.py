@@ -6,8 +6,9 @@ import statistics
 
 import alphabets
 import numerals
+from elements import body as body_element
 
-from stages.structure.sources import Entry, SourceEntries, body_style, conf
+from stages.structure.sources import Entry, SourceEntries, conf
 
 TITLE_TYPES = ("doc_title", "title", "paragraph_title")
 NUMBER = rf"(?:\d{{1,3}}|{numerals.ROMAN_LABEL_UPPER})"
@@ -245,7 +246,7 @@ def _paragraphs(lines: dict[int, list]) -> set[int]:
 # a text layer's lines set apart from the body by size or weight, a wrapped title's lines joined into one block
 def line_blocks(lines: dict[int, list], band: frozenset[int] = frozenset()) -> list[dict]:
     c = conf()["text_layer"]["headings"]
-    body, body_bold = body_style(lines)
+    body, body_bold = body_element.learn(lines, band)
     apart = _apart(lines, body) if not body_bold else set()
     band = band | _paragraphs(lines)
     out = []
@@ -253,8 +254,9 @@ def line_blocks(lines: dict[int, list], band: frozenset[int] = frozenset()) -> l
         last = None
         for x in sorted(ls, key=lambda x: x.top):
             text = " ".join(x.text.split())
-            larger = x.size >= body * c["larger"] or (x.bold and not body_bold and x.size >= body
-                                                      and (x.size >= body + c["same_size"] or id(x) in apart))
+            bold_apart = x.bold and not body_bold and x.size >= body \
+                and (x.size >= body + c["same_size"] or id(x) in apart)
+            larger = x.size >= body * c["larger"] or bold_apart
             # a line in the running slots' band is a running head, however rarely it repeats
             if not text or id(x) in band or not larger:
                 last = None

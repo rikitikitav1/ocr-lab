@@ -8,6 +8,7 @@ import numerals
 import settings
 import text_layer
 from assembly import titles
+from elements import body
 from elements.footnotes import book as footnotes
 from elements.headings import book as headings
 from elements.running_heads import slots
@@ -25,8 +26,8 @@ PAGE, HEADINGS = "page", "headings"
 
 
 # each layout is keyed by the modules it reads, so an edit of one layout leaves the other kept
-READS = {PAGE: (sys.modules[__name__], page, slots, footnotes, numerals, sources, text_layer),
-         HEADINGS: (sys.modules[__name__], headings, page, slots, footnotes, numerals, sources, titles)}
+READS = {PAGE: (sys.modules[__name__], page, slots, footnotes, body, numerals, sources, text_layer),
+         HEADINGS: (sys.modules[__name__], headings, page, slots, footnotes, body, numerals, sources, titles)}
 
 
 def code_hash(kind: str) -> str:
