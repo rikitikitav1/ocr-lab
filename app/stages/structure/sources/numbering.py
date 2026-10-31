@@ -3,9 +3,10 @@ import re
 from functools import cache
 
 import numerals
+from elements import body as body_element
 from orm.catalogue import BookFile
 
-from stages.structure.sources import Entry, SourceEntries, body_style, book_lines, conf
+from stages.structure.sources import Entry, SourceEntries, book_lines, conf
 
 DOTTED = re.compile(r"^(?P<num>\d{1,2}(?:\.\d{1,3}){1,4})\.?\s*(?P<title>[^\W\d_].*)$")
 ROMAN_TITLED = re.compile(rf"^(?P<num>{numerals.ROMAN_LABEL_UPPER})\.\s+(?P<title>[^\W\d_].*)$")
@@ -69,9 +70,10 @@ def _plausible(text: str) -> bool:
     return len(text) <= conf()["text_layer"]["numbering"]["max_chars"] and len(text.split()) <= MAX_TITLE_WORDS + 3
 
 
-def _candidates(lines: dict, skip_pages: set[int]) -> list[tuple[str, tuple, str, int]]:
+def _candidates(lines: dict, skip_pages: set[int],
+                band: frozenset[int] = frozenset()) -> list[tuple[str, tuple, str, int]]:
     head_lines = conf()["text_layer"]["numbering"]["head_lines"]
-    body = body_style(lines)
+    body = body_element.learn(lines, band)
     out = []
     for page in sorted(lines):
         if page in skip_pages:
@@ -90,9 +92,10 @@ def _candidates(lines: dict, skip_pages: set[int]) -> list[tuple[str, tuple, str
 
 
 # a number met again, stepping back, or outside its chapter is a running head or a reference
-def read(files: list[BookFile], skip_pages: set[int], lines: dict | None = None) -> SourceEntries:
+def read(files: list[BookFile], skip_pages: set[int], lines: dict | None = None,
+         band: frozenset[int] = frozenset()) -> SourceEntries:
     out = SourceEntries("numbering")
-    found = _candidates(lines if lines is not None else book_lines(files), skip_pages)
+    found = _candidates(lines if lines is not None else book_lines(files), skip_pages, band)
     # a bare Roman number is a chapter only in books without labelled chapters; elsewhere it is a list item
     labelled = any(k == "chapter" for k, *_ in found)
     found = [(("chapter" if k == "roman" else k), *rest, k != "roman") for k, *rest in found

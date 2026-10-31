@@ -114,10 +114,11 @@ def test_a_book_with_no_contents_but_labelled_chapters_takes_them_however_long(s
     path = build(tmp_path / "e.pdf", [text_page(f"Page {n}") for n in range(120)])
     book_id, _ = intake.register([(path, "ebook.pdf")])
     found = [Entry(f"Chapter {n}. Topic", 1, 20 * n, source="numbering") for n in range(1, 4)]
-    monkeypatch.setattr(numbering, "read", lambda files, skip, lines: numbering.SourceEntries("numbering", found))
+    monkeypatch.setattr(numbering, "read", lambda files, skip, lines, band: numbering.SourceEntries("numbering", found))
     source, entries, _ = collect.choose(book_id)
     assert source == "numbering" and [(e.title, e.page) for e in entries] == [(e.title, e.page) for e in found]
-    monkeypatch.setattr(numbering, "read", lambda files, skip, lines: numbering.SourceEntries("numbering", found[:2]))
+    monkeypatch.setattr(numbering, "read",
+                        lambda files, skip, lines, band: numbering.SourceEntries("numbering", found[:2]))
     with pytest.raises(Final):
         collect.choose(book_id)
 

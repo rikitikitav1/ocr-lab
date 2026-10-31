@@ -5,7 +5,6 @@ from functools import cache
 import settings
 import text_layer
 import yaml
-from elements import body
 from orm.catalogue import BookFile
 
 # printed page numbers run ahead of the PDF's pages by the front matter's count at most
@@ -60,7 +59,3 @@ def book_lines(files: list[BookFile], pages: set[int] | None = None) -> dict[int
         for index, lines in text_layer.page_lines(settings.DATA_DIR / f.file_path, wanted).items():
             out[f.first_page + index] = lines
     return out
-
-
-# the body's size and weight by the most characters; the text headings read the body element's learner instead
-body_style = body.by_characters

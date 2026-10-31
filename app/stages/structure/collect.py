@@ -173,7 +173,7 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
             printed = seen
             text = pages.page_text(lines, set(seen.notes["pages"]))
             placement = pages.place(seen.entries, text, total)
-        counted = numbering.read(book_files, set(printed.notes.get("pages", [])), lines)
+        counted = numbering.read(book_files, set(printed.notes.get("pages", [])), lines, _band(book_id, lines))
     by_file = files.read(book_files)
     found = {s.source: s.entries for s in (marks, printed, by_file, counted) if s.source not in off}
     styled = _styled(found, lines if not scanned(book_id) else None, total, frozenset(printed.notes.get("pages") or []),
