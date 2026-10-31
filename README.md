@@ -214,8 +214,8 @@ Time per page and per phase, text-layer books and scans apart: [docs/timing.md](
 
 ## Languages tried
 
-The shelf holds 125 books; the table counts the 117 it held at the raw run, the dictionaries and phrase books added
-since (120 to 128) are listed in [docs/books.md](docs/books.md). A book with two languages counts under both. Full runs are the raw run of 43 books and the books run since, 47 in all
+The shelf holds 126 books; the table counts the 117 it held at the raw run, the dictionaries and phrase books added
+since (120 to 128) and a novel with many notes (129) are listed in [docs/books.md](docs/books.md). A book with two languages counts under both. Full runs are the raw run of 43 books and the books run since, 47 in all
 ([experiment](docs/experiments/2026-10-11_raw-run.md)).
 
 | language | books | of them scans | what was checked |
