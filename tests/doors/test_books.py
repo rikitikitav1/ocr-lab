@@ -262,9 +262,24 @@ def test_a_manual_edit_never_passes_for_a_collection(client, inbox, monkeypatch)
     assert fields["title"]["value"] == "Hand" and fields["title"]["version"] == 3
 
 
+# an evaluation defers itself while its books are scored: its wait is cut short and the queue drained again
+def _evaluate(job_id: int) -> None:
+    import worker
+    from orm.db import Session
+    from sqlalchemy import text
+
+    worker.job_handlers.load_all()
+    for _ in range(3):
+        while worker.run_once("cpu"):
+            pass
+        with Session.begin() as session:
+            session.execute(text("UPDATE jobs SET apply_since = now() WHERE id = :id AND status = 'new'"),
+                            {"id": job_id})
+
+
+
 def test_toc_eval_scores_the_contents_against_bookmarks_switched_off(client, inbox):
     import job_queue
-    from job_handlers import evaluation
 
     from tests.fixtures import FILLER
 
@@ -279,10 +294,11 @@ def test_toc_eval_scores_the_contents_against_bookmarks_switched_off(client, inb
     unknown = {"set": "bookmarks_off", "book_ids": [book["id"], 999999]}
     assert client.post("/v1/eval/structure", json=unknown).status_code == 404
     job = client.post("/v1/eval/structure", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
-    result = evaluation.run_structure_eval({**job_queue.get(job).options, "_job_id": job})
+    _evaluate(job)
+    result = job_queue.get(job).result
+    assert job_queue.get(job).status == "done"
     assert result["top_nodes"] == 3 and result["top_nodes_found"] == 3
     assert result["rows"][0]["source"] == "printed_contents"
-    job_queue.complete(job, result=result)
     other = client.post("/v1/eval/structure", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
     compare = {"job_a": job, "job_b": other}
     assert client.get("/v1/eval/structure/compare", params=compare).status_code == 400

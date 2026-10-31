@@ -126,16 +126,29 @@ def run(set_name: str, book_ids: list[int] | None, job_id: int | None) -> dict:
             rows.append(row)
             _keep(row["book_id"], set_name, row)
         return _summary(set_name, rows, [r for r in rows if "skipped" not in r])
-    with Session() as session:
-        books = select(Book.id) if set_name == "contents_off" else select(Book.id).where(Book.has_bookmarks)
-        ids = book_ids or list(session.scalars(books.order_by(Book.id)))
-    for book_id in ids:
+    rows = []
+    for book_id in books_of(set_name, book_ids):
         if job_id is not None and job_queue.is_cancelled(job_id):
             break
-        row = _member(book_id, set_name)
-        rows.append(row)
-        _keep(book_id, set_name, row)
-    # with all contents off a book's own contents pages are no reason to leave it out
+        rows.append(member(book_id, set_name))
+    return summary_of(set_name, rows)
+
+
+def books_of(set_name: str, book_ids: list[int] | None) -> list[int]:
+    with Session() as session:
+        books = select(Book.id) if set_name == "contents_off" else select(Book.id).where(Book.has_bookmarks)
+        return book_ids or list(session.scalars(books.order_by(Book.id)))
+
+
+# one book of a set scored and kept
+def member(book_id: int, set_name: str) -> dict:
+    row = _member(book_id, set_name)
+    _keep(book_id, set_name, row)
+    return row
+
+
+# with all contents off a book's own contents pages are no reason to leave it out
+def summary_of(set_name: str, rows: list[dict]) -> dict:
     scored = [r for r in rows if "skipped" not in r and (set_name == "contents_off" or r["printed"] == "contents")]
     return _summary(set_name, rows, scored)
 

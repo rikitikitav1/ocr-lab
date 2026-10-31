@@ -1,4 +1,5 @@
 # a book knob names the word its chapters open with ("درس" in "درس اول"): a line of that word and one more opens one
+import functools
 import re
 
 import numerals
@@ -119,9 +120,14 @@ LARGER = 1.1
 def found_in(files, lines: dict[int, list]) -> SourceEntries | None:
     by_page = {f.first_page + i: (f, i) for f in files for i in range(f.pages)}
 
-    def apart(page: int, heading: str) -> bool:
+    # a page holds many candidates, and its glyphs are costly to read
+    @functools.cache
+    def glyphs(page: int) -> list[tuple]:
         f, index = by_page[page]
-        return set_apart(pdf.page_glyphs(settings.DATA_DIR / f.file_path, index), heading)
+        return pdf.page_glyphs(settings.DATA_DIR / f.file_path, index)
+
+    def apart(page: int, heading: str) -> bool:
+        return set_apart(glyphs(page), heading)
 
     got = discover({page: "\n".join(x.text for x in page_lines) for page, page_lines in lines.items()}, apart)
     if got is None:

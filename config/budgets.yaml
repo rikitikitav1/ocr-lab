@@ -21,6 +21,7 @@ attempts:
   probe_book: 3
   eval_run: 3
   structure_eval: 3
+  structure_eval_book: 3
   element_eval: 3
   cleanup: 3
   batch: 3

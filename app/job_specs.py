@@ -70,6 +70,11 @@ class StructureEvalOptions(_Spec):
     book_ids: list[int] | None = None
 
 
+class StructureEvalBookOptions(_Spec):
+    book_id: int
+    set: Literal[STRUCTURE_SETS]
+
+
 # the engines over rag-lab's converter_gold sections; `ids` narrows it to some sections
 class ElementEvalOptions(_Spec):
     engines: list[Literal[(*settings.ENGINES, "assembled")]] = [*settings.ENGINES, "assembled"]
@@ -205,6 +210,7 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     "probe_book": (ProbeBookOptions, "cpu"),
     "eval_run": (EmptyOptions, "cpu"),
     "structure_eval": (StructureEvalOptions, "cpu"),
+    "structure_eval_book": (StructureEvalBookOptions, "cpu"),
     # the engines read on the card, so the measurement runs on the GPU lane
     "element_eval": (ElementEvalOptions, "gpu"),
     "cleanup": (CleanupOptions, "cpu"),
