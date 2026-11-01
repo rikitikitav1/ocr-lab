@@ -17,7 +17,8 @@ import text_layer
 from assembly import passes, referee
 from document.model import Code, Heading, Node, PageMarker, Piece, Table
 from elements import captions as book_captions
-from elements import contents, figures, footnotes, running_heads
+from elements import contents, figures, footnotes, geometry, running_heads
+from elements.running_heads import slots
 from engines import converter_tools, reading
 from job_signals import Final
 from orm.catalogue import Artifact, Book, BookFile, LayoutVersion, StructureNode
@@ -26,8 +27,8 @@ from quality import piece as piece_quality
 from writers import markdown
 
 from stages import intake
-from stages.layout import collect as layout_collect
-from stages.layout import page as layout_page
+from stages.elements import collect as layout_collect
+from stages.elements import page as layout_page
 from stages.metadata import resolve
 from stages.structure import collect as structure_collect
 from stages.structure import evidence, scan, sources
@@ -317,10 +318,10 @@ def _layout(book_id: int, versions: Pinned) -> tuple[LayoutVersion | None, dict]
 
 
 # the modules each book-level list is made by: a list keyed by a file its make no longer reads is served stale
-LIST_CODE = {"running_heads.json": (running_heads.book, layout_page, sources),
-             "slot_lines.json": (layout_page, sources),
-             "note_lines.json": (footnotes.book, layout_page, sources), "captions.json": (book_captions.book, sources),
-             "series_captions.json": (book_captions.book, sources)}
+LIST_CODE = {"running_heads.json": (running_heads.book, slots, footnotes.book, layout_page, sources),
+             "slot_lines.json": (slots, footnotes.book, layout_page, sources),
+             "note_lines.json": (footnotes.book, slots, layout_page, sources),
+             "captions.json": (book_captions.book, sources), "series_captions.json": (book_captions.book, sources)}
 
 
 # set by a gate: the book-level lists are made anew, not read back, and each one's hash is kept here by name
@@ -354,7 +355,7 @@ def _by_page(book_id: int, name: str, parts: dict, make: Callable, row: Callable
     return out
 
 
-# the book's running heads by page: lines repeated at a page's edge, and the slot lines its page layout claims by reason
+# the book's running heads by page: lines repeated at a page's edge, and the service lines its page layout claims
 def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
     kept, layout = _layout(book_id, versions)
 
@@ -362,7 +363,7 @@ def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
         lines = sources.book_lines(files)
         heads = running_heads.layer_heads(lines)
         page_of = {id(x): p for p, ls in lines.items() for x in ls}
-        for key, (line, _) in layout_page.claimed_reasons(lines, layout).items() if layout else ():
+        for key, (line, _) in layout_page.service_lines(lines, layout).items() if layout else ():
             on_page = heads.setdefault(page_of[key], [])
             if line.text not in on_page:
                 on_page.append(line.text)
@@ -371,7 +372,7 @@ def running(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[str]]:
     return _by_page(book_id, "running_heads.json", {"layout": kept.id if kept is not None else None}, make)
 
 
-# the slot lines the page layout claims by reason (folio, repeat, side), by book page, for the slot reader
+# the service lines the page layout claims by reason (folio, repeat, side, notice), by book page, for the slot reader
 def slot_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[tuple[str, str, float]]]:
     kept, layout = _layout(book_id, versions)
     if not layout:
@@ -383,7 +384,7 @@ def slot_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, list[tuple
         heights = {f.first_page + i: h for f in files
                    for i, (_, h) in enumerate(pdf.page_sizes(settings.DATA_DIR / f.file_path))}
         out: dict[int, list[tuple[str, str, float]]] = {}
-        for key, (line, reason) in layout_page.claimed_reasons(lines, layout).items():
+        for key, (line, reason) in layout_page.service_lines(lines, layout).items():
             page = page_of[key]
             out.setdefault(page, []).append((line.text, reason, round(line.top / heights[page], 4)))
         return out
@@ -400,8 +401,7 @@ def note_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, str]:
 
     def make(files) -> dict:
         lines = sources.book_lines(files)
-        notes = layout_page.claimed(lines, layout) - layout_page.claimed(lines, {**layout, "notes": None})
-        return footnotes.note_text(lines, notes)
+        return footnotes.note_text(lines, layout_page.note_lines(lines, layout))
 
     return _by_page(book_id, "note_lines.json", {"layout": kept.id}, make)
 
@@ -461,9 +461,7 @@ def _kept(book_id: int, f: BookFile, a: int, b: int, regime: str, engine: str, l
 
 
 def _segment(blocks: list, page: int) -> tuple[int, int] | None:
-    marks = [i for i, b in enumerate(blocks) if isinstance(b, PageMarker)]
-    return next(((i, j) for i, j in zip(marks, [*marks[1:], len(blocks)], strict=True)
-                 if blocks[i].book_page == page), None)
+    return next(((i, j) for i, j in geometry.page_spans(blocks) if blocks[i].book_page == page), None)
 
 
 # the next piece's reading of a boundary page stands in for this piece's own, so both cut one reading

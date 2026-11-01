@@ -1,29 +1,41 @@
 # a book's two layouts kept as versions: the page layout before the structure, the heading layout after it
+import sys
+from pathlib import Path
+
 import artifacts
 import code_version
+import numerals
 import settings
 import text_layer
+from assembly import titles
+from elements import body
+from elements.footnotes import book as footnotes
+from elements.headings import book as headings
+from elements.running_heads import slots
 from orm.catalogue import LayoutVersion, StructureNode, StructureVersion
 from orm.db import Session
 from sqlalchemy import func, select, update
 
 from stages import intake, versions
-from stages.layout import headings, page
+from stages.elements import page
 from stages.structure import collect as structure_collect
+from stages.structure import sources
 from stages.structure.sources import book_lines
 
 PAGE, HEADINGS = "page", "headings"
 
 
-def code_hash() -> str:
-    own = [*sorted((settings.APP_DIR / "stages" / "layout").rglob("*.py")),
-           settings.APP_DIR / "stages" / "structure" / "sources" / "__init__.py", settings.APP_DIR / "numerals.py",
-           settings.APP_DIR / "assembly" / "titles.py"]
-    return code_version.files_hash(own).hexdigest()[:16]
+# each layout is keyed by the modules it reads, so an edit of one layout leaves the other kept
+READS = {PAGE: (sys.modules[__name__], page, slots, footnotes, body, numerals, sources, text_layer),
+         HEADINGS: (sys.modules[__name__], headings, page, slots, footnotes, body, numerals, sources, titles)}
+
+
+def code_hash(kind: str) -> str:
+    return code_version.files_hash([Path(m.__file__) for m in READS[kind]]).hexdigest()[:16]
 
 
 def inputs(book_id: int, kind: str, structure_version_id: int | None = None) -> artifacts.Inputs:
-    parts = {"stage": f"layout_{kind}", "code": code_hash(), "files": [f.sha256 for f in intake.files_of(book_id)]}
+    parts = {"stage": f"layout_{kind}", "code": code_hash(kind), "files": [f.sha256 for f in intake.files_of(book_id)]}
     # the heading layout is made again when the structure or the page layout under it changes
     if kind == HEADINGS:
         page_version = current(book_id, PAGE)

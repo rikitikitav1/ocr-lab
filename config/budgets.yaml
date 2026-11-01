@@ -15,8 +15,13 @@ attempts:
   read_range: 5
   reassemble: 3
   reassembly_gate: 3
+  structure_gate: 3
+  structure_choose: 3
+  shelf_probe: 3
+  probe_book: 3
   eval_run: 3
   structure_eval: 3
+  structure_eval_book: 3
   element_eval: 3
   cleanup: 3
   batch: 3

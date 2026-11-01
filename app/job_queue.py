@@ -10,6 +10,7 @@ import job_specs
 import psycopg
 import settings
 import worker_registry
+from job_signals import Deferred
 from orm.catalogue import Run, RunStatus
 from orm.db import Session
 from orm.jobs import Job
@@ -57,6 +58,25 @@ def batch(session, door: str, books: int) -> int:
     session.add(job)
     session.flush()
     return job.id
+
+
+# a parent's children, enqueued whole or not at all: a parent back after a crash trusts that any child means all of them
+def wait_for_children(job_id: int, type: str, make: Callable[[], list[dict]], what: str = "books") -> list[Job]:
+    with Session() as session:
+        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == type).order_by(Job.id)).all()
+    if not children:
+        rows = make()
+        if not rows:
+            return []
+        with Session.begin() as session:
+            for row in rows:
+                enqueue(type, row["options"], parent_id=job_id, run_id=row.get("run_id"), book_id=row.get("book_id"),
+                        session=session)
+        raise Deferred(f"waiting for {len(rows)} {what}", delay_seconds=30)
+    left = [c.id for c in children if c.status not in FINISHED]
+    if left:
+        raise Deferred(f"waiting for {len(left)} of {len(children)} {what}", delay_seconds=30)
+    return list(children)
 
 
 # the parent row is locked, so a cancel either sees this child or this child sees the cancel

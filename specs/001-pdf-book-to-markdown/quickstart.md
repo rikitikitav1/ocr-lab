@@ -81,8 +81,11 @@ Expect: only the artifacts of the piece holding node 4 are new; book metrics rec
 Built today: the structure stage scored on its own (`POST /eval/structure` with `bookmarks_off`, `contents_off`
 or `hips`, two jobs side by side with `GET /eval/structure/compare?job_a=..&job_b=..`) and the engines per
 element (`POST /eval/elements`). Run one before a change and one after, then compare. Expect: totals and the
-books that moved. Sets, registered gates and `GET /eval/runs/<id>` with worse members and their reasons are
-planned, not built.
+books that moved; a probe on a few books compares with a shelf run on its own books (`common`, `only_a`).
+Two gates name every book a change moved: `POST /gates/structure` (each book's structure as the stage would choose
+it, sources in `off` left out) and `POST /gates/reassembly` (finished runs reassembled fresh, byte by byte); run one
+before the change and one after with `base_job_id`. Sets, registered gates and `GET /eval/runs/<id>` with worse
+members and their reasons are planned, not built.
 
 ## 8. Gate for the repo
 

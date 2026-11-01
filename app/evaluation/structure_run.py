@@ -114,28 +114,32 @@ def _hips_member(name: str, job_id: int | None) -> dict:
 
 
 # a cancel is read between books, so a long set stops at the next one
-def run(set_name: str, book_ids: list[int] | None, job_id: int | None) -> dict:
-    if set_name not in SETS:
-        raise Final(f"set {set_name!r} is not built yet; built: {SETS}")
+def run_hips(job_id: int | None) -> dict:
     rows = []
-    if set_name == "hips":
-        for name in hips.fetch():
-            if job_id is not None and job_queue.is_cancelled(job_id):
-                break
-            row = _hips_member(name, job_id)
-            rows.append(row)
-            _keep(row["book_id"], set_name, row)
-        return _summary(set_name, rows, [r for r in rows if "skipped" not in r])
-    with Session() as session:
-        books = select(Book.id) if set_name == "contents_off" else select(Book.id).where(Book.has_bookmarks)
-        ids = book_ids or list(session.scalars(books.order_by(Book.id)))
-    for book_id in ids:
+    for name in hips.fetch():
         if job_id is not None and job_queue.is_cancelled(job_id):
             break
-        row = _member(book_id, set_name)
+        row = _hips_member(name, job_id)
         rows.append(row)
-        _keep(book_id, set_name, row)
-    # with all contents off a book's own contents pages are no reason to leave it out
+        _keep(row["book_id"], "hips", row)
+    return _summary("hips", rows, [r for r in rows if "skipped" not in r])
+
+
+def books_of(set_name: str, book_ids: list[int] | None) -> list[int]:
+    with Session() as session:
+        books = select(Book.id) if set_name == "contents_off" else select(Book.id).where(Book.has_bookmarks)
+        return book_ids or list(session.scalars(books.order_by(Book.id)))
+
+
+# one book of a set scored and kept
+def member(book_id: int, set_name: str) -> dict:
+    row = _member(book_id, set_name)
+    _keep(book_id, set_name, row)
+    return row
+
+
+# with all contents off a book's own contents pages are no reason to leave it out
+def summary_of(set_name: str, rows: list[dict]) -> dict:
     scored = [r for r in rows if "skipped" not in r and (set_name == "contents_off" or r["printed"] == "contents")]
     return _summary(set_name, rows, scored)
 

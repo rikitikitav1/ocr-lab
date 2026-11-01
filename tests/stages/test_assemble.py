@@ -397,3 +397,10 @@ def test_a_title_every_chapter_repeats_is_pinned_on_its_node_s_own_pages_never_a
     assert passes.pins(blocks, [quiz] * 3) == [3, 5, None]
     nested = [page(5), head, page(6), head]
     assert passes.pins(nested, [quiz] * 2, None, [(5, 7), (5, 5)]) == [1, 3]
+
+
+def test_a_label_ending_with_a_full_stop_stays_with_the_title_under_it():
+    blocks = [Paragraph(text="the last chapter's end"), Heading(text="Глава 1.", level=2, level_source="mineru"),
+              Heading(text="Введение", level=1, level_source="structure", node=2)]
+    assert assemble._label_above(blocks, 2, [None, None, 2]) == 1
+

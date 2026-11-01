@@ -17,7 +17,7 @@ from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import func, select
 from stages import eta, file_order, intake, versions
-from stages.layout import collect as layout_collect
+from stages.elements import collect as layout_collect
 from stages.metadata import fields, resolve
 from stages.metadata.candidates import REQUIRED, SOUGHT
 from stages.structure import collect, evidence

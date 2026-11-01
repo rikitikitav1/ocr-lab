@@ -22,6 +22,9 @@ MONO_PAGES = 40
 MONO_SPREAD = 0.12
 MONO_LETTERS = 50
 INVISIBLE = 3
+# a reference glyph against its word: at most this share of the word's size, raised and as close as this share of it
+SUPERSCRIPT = 0.8
+RAISE = 0.2
 
 
 def _advances(page, textpage) -> dict[str, list[float]]:
@@ -94,7 +97,8 @@ def _page_layer(textpage, spaced: bool, solid: Counter | None = None) -> PageLay
         return PageLayer(repair(text), repair(text), [])
     breaks, spaces = _drops(textpage, text, spaced, solid)
     as_read = "".join(c for k, c in enumerate(text) if k not in breaks)
-    joined = "".join(c for k, c in enumerate(text) if k not in breaks and k not in spaces)
+    drop = breaks | spaces | _raised(textpage, text)
+    joined = "".join(c for k, c in enumerate(text) if k not in drop)
     return PageLayer(repair(as_read), repair(joined), _rows(text, spaces))
 
 
@@ -152,13 +156,30 @@ def _drops(textpage, text: str, spaced: bool, solid: Counter | None = None) -> t
     return _breaks(text, box, made), (_spaced(textpage, text, made, solid) if spaced else set())
 
 
+# a reference set small and raised sits on its word in print, so the space the layer holds before it goes
+def _raised(textpage, text: str) -> set[int]:
+    out = set()
+    for i in range(1, len(text) - 1):
+        if text[i] != " " or text[i - 1].isspace() or not (text[i + 1].isdigit() or text[i + 1] == "*"):
+            continue
+        try:
+            before, after = textpage.get_charbox(i - 1), textpage.get_charbox(i + 1)
+        except pdfium.PdfiumError:
+            continue
+        size, small = _char_style(textpage, i - 1)[0], _char_style(textpage, i + 1)[0]
+        if small <= SUPERSCRIPT * size and after[1] - before[1] > RAISE * size and after[0] - before[2] < RAISE * size:
+            out.add(i)
+    return out
+
+
 # PDFium breaks lines inside words whose glyphs sit on one row ("Север\r\nе уступае"), and such a break is undone
 def _joined(textpage, spaced: bool = False, solid: Counter | None = None) -> tuple[str, list[int]]:
     text = textpage.get_text_range()
     if len(text) != textpage.count_chars():
         return text, list(range(len(text)))
     breaks, spaces = _drops(textpage, text, spaced, solid)
-    kept = [k for k in range(len(text)) if k not in breaks and k not in spaces]
+    drop = breaks | spaces | _raised(textpage, text)
+    kept = [k for k in range(len(text)) if k not in drop]
     return "".join(text[k] for k in kept), kept
 
 

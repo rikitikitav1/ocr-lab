@@ -2,7 +2,7 @@
 import re
 from collections.abc import Callable
 
-from document.model import Caption, Figure, Piece
+from document.model import Caption, Code, Figure, PageMarker, Piece, Table
 
 
 # a figure is linked only when its image is a file in the bundle
@@ -29,16 +29,35 @@ def counts(piece: Piece) -> dict:
     return {"figures": len(figures), "figures_not_kept": sum(not image_kept(b.image) for b in figures)}
 
 
-# a caption block right by a figure on its page, the one after it first, is that figure's own; each is taken once
+REACH = 2
+
+
+def _free(out: list, j: int, taken: set[int]) -> bool:
+    return 0 <= j < len(out) and j not in taken and isinstance(out[j], Caption) and not out[j].slot
+
+
+# nothing a caption could name and no page break stands between a figure and a caption two blocks off
+def _clear(out: list, k: int, j: int) -> bool:
+    return not any(isinstance(b, Figure | Table | Code | PageMarker) for b in out[min(k, j) + 1:max(k, j)])
+
+
+# the side a piece sets its captions on, from figures with a caption on one side only; after the picture by default
+def _side(out: list) -> int:
+    sides = [1 if after else -1 for k, b in enumerate(out) if isinstance(b, Figure)
+             if (after := _free(out, k + 1, set())) != _free(out, k - 1, set())]
+    return -1 if sides.count(-1) > sides.count(1) else 1
+
+
+# a caption block by a figure, on the piece's own side first and within two blocks as a series reaches, is its own
 def captioned(blocks: list) -> tuple[list, int]:
     out, taken, n = list(blocks), set(), 0
+    side = _side(out)
     for k, b in enumerate(out):
         if not isinstance(b, Figure) or b.caption:
             continue
-        for j in (k + 1, k - 1):
-            if 0 <= j < len(out) and j not in taken and isinstance(out[j], Caption) and not out[j].slot:
-                out[k] = b.model_copy(update={"caption": out[j].text})
-                taken.add(j)
-                n += 1
-                break
+        near = [k + side, k - side, k + REACH * side, k - REACH * side]
+        if (j := next((j for j in near if _free(out, j, taken) and _clear(out, k, j)), None)) is not None:
+            out[k] = b.model_copy(update={"caption": out[j].text})
+            taken.add(j)
+            n += 1
     return out, n

@@ -10,9 +10,11 @@ import model_steps
 import numerals
 import settings
 import text_layer
+from elements.running_heads import slots
 from job_signals import Final
-from orm.catalogue import Book, StructureNode, StructureVersion
+from orm.catalogue import Book, LayoutVersion, StructureNode, StructureVersion
 from orm.db import Session
+from sqlalchemy import select
 from structure import tree
 
 from stages import book_stage, intake, versions
@@ -29,17 +31,22 @@ from stages.structure.sources import (
     labelled,
     numbering,
     printed_contents,
+    series,
 )
 from stages.structure.sources.numbering import title_depth
 
 STAGE = "structure"
+# the names `off` takes in choose: each leaves one source or step out
+SOURCES = ("bookmarks", "printed_contents", "files", "numbering", "text_headings", "outlines", "labels", "headings")
 
 
 def code_hash() -> str:
     # the structure reads the layer, running heads and numerals, so the code that reads them is its code
     own = [*sorted((settings.APP_DIR / "stages" / "structure").rglob("*.py")), settings.APP_DIR / "model_steps.py",
-           settings.APP_DIR / "elements" / "running_heads" / "book.py", settings.APP_DIR / "numerals.py",
-           settings.APP_DIR / "structure" / "tree.py", settings.APP_DIR / "alphabets.py"]
+           settings.APP_DIR / "elements" / "running_heads" / "book.py", Path(slots.__file__),
+           settings.APP_DIR / "elements" / "body.py",
+           settings.APP_DIR / "numerals.py", settings.APP_DIR / "structure" / "tree.py",
+           settings.APP_DIR / "alphabets.py"]
     digest = code_version.files_hash(own, ("structure.yaml",))
     digest.update(json.dumps(model_steps.steps()["contents_reader"], sort_keys=True).encode())
     return digest.hexdigest()[:16]
@@ -53,11 +60,28 @@ def inputs(book_id: int) -> artifacts.Inputs:
     # the book's languages tell a broken layer's headings, so a new language list collects the structure again
     parts = {"stage": STAGE, "code": code_hash(), "files": [f.sha256 for f in intake.files_of(book_id)],
              "knobs": knobs, "languages": resolve.known_languages_of(book_id)}
+    # the running slots are read from the page layout: one learned other collects the structure again, the same does not
+    if (kept := _page_layout(book_id)) is not None:
+        parts["layout_page"] = artifacts.short_sha(json.dumps(kept.layout, sort_keys=True).encode())
     if scanned(book_id) or scan.raster_contents(book_id, knobs.get("structure.contents_pages"), run=False) is not None:
         from engines import reading
 
         parts["mineru"] = reading.build("mineru")
     return artifacts.Inputs(parts)
+
+
+def _page_layout(book_id: int) -> LayoutVersion | None:
+    with Session() as session:
+        return session.scalar(select(LayoutVersion).where(LayoutVersion.book_id == book_id,
+                                                          LayoutVersion.kind == "page", LayoutVersion.current))
+
+
+# the lines the page layout's running slots read as folios, repeats or side lines
+def _band(book_id: int, lines: dict) -> frozenset[int]:
+    kept = _page_layout(book_id)
+    if kept is None or "skipped" in kept.layout:
+        return frozenset()
+    return frozenset(slots.claimed_reasons(lines, kept.layout))
 
 
 def current_version(book_id: int) -> StructureVersion | None:
@@ -150,7 +174,10 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
             printed = seen
             text = pages.page_text(lines, set(seen.notes["pages"]))
             placement = pages.place(seen.entries, text, total)
-        counted = numbering.read(book_files, set(printed.notes.get("pages", [])), lines)
+        # a book with a contents or bookmarks has its structure there: nothing more is sought in its text
+        counted = SourceEntries("numbering", failed="the contents hold the structure") \
+            if _has_contents(marks, printed, off) else numbering.read(book_files, set(printed.notes.get("pages", [])),
+                                                                      lines, _band(book_id, lines))
     by_file = files.read(book_files)
     found = {s.source: s.entries for s in (marks, printed, by_file, counted) if s.source not in off}
     styled = _styled(found, lines if not scanned(book_id) else None, total, frozenset(printed.notes.get("pages") or []),
@@ -204,7 +231,8 @@ def _styled(found: dict, lines: dict | None, total: int, contents: frozenset[int
                for source, entries in found.items() if source not in reconcile.VOTES_ONLY)
     if lines is None or held or labelled_by_knob or "text_headings" in off:
         return SourceEntries("text_headings", failed="not read: a scan, a contents source, the label knob, or off")
-    return headings.read_lines(lines, total, contents, tuple(resolve.known_languages_of(book_id)))
+    return headings.read_lines(lines, total, contents, tuple(resolve.known_languages_of(book_id)),
+                               _band(book_id, lines))
 
 
 # chapters opening on neighbouring pages are a list of them (a contents page, a series page), not the book's chapters
@@ -213,16 +241,22 @@ NEIGHBOURS = 0.3
 BACKWARDS = 0.1
 
 
-def _number(entry: Entry, kind: str) -> int | None:
-    m = numbering.label_pattern(kind).match(entry.title.strip())
-    return numerals.value(m.group("num")) if m else None
+def _has_contents(marks: SourceEntries, printed: SourceEntries, off: tuple[str, ...]) -> bool:
+    return any(s.source not in off and sum(e.page is not None for e in s.entries) >= reconcile.MIN_ENTRIES
+               for s in (printed, marks))
+
+
+def _number(entry: Entry, depth: int, labels: dict[str, int]) -> int | None:
+    m = series.LABELLED.match(entry.title.strip())
+    return numerals.value(m.group("num")) if m and labels.get(m.group("word").lower()) == depth else None
 
 
 # labelled entries outside the longest rising run of their kind's numbers are cross-references set like headings
 def _out_of_turn(entries: list[Entry]) -> list[Entry]:
     out = []
-    for kind in ("part", "chapter"):
-        numbered = [(e, n) for e in entries if (n := _number(e, kind)) is not None]
+    labels = series.label_depths([e.title for e in entries])
+    for depth in (-1, 0):
+        numbered = [(e, n) for e in entries if (n := _number(e, depth, labels)) is not None]
         best = [1] * len(numbered)
         for i in range(len(numbered)):
             for j in range(i):
@@ -239,13 +273,14 @@ def _out_of_turn(entries: list[Entry]) -> list[Entry]:
 
 # labelled chapters that can stand as a structure: their numbers rise and they open pages apart
 def _labelled(entries: list[Entry]) -> int:
-    found = [e for e in entries if title_depth(e.title) in (-1, 0)]
+    labels = series.label_depths([e.title for e in entries])
+    found = [e for e in entries if title_depth(e.title, labels=labels) in (-1, 0)]
     if len(_out_of_turn(found)) > BACKWARDS * max(1, len(found) - 1):
         return 0
     # a part's page and its first chapter's page are neighbours by design, so each kind is measured among itself
     close = steps = 0
     for depth in (-1, 0):
-        pages = [e.page for e in found if e.page is not None and title_depth(e.title) == depth]
+        pages = [e.page for e in found if e.page is not None and title_depth(e.title, labels=labels) == depth]
         close += sum(b - a <= 1 for a, b in zip(pages, pages[1:], strict=False))
         steps += max(0, len(pages) - 1)
     return 0 if close > NEIGHBOURS * max(1, steps) else len(found)

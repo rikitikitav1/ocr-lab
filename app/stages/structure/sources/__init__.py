@@ -1,5 +1,4 @@
 # what every structure source returns: entries in book order, pages numbered across files
-from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
 
@@ -60,12 +59,3 @@ def book_lines(files: list[BookFile], pages: set[int] | None = None) -> dict[int
         for index, lines in text_layer.page_lines(settings.DATA_DIR / f.file_path, wanted).items():
             out[f.first_page + index] = lines
     return out
-
-
-# the body's size and weight, the style that sets the most characters; a heading is read against it
-def body_style(lines: dict) -> tuple[float, bool]:
-    styles: Counter = Counter()
-    for page_lines in lines.values():
-        for line in page_lines:
-            styles[(line.size, line.bold)] += len(line.text)
-    return styles.most_common(1)[0][0] if styles else (0, False)

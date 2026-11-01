@@ -115,11 +115,16 @@ def test_a_shelf_snapshot_names_the_books_whose_toc_or_metadata_moved(client, in
     kept = client.get(f"/v1/shelf/snapshots/{taken['id']}").json()["books"][str(book["id"])]
     assert set(kept) == {"structure", "metadata", "layout_page", "layout_headings"}
     assert client.get("/v1/shelf/snapshots/999999").status_code == 404
-    from stages.layout import collect as layout
+    from stages.elements import collect as layout
     layout.collect_page(still["id"], force=True)
+    again = client.post("/v1/shelf/snapshots", json={"book_ids": [still["id"]]}).json()
     layout.collect_page(still["id"], force=True)
-    moved = client.get(f"/v1/shelf/snapshots/{taken['id']}/changes", params={"book_ids": [still["id"]]}).json()
-    assert moved["moved"] == [] and set(moved["layouts_moved"][str(still["id"])]) == {"layout_page"}
+    moved = client.get(f"/v1/shelf/snapshots/{again['id']}/changes").json()
+    assert moved["moved"] == [] and moved["layouts_moved"][str(still["id"])]["layout_page"]["same"]
+    assert moved["layouts_learned_other"] == 0
+    layout._write(still["id"], layout.PAGE, layout.inputs(still["id"], layout.PAGE), {"skipped": "by hand"}, None)
+    other = client.get(f"/v1/shelf/snapshots/{again['id']}/changes").json()
+    assert not other["layouts_moved"][str(still["id"])]["layout_page"]["same"] and other["layouts_learned_other"] == 1
 
 
 def test_toc_is_collected_alone_and_read_through_the_door(client, inbox):
@@ -257,9 +262,24 @@ def test_a_manual_edit_never_passes_for_a_collection(client, inbox, monkeypatch)
     assert fields["title"]["value"] == "Hand" and fields["title"]["version"] == 3
 
 
+# an evaluation defers itself while its books are scored: its wait is cut short and the queue drained again
+def _evaluate(job_id: int) -> None:
+    import worker
+    from orm.db import Session
+    from sqlalchemy import text
+
+    worker.job_handlers.load_all()
+    for _ in range(3):
+        while worker.run_once("cpu"):
+            pass
+        with Session.begin() as session:
+            session.execute(text("UPDATE jobs SET apply_since = now() WHERE id = :id AND status = 'new'"),
+                            {"id": job_id})
+
+
+
 def test_toc_eval_scores_the_contents_against_bookmarks_switched_off(client, inbox):
     import job_queue
-    from job_handlers import evaluation
 
     from tests.fixtures import FILLER
 
@@ -274,10 +294,11 @@ def test_toc_eval_scores_the_contents_against_bookmarks_switched_off(client, inb
     unknown = {"set": "bookmarks_off", "book_ids": [book["id"], 999999]}
     assert client.post("/v1/eval/structure", json=unknown).status_code == 404
     job = client.post("/v1/eval/structure", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
-    result = evaluation.run_structure_eval({**job_queue.get(job).options, "_job_id": job})
+    _evaluate(job)
+    result = job_queue.get(job).result
+    assert job_queue.get(job).status == "done"
     assert result["top_nodes"] == 3 and result["top_nodes_found"] == 3
     assert result["rows"][0]["source"] == "printed_contents"
-    job_queue.complete(job, result=result)
     other = client.post("/v1/eval/structure", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
     compare = {"job_a": job, "job_b": other}
     assert client.get("/v1/eval/structure/compare", params=compare).status_code == 400
@@ -290,6 +311,11 @@ def test_toc_eval_scores_the_contents_against_bookmarks_switched_off(client, inb
     assert moved["totals"]["top_nodes_found"] == {"a": 3, "b": 2, "delta": -1}
     assert [(m["book_id"], m["changed"]) for m in moved["moved"]] == [(book["id"], ["missed", "top_nodes_found"])]
     assert moved["moved"][0]["b"]["missed"] == ["Chapter 2 Part number 2"]
+    assert moved["common"]["top_nodes_found"] == {"a": 3, "b": 2, "delta": -1} and moved["only_a"] == []
+    probe = client.post("/v1/eval/structure", json={"set": "bookmarks_off", "book_ids": [book["id"]]}).json()["job_id"]
+    job_queue.complete(probe, result={**result, "rows": [], "books_with_missed_top_nodes": []})
+    narrow = client.get("/v1/eval/structure/compare", params={"job_a": job, "job_b": probe}).json()
+    assert narrow["moved"] == [] and narrow["only_a"] == [book["id"]] and narrow["common"]["books"] == 0
 
 
 def test_every_tool_takes_its_use_case_arguments():

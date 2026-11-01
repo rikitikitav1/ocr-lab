@@ -70,6 +70,11 @@ class StructureEvalOptions(_Spec):
     book_ids: list[int] | None = None
 
 
+class StructureEvalBookOptions(_Spec):
+    book_id: int
+    set: Literal[STRUCTURE_SETS]
+
+
 # the engines over rag-lab's converter_gold sections; `ids` narrows it to some sections
 class ElementEvalOptions(_Spec):
     engines: list[Literal[(*settings.ENGINES, "assembled")]] = [*settings.ENGINES, "assembled"]
@@ -138,6 +143,27 @@ class ReassemblyGateOptions(_Spec):
     ignore: list[str] = []
 
 
+class StructureChooseOptions(_Spec):
+    book_id: int
+    off: list[str] = []
+
+
+class StructureGateOptions(_Spec):
+    book_ids: list[int] | None = None
+    off: list[str] = []
+    base_job_id: int | None = None
+
+
+class ShelfProbeOptions(_Spec):
+    file: str
+    book_ids: list[int] | None = None
+
+
+class ProbeBookOptions(_Spec):
+    file: str
+    book_id: int
+
+
 class CleanupOptions(_Spec):
     dry_run: bool = True
 
@@ -178,8 +204,13 @@ SPECS: dict[str, tuple[type[_Spec], str]] = {
     "read_range": (ReadRangeOptions, "gpu"),
     "reassemble": (ReassembleOptions, "cpu"),
     "reassembly_gate": (ReassemblyGateOptions, "cpu"),
+    "structure_gate": (StructureGateOptions, "cpu"),
+    "structure_choose": (StructureChooseOptions, "cpu"),
+    "shelf_probe": (ShelfProbeOptions, "cpu"),
+    "probe_book": (ProbeBookOptions, "cpu"),
     "eval_run": (EmptyOptions, "cpu"),
     "structure_eval": (StructureEvalOptions, "cpu"),
+    "structure_eval_book": (StructureEvalBookOptions, "cpu"),
     # the engines read on the card, so the measurement runs on the GPU lane
     "element_eval": (ElementEvalOptions, "gpu"),
     "cleanup": (CleanupOptions, "cpu"),

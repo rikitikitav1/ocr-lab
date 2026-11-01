@@ -1,12 +1,16 @@
 import artifacts
 import job_queue
 import job_specs
+import settings
 from knobs import registry
 from mcp_tools import tool
 from orm.catalogue import Artifact, Book, Run
 from orm.db import Session
 from orm.jobs import Job
 from sqlalchemy import select
+from stages.structure import collect as structure_collect
+
+from use_cases import known
 
 
 # the reading lands in the job's result by range key and artifact id, which the artifact door reads
@@ -74,6 +78,25 @@ def reassembly_gate(run_ids: list[int], knobs: dict | None = None, base_job_id: 
     return {"job_id": job_queue.enqueue("reassembly_gate", options)}
 
 
+@tool("structure_gate", "POST /v1/gates/structure",
+      "Queue a CPU job that takes each named book's structure (every book by default, one child job a book) as the "
+      "structure stage would choose it, with the sources in off left out, and keeps the record; with base_job_id it "
+      "compares the record with that earlier structure gate's, and its result gives moved (books whose source or "
+      "entries moved) and a report per moved book. A scan whose contents need the card is recorded as skipped.")
+def structure_gate(book_ids: list[int] | None = None, off: list[str] | None = None,
+                   base_job_id: int | None = None) -> dict:
+    if unknown := sorted(set(off or []) - set(structure_collect.SOURCES)):
+        raise job_specs.Refused(f"unknown sources {unknown}; known: {list(structure_collect.SOURCES)}")
+    options = job_specs.check("structure_gate", {"book_ids": book_ids, "off": off or [], "base_job_id": base_job_id})
+    with Session() as session:
+        if book_ids:
+            known.check_books(session, book_ids)
+        base = session.get(Job, base_job_id) if base_job_id is not None else None
+    if base_job_id is not None and (base is None or base.type != "structure_gate" or base.status != "done"):
+        raise job_specs.Refused(f"job {base_job_id} is no finished structure gate")
+    return {"job_id": job_queue.enqueue("structure_gate", options)}
+
+
 # any kept artifact by id, a book's readings included; a tool cannot carry bytes, so it gets the file as text
 @tool("artifact", "GET /v1/artifacts/{id}",
       "Any artifact by id: its stage, name, path, owner, inputs and its file content as text, for a reading, a "
@@ -87,3 +110,18 @@ def get_artifact(id: int) -> dict:
             "run_id": row.run_id, "piece": row.piece_ord, "meta": row.meta,
             "text": artifacts.read(row).decode(errors="replace")}
 
+
+@tool("shelf_probe", "POST /v1/probes/shelf",
+      "Queue a CPU job that runs probe(book_id) -> dict from a file in the probes directory (temp_files) over the "
+      "named books (every book by default), one child job a book, so a measure survives a worker restart. The job's "
+      "waiting_because counts the books left; its result names the record (each book's dict, under books) and the "
+      "books that failed (with their errors in the record).")
+def shelf_probe(file: str, book_ids: list[int] | None = None) -> dict:
+    options = job_specs.check("shelf_probe", {"file": file, "book_ids": book_ids})
+    path = settings.PROBES_DIR / file
+    if path.parent != settings.PROBES_DIR or path.suffix != ".py" or not path.is_file():
+        raise job_specs.Refused(f"{file} is no .py file directly in the probes directory")
+    if book_ids:
+        with Session() as session:
+            known.check_books(session, book_ids)
+    return {"job_id": job_queue.enqueue("shelf_probe", options)}

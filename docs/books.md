@@ -10,7 +10,7 @@ the book's current structure took its base from (the report's `metadata.structur
 levels of a printed contents without being its base. "Used in" says which
 measurements the book takes part in: every book's structure is collected; a book with bookmarks is scored with
 them switched off; the metadata gold holds the books checked by hand; a full run is a whole book through
-both engines to a bundle.
+both engines to a bundle; a notes book is read for its footnotes.
 
 | # | title | author | year | language | pages | kind | made with | structure from | used in |
 |---|---|---|---|---|---|---|---|---|---|
@@ -139,6 +139,7 @@ both engines to a bundle.
 | 125 | Современный испанско-русский русско-испанский словарь | Платонова, Елена Евгеньевна et al. | 2013 | Russian, Spanish | 865 | text | Acrobat Distiller 8.1.0 (Windows); PageMaker 6.5 | printed contents | structure |
 | 126 | Алфавитно-корневой иврит-русский словарь | A. Meergus et al. | 2002 | Russian, Hebrew (read as Russian) | 778 | text | Acrobat Distiller 4.05 for Windows; Microsoft Word 9.0 | bookmarks | structure, bookmarks-off gold |
 | 128 | Dizionario essenziale russo-italiano italiano-russo |  | 1990 | Italian, Russian (read as Italian) | 436 | scan | iText 2.1.7 by 1T3XT; pdfsam-console (Ver. 2.4.1e) | none (structure not recognised) | structure |
+| 129 | Из фондов Российской государственной библиотеки (the file's own title; Война и мир, Л. Н. Толстой) |  |  | Russian, French (read as Russian) | 1918 | text | Microsoft® Word 2010 | text headings | structure, notes |
 
 ## The text layer of the books with a full run
 

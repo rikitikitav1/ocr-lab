@@ -7,7 +7,7 @@ from knobs import registry
 from orm.catalogue import Profile
 from orm.db import Session
 from sqlalchemy import select
-from stages.layout import collect
+from stages.elements import collect
 
 # until profile search is built a run says it skipped it, in its start answer and in its report
 SEARCH_SKIPPED = "skipped: profile search is not built"

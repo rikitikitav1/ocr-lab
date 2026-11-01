@@ -12,14 +12,15 @@ text_layer:
   numbering:
     head_lines: 8          # a part or chapter label counts only among the first lines of a page (an epigraph may come first)
     max_chars: 120         # a numbered line longer than this is prose, not a heading
-    part: [part, часть, частина, teil, partie, parte, część]
-    chapter: [chapter, глава, розділ, kapitel, chapitre, capítulo, capitolo, rozdział]
   # headings told by type when no contents source holds the book; grouped and levelled as scan_layer.headings
   headings:
     larger: 1.15           # a line this much larger than the body's commonest size, or bold over a plain body, is a heading
     same_size: 0.3         # a wrapped title's next row is set within this many points of its first
     row_gap: 1.8           # and no further below it than this many of its sizes
     max_words: 15          # a title stops taking rows at this many words
+    bold_run: 2            # a bold line of the body's size is a heading only in a run of at most this many such lines
+    para_words: 60         # more words than this in lines of one look running on in the layer's order are a paragraph
+    bold_short: 0.7        # its last row shorter than this share of the body's median line length
 scan_layer:
   labels:
     top_share: 0.2         # a chapter label (book knob structure.chapter_label) starts in this top share of a recognised page

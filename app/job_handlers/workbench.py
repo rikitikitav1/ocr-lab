@@ -1,16 +1,16 @@
 # jobs that look at a book or a run without changing it: a page range read, a scratch reassembly, a gate over them
+import importlib.util
 import json
 from pathlib import Path
 
 import artifacts
 import job_queue
 import settings
-from evaluation import byte_gate
-from job_signals import Deferred, Final
+from evaluation import byte_gate, structure_gate
+from job_signals import Final
 from knobs import registry
-from orm.catalogue import Artifact, Piece, Run
+from orm.catalogue import Artifact, Book, Piece, Run
 from orm.db import Session
-from orm.jobs import Job
 from sqlalchemy import select
 from stages import assemble, run_pieces, run_state
 from stages.piece_assembly import assembled
@@ -144,17 +144,12 @@ def gate_record(job_id: int) -> dict:
 def reassembly_gate(options: dict) -> dict:
     job_id = options["_job_id"]
     with Session() as session:
-        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "reassemble")
-                                   .order_by(Job.id)).all()
         books = dict(session.execute(select(Run.id, Run.book_id).where(Run.id.in_(options["run_ids"]))).all())
-    if not children:
-        for run_id in options["run_ids"]:
-            job_queue.enqueue("reassemble", {"run_id": run_id, "knobs": options["knobs"], "fresh": True},
-                              parent_id=job_id, run_id=run_id, book_id=books.get(run_id))
-        raise Deferred(f"waiting for {len(options['run_ids'])} reassemblies", delay_seconds=30)
-    left = [c.id for c in children if c.status not in job_queue.FINISHED]
-    if left:
-        raise Deferred(f"waiting for {len(left)} of {len(children)} reassemblies", delay_seconds=30)
+    children = job_queue.wait_for_children(
+        job_id, "reassemble",
+        lambda: [{"options": {"run_id": r, "knobs": options["knobs"], "fresh": True}, "run_id": r,
+                  "book_id": books.get(r)} for r in options["run_ids"]],
+        "reassemblies")
     if failed := [c.id for c in children if c.status != "done"]:
         raise Final(f"reassemblies not done: {failed}")
     codes = sorted({c.code_hash for c in children})
@@ -170,3 +165,68 @@ def reassembly_gate(options: dict) -> dict:
                                          tuple(options["ignore"]))
         out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
     return out
+
+
+def _shelf(book_ids: list[int] | None) -> list[int]:
+    with Session() as session:
+        return book_ids or list(session.scalars(select(Book.id).order_by(Book.id)))
+
+
+@register("structure_choose")
+def structure_choose(options: dict) -> dict:
+    return structure_gate.entry(options["book_id"], tuple(options["off"]))
+
+
+# each book's structure as choose gives it, one child job a book, kept as a record and compared with an earlier gate's
+@register("structure_gate")
+def run_structure_gate(options: dict) -> dict:
+    job_id = options["_job_id"]
+    base = gate_record(options["base_job_id"]) if options["base_job_id"] is not None else None
+    if base is not None and base.get("off") != list(options["off"]):
+        raise Final(f"the base gate read with {base.get('off')} off, this one with {list(options['off'])}")
+    children = job_queue.wait_for_children(
+        job_id, "structure_choose", lambda: [{"options": {"book_id": b, "off": options["off"]}, "book_id": b}
+                                             for b in _shelf(options["book_ids"])])
+    if failed := [c.id for c in children if c.status != "done"]:
+        raise Final(f"books not read: {failed}")
+    codes = sorted({c.code_hash for c in children})
+    if len(codes) != 1:
+        raise Final(f"the books were read on several codes {codes}: reload the workers and gate again")
+    off = tuple(options["off"])
+    record = {"off": list(off), "code": codes[0], "books": {str(c.book_id): c.result for c in children}}
+    artifacts.atomic_write(_gate_path(job_id), record)
+    out = {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "code": codes[0],
+           "books": len(record["books"]), "skipped": sum("skipped" in e for e in record["books"].values()),
+           "failed": sum("failed" in e for e in record["books"].values())}
+    if base is not None:
+        moved, lines = structure_gate.compare(base["books"], record["books"])
+        out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
+    return out
+
+
+# a probe file gives probe(book_id) -> dict, read afresh for each book
+@register("probe_book")
+def probe_book(options: dict) -> dict:
+    spec = importlib.util.spec_from_file_location("shelf_probe_file", settings.PROBES_DIR / options["file"])
+    module = importlib.util.module_from_spec(spec)
+    # a probe's error repeats on a retry, so the book fails at once and the record names why
+    try:
+        spec.loader.exec_module(module)
+        return module.probe(options["book_id"])
+    except Exception as e:
+        raise Final(f"{type(e).__name__}: {e}") from e
+
+
+# one probe over the books, one child job a book; a book that fails is named in the record and the rest are kept
+@register("shelf_probe")
+def shelf_probe(options: dict) -> dict:
+    job_id = options["_job_id"]
+    children = job_queue.wait_for_children(
+        job_id, "probe_book", lambda: [{"options": {"file": options["file"], "book_id": b}, "book_id": b}
+                                       for b in _shelf(options["book_ids"])])
+    failed = {str(c.book_id): (c.error or {}).get("error", c.status) for c in children if c.status != "done"}
+    record = {"file": options["file"], "codes": sorted({c.code_hash for c in children if c.code_hash}),
+              "books": {str(c.book_id): c.result for c in children if c.status == "done"}, "failed": failed}
+    artifacts.atomic_write(_gate_path(job_id), record)
+    return {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "file": options["file"],
+            "books": len(record["books"]), "failed": sorted(failed, key=int), "codes": record["codes"]}
