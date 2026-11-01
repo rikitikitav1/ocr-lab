@@ -114,24 +114,15 @@ def _hips_member(name: str, job_id: int | None) -> dict:
 
 
 # a cancel is read between books, so a long set stops at the next one
-def run(set_name: str, book_ids: list[int] | None, job_id: int | None) -> dict:
-    if set_name not in SETS:
-        raise Final(f"set {set_name!r} is not built yet; built: {SETS}")
+def run_hips(job_id: int | None) -> dict:
     rows = []
-    if set_name == "hips":
-        for name in hips.fetch():
-            if job_id is not None and job_queue.is_cancelled(job_id):
-                break
-            row = _hips_member(name, job_id)
-            rows.append(row)
-            _keep(row["book_id"], set_name, row)
-        return _summary(set_name, rows, [r for r in rows if "skipped" not in r])
-    rows = []
-    for book_id in books_of(set_name, book_ids):
+    for name in hips.fetch():
         if job_id is not None and job_queue.is_cancelled(job_id):
             break
-        rows.append(member(book_id, set_name))
-    return summary_of(set_name, rows)
+        row = _hips_member(name, job_id)
+        rows.append(row)
+        _keep(row["book_id"], "hips", row)
+    return _summary("hips", rows, [r for r in rows if "skipped" not in r])
 
 
 def books_of(set_name: str, book_ids: list[int] | None) -> list[int]:

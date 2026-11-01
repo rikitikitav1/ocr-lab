@@ -7,11 +7,10 @@ import artifacts
 import job_queue
 import settings
 from evaluation import byte_gate, structure_gate
-from job_signals import Deferred, Final
+from job_signals import Final
 from knobs import registry
 from orm.catalogue import Artifact, Book, Piece, Run
 from orm.db import Session
-from orm.jobs import Job
 from sqlalchemy import select
 from stages import assemble, run_pieces, run_state
 from stages.piece_assembly import assembled
@@ -145,17 +144,12 @@ def gate_record(job_id: int) -> dict:
 def reassembly_gate(options: dict) -> dict:
     job_id = options["_job_id"]
     with Session() as session:
-        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "reassemble")
-                                   .order_by(Job.id)).all()
         books = dict(session.execute(select(Run.id, Run.book_id).where(Run.id.in_(options["run_ids"]))).all())
-    if not children:
-        for run_id in options["run_ids"]:
-            job_queue.enqueue("reassemble", {"run_id": run_id, "knobs": options["knobs"], "fresh": True},
-                              parent_id=job_id, run_id=run_id, book_id=books.get(run_id))
-        raise Deferred(f"waiting for {len(options['run_ids'])} reassemblies", delay_seconds=30)
-    left = [c.id for c in children if c.status not in job_queue.FINISHED]
-    if left:
-        raise Deferred(f"waiting for {len(left)} of {len(children)} reassemblies", delay_seconds=30)
+    children = job_queue.wait_for_children(
+        job_id, "reassemble",
+        lambda: [{"options": {"run_id": r, "knobs": options["knobs"], "fresh": True}, "run_id": r,
+                  "book_id": books.get(r)} for r in options["run_ids"]],
+        "reassemblies")
     if failed := [c.id for c in children if c.status != "done"]:
         raise Final(f"reassemblies not done: {failed}")
     codes = sorted({c.code_hash for c in children})
@@ -173,6 +167,11 @@ def reassembly_gate(options: dict) -> dict:
     return out
 
 
+def _shelf(book_ids: list[int] | None) -> list[int]:
+    with Session() as session:
+        return book_ids or list(session.scalars(select(Book.id).order_by(Book.id)))
+
+
 @register("structure_choose")
 def structure_choose(options: dict) -> dict:
     return structure_gate.entry(options["book_id"], tuple(options["off"]))
@@ -182,18 +181,12 @@ def structure_choose(options: dict) -> dict:
 @register("structure_gate")
 def run_structure_gate(options: dict) -> dict:
     job_id = options["_job_id"]
-    with Session() as session:
-        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "structure_choose")
-                                   .order_by(Job.id)).all()
-        books = options["book_ids"] or list(session.scalars(select(Book.id).order_by(Book.id)))
-    if not children:
-        for book_id in books:
-            job_queue.enqueue("structure_choose", {"book_id": book_id, "off": options["off"]}, parent_id=job_id,
-                              book_id=book_id)
-        raise Deferred(f"waiting for {len(books)} books", delay_seconds=30)
-    left = [c.id for c in children if c.status not in job_queue.FINISHED]
-    if left:
-        raise Deferred(f"waiting for {len(left)} of {len(children)} books", delay_seconds=30)
+    base = gate_record(options["base_job_id"]) if options["base_job_id"] is not None else None
+    if base is not None and base.get("off") != list(options["off"]):
+        raise Final(f"the base gate read with {base.get('off')} off, this one with {list(options['off'])}")
+    children = job_queue.wait_for_children(
+        job_id, "structure_choose", lambda: [{"options": {"book_id": b, "off": options["off"]}, "book_id": b}
+                                             for b in _shelf(options["book_ids"])])
     if failed := [c.id for c in children if c.status != "done"]:
         raise Final(f"books not read: {failed}")
     codes = sorted({c.code_hash for c in children})
@@ -203,11 +196,9 @@ def run_structure_gate(options: dict) -> dict:
     record = {"off": list(off), "code": codes[0], "books": {str(c.book_id): c.result for c in children}}
     artifacts.atomic_write(_gate_path(job_id), record)
     out = {"record": str(_gate_path(job_id).relative_to(settings.DATA_DIR)), "code": codes[0],
-           "books": len(record["books"]), "skipped": sum("skipped" in e for e in record["books"].values())}
-    if options["base_job_id"] is not None:
-        base = gate_record(options["base_job_id"])
-        if base.get("off") != record["off"]:
-            raise Final(f"the base gate read with {base.get('off')} off, this one with {record['off']}")
+           "books": len(record["books"]), "skipped": sum("skipped" in e for e in record["books"].values()),
+           "failed": sum("failed" in e for e in record["books"].values())}
+    if base is not None:
         moved, lines = structure_gate.compare(base["books"], record["books"])
         out |= {"base_job_id": options["base_job_id"], "moved": moved, "report": lines[-REPORT_LINES:]}
     return out
@@ -230,18 +221,9 @@ def probe_book(options: dict) -> dict:
 @register("shelf_probe")
 def shelf_probe(options: dict) -> dict:
     job_id = options["_job_id"]
-    with Session() as session:
-        children = session.scalars(select(Job).where(Job.parent_id == job_id, Job.type == "probe_book")
-                                   .order_by(Job.id)).all()
-        books = options["book_ids"] or list(session.scalars(select(Book.id).order_by(Book.id)))
-    if not children:
-        for book_id in books:
-            job_queue.enqueue("probe_book", {"file": options["file"], "book_id": book_id}, parent_id=job_id,
-                              book_id=book_id)
-        raise Deferred(f"waiting for {len(books)} books", delay_seconds=30)
-    left = [c.id for c in children if c.status not in job_queue.FINISHED]
-    if left:
-        raise Deferred(f"waiting for {len(left)} of {len(children)} books", delay_seconds=30)
+    children = job_queue.wait_for_children(
+        job_id, "probe_book", lambda: [{"options": {"file": options["file"], "book_id": b}, "book_id": b}
+                                       for b in _shelf(options["book_ids"])])
     failed = {str(c.book_id): (c.error or {}).get("error", c.status) for c in children if c.status != "done"}
     record = {"file": options["file"], "codes": sorted({c.code_hash for c in children if c.code_hash}),
               "books": {str(c.book_id): c.result for c in children if c.status == "done"}, "failed": failed}

@@ -257,7 +257,7 @@ def line_blocks(lines: dict[int, list], band: frozenset[int] = frozenset()) -> l
             bold_apart = x.bold and not body_bold and x.size >= body \
                 and (x.size >= body + c["same_size"] or id(x) in apart)
             larger = x.size >= body * c["larger"] or bold_apart
-            # a line in the running slots' band is a running head, however rarely it repeats
+            # a line the running slots claim is a running head, whatever its look
             if not text or id(x) in band or not larger:
                 last = None
                 continue

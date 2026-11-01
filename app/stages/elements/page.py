@@ -18,14 +18,23 @@ def measure(lines: dict) -> tuple[dict, set[int]]:
             "notices": sum(map(len, notices.values()))}, taken
 
 
-# the note and notice lines of a kept page layout, nothing learned twice
+# the note and notice lines of a kept page layout, learned again under its stored note size
 def _foot(lines: dict, layout: dict, pages: list[int], taken: set[int]) -> tuple[dict, dict]:
     size = layout["notes"]["size"] if layout.get("notes") else None
     _, notes, notices = footnotes.learn(lines, pages, layout["body"], taken, size)
     return notes, notices
 
 
-# the slot and note lines of a kept page layout, claimed again by its stored band and sizes, nothing learned twice
+# the note lines alone of a kept page layout: a notice repeated at the foot is no note
+def note_lines(lines: dict, layout: dict) -> set[int]:
+    if not layout.get("notes"):
+        return set()
+    pages = sorted(p for p in lines if lines[p])
+    notes, _ = _foot(lines, layout, pages, slots.claimed(lines, layout, pages))
+    return {id(x) for b in notes.values() for x in b}
+
+
+# the slot and note lines of a kept page layout, claimed again by its stored band and sizes
 def claimed(lines: dict, layout: dict) -> set[int]:
     pages = sorted(p for p in lines if lines[p])
     taken = slots.claimed(lines, layout, pages)

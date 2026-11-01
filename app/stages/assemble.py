@@ -401,8 +401,7 @@ def note_lines(book_id: int, versions: Pinned = CURRENT) -> dict[int, str]:
 
     def make(files) -> dict:
         lines = sources.book_lines(files)
-        notes = layout_page.claimed(lines, layout) - layout_page.claimed(lines, {**layout, "notes": None})
-        return footnotes.note_text(lines, notes)
+        return footnotes.note_text(lines, layout_page.note_lines(lines, layout))
 
     return _by_page(book_id, "note_lines.json", {"layout": kept.id}, make)
 

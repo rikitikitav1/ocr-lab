@@ -2,7 +2,7 @@
 import re
 from collections.abc import Callable
 
-from document.model import Caption, Figure, PageMarker, Piece
+from document.model import Caption, Code, Figure, PageMarker, Piece, Table
 
 
 # a figure is linked only when its image is a file in the bundle
@@ -36,9 +36,9 @@ def _free(out: list, j: int, taken: set[int]) -> bool:
     return 0 <= j < len(out) and j not in taken and isinstance(out[j], Caption) and not out[j].slot
 
 
-# no other figure and no page break stands between a figure and a caption two blocks off
+# nothing a caption could name and no page break stands between a figure and a caption two blocks off
 def _clear(out: list, k: int, j: int) -> bool:
-    return not any(isinstance(b, Figure | PageMarker) for b in out[min(k, j) + 1:max(k, j)])
+    return not any(isinstance(b, Figure | Table | Code | PageMarker) for b in out[min(k, j) + 1:max(k, j)])
 
 
 # the side a piece sets its captions on, from figures with a caption on one side only; after the picture by default

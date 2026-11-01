@@ -1,7 +1,9 @@
 # a structure gate: each book's structure as choose gives it, kept as a record, two records compared book by book
 from engines import card
 from job_signals import Deferred, Final
+from stages import intake
 from stages.structure import collect
+from stages.structure import compare as compare_rows
 
 SHOWN = 5
 
@@ -15,14 +17,16 @@ def entry(book_id: int, off: tuple[str, ...] = ()) -> dict:
         return {"skipped": type(e).__name__}
     except Final as e:
         return {"failed": str(e)[:300]}
-    return {"source": source, "entries": [[e.title, e.level, e.page] for e in got]}
+    files = intake.files_of(book_id)
+    rows = collect.structure_rows(got, source, sum(f.pages for f in files), files)
+    return {"source": source, "entries": [[r[k] for k in compare_rows.STRUCTURE_ROW] for r in rows]}
 
 
 def _titles(rows: list[list]) -> list[str]:
-    return [f"{t} ({level}, p{page})" for t, level, page in rows[:SHOWN]]
+    return [f"{t} ({level}, p{first})" for t, level, first, *_ in rows[:SHOWN]]
 
 
-# a book moves on its source, its failure or skip, or any entry by title, level and page
+# a book moves on its source, its failure or skip, or any row as a structure version would store it
 def compare(base: dict, new: dict) -> tuple[int, list[str]]:
     moved, lines = 0, []
     for book in sorted(base.keys() | new.keys(), key=int):

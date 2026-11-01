@@ -66,15 +66,22 @@ def _in_foot(block, top: float) -> bool:
     return block.where.box[1] >= top - SLOT_BAND if block.where else isinstance(block, Footnote)
 
 
+# shorter runs turn up inside any foot line: "of the" is real text unless a claimed line says just that
+NOTICE_MIN_LETTERS = 20
+
+
 # a block of only the claimed words, or their letters in reading order: a line's end may break a word the engine joined
-def _of_notice(block, words: Counter, run: str) -> bool:
+def _of_notice(block, words: Counter, run: str, whole: frozenset[str]) -> bool:
     text = folding.fold(block.text)
-    return not Counter(text.split()) - words or re.sub(r"\W", "", text) in run
+    letters = re.sub(r"\W", "", text)
+    if len(letters) < NOTICE_MIN_LETTERS:
+        return letters in whole
+    return not Counter(text.split()) - words or letters in run
 
 
 # an engine joins or splits a notice's lines its own way, so a foot block made of the page's claimed lines is marked
 def _mark_notices(blocks: list, slots: dict[int, list[tuple[str, str, float]]]) -> tuple[list, int]:
-    out, n, words, run, top = [], 0, Counter(), "", None
+    out, n, words, run, whole, top = [], 0, Counter(), "", frozenset(), None
     for b in blocks:
         if isinstance(b, PageMarker):
             lines = slots.get(b.file_page, [])
@@ -83,8 +90,9 @@ def _mark_notices(blocks: list, slots: dict[int, list[tuple[str, str, float]]]) 
             if top is not None:
                 folded = [folding.fold(x[0]) for x in sorted(lines, key=lambda x: x[2])]
                 words, run = Counter(w for t in folded for w in t.split()), re.sub(r"\W", "", "".join(folded))
+                whole = frozenset(re.sub(r"\W", "", t) for t in folded)
         elif top is not None and isinstance(b, (Heading, Paragraph, Caption, Footnote)) and not b.slot \
-                and _in_foot(b, top) and _of_notice(b, words, run):
+                and _in_foot(b, top) and _of_notice(b, words, run, whole):
             b = b.model_copy(update={"slot": "notice"})
             n += 1
         out.append(b)

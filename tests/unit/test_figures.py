@@ -1,4 +1,4 @@
-from document.model import Caption, Figure, PageMarker, Paragraph
+from document.model import Caption, Cell, Figure, PageMarker, Paragraph, Table
 from elements import figures
 
 
@@ -26,3 +26,9 @@ def test_a_piece_that_captions_above_gives_a_figure_the_caption_above_though_one
 def test_a_caption_two_blocks_off_on_the_figure_s_page_is_its_own():
     blocks = [Figure(image="a.png"), Paragraph(text="(a) the left part"), Caption(text="Figure 4 Both parts")]
     assert figures.captioned(blocks)[0][0].caption == "Figure 4 Both parts"
+
+
+def test_a_table_between_keeps_its_caption_from_the_figure():
+    blocks = [Figure(image="a.png"), Table(rows=[[Cell(text="a")]]), Caption(text="Table 1. Sizes")]
+    out, n = figures.captioned(blocks)
+    assert n == 0 and out[0].caption is None

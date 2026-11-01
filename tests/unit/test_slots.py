@@ -85,3 +85,10 @@ def test_a_notice_whose_word_a_line_end_broke_is_marked_as_the_engine_joined_it(
     blocks = [_page(1), Footnote(mark="note1", text="under the Attribution-NonCommercial licence"),
               _page(2), Footnote(mark="note2", text="under the Attribution-NonCommercial licence")]
     assert running_heads.mark_slots(blocks, slots)[1] == 2
+
+
+def test_a_few_words_found_in_the_claimed_lines_do_not_make_a_block_a_notice():
+    slots = {1: [("Licensed to the reader of this book", "notice", 0.9), ("Head of the Chapter", "repeat", 0.95)]}
+    got, _ = running_heads.mark_slots([_page(1), Footnote(mark="1", text="of the"),
+                                       Footnote(mark="2", text="Licensed to the reader of this book")], slots)
+    assert [getattr(b, "slot", None) for b in got[1:]] == [None, "notice"]

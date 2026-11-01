@@ -75,7 +75,7 @@ def _page_layout(book_id: int) -> LayoutVersion | None:
                                                           LayoutVersion.kind == "page", LayoutVersion.current))
 
 
-# the lines the page layout's running slots hold by band and size, repeated or not
+# the lines the page layout's running slots read as folios, repeats or side lines
 def _band(book_id: int, lines: dict) -> frozenset[int]:
     kept = _page_layout(book_id)
     if kept is None or "skipped" in kept.layout:

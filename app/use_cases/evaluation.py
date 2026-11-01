@@ -54,7 +54,7 @@ COMMON_TOTALS = ("top_nodes", "top_nodes_found", "top_nodes_below_top", "extra_t
 # two structure evaluations of one set side by side; a probe on a few books compares with a shelf run on its books
 @tool("structure_eval_compare", "GET /v1/eval/structure/compare",
       "Two structure evaluations of one set side by side: the totals with deltas, the totals over the books both "
-      "evaluated (common), and every book of both whose row moved; books only one evaluated are named apart "
+      "scored (common), and every book of both whose row moved; books only one evaluated are named apart "
       "(only_a, only_b); refuses jobs of different sets or not done.")
 def structure_eval_compare(job_a: int, job_b: int) -> dict:
     a, b = _structure_result(job_a), _structure_result(job_b)
@@ -71,12 +71,14 @@ def structure_eval_compare(job_a: int, job_b: int) -> dict:
         if before != after:
             changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
             moved.append({"book_id": book_id, "changed": changed, "a": before, "b": after})
+    # over the books both scored, as a run's own totals are, so a probe and a shelf run add up alike
+    scored = [b for b in both if rows_a[b]["status"] == rows_b[b]["status"] == "scored"]
     common = {}
     for k in COMMON_TOTALS:
-        sums = [sum(rows[b].get(k) or 0 for b in both) for rows in (rows_a, rows_b)]
+        sums = [sum(rows[b].get(k) or 0 for b in scored) for rows in (rows_a, rows_b)]
         common[k] = {"a": sums[0], "b": sums[1], "delta": sums[1] - sums[0]}
     return {"set": a.get("set"), "job_a": job_a, "job_b": job_b, "totals": totals,
-            "common": {"books": len(both), **common}, "moved": moved, "unchanged": len(both) - len(moved),
+            "common": {"books": len(scored), **common}, "moved": moved, "unchanged": len(both) - len(moved),
             "only_a": sorted(rows_a.keys() - rows_b.keys()), "only_b": sorted(rows_b.keys() - rows_a.keys())}
 
 

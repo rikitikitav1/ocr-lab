@@ -205,3 +205,17 @@ def test_the_front_matter_s_roman_folios_are_their_own_sequence_before_the_first
     reasons = slots.claimed_reasons(book, found)
     assert sorted(x.text for x, why in reasons.values() if why == "folio")[:3] == ["1", "10", "11"]
     assert {x.text for x, _ in reasons.values()} >= set(romans)
+
+
+def test_note_lines_are_found_with_a_notice_at_the_same_foot():
+    def page_of(n):
+        return [Line(f"Body text of page {n} runs on and cites a note{n}", 50, 100 + k * 12, 10, False)
+                for k in range(30)] + [Line(f"{n} A note of page {n} with its own words", 50, 600, 8, False),
+                                       Line("This licence stands at the foot of every page", 50, 700, 8, False),
+                                       Line("and runs on over a second line of its own", 50, 710, 8, False),
+                                       Line("and on again over a third line to its end", 50, 720, 8, False)]
+
+    lines = {n: page_of(n) for n in range(1, 21)}
+    layout = page.measure(lines)[0]
+    assert layout["notes"] and layout["notices"]
+    assert len(page.note_lines(lines, layout)) == 20
