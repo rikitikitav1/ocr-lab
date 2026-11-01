@@ -1,9 +1,11 @@
+from dataclasses import replace
+
 import pytest
 import text_layer
 from job_signals import Final
 from stages import intake
 from stages.structure import collect, pages
-from stages.structure.sources import Entry, numbering, printed_contents
+from stages.structure.sources import Entry, SourceEntries, numbering, printed_contents, series
 
 from tests.fixtures import FILLER, build, text_page
 from tests.real_db import needs_db
@@ -230,12 +232,10 @@ def test_bookmarks_win_over_printed_contents(stand, tmp_path):
     assert source == "bookmarks" and [(e.title, e.page) for e in entries] == [("One", 3), ("Two", 4)]
 
 
-@pytest.mark.parametrize("title,depth", [("Часть II. Болезни", -1), ("Chapter 3 Types", 0), ("1.2. Нос", 1),
-                                         ("4.4.1 Hearing", 2), ("Introduction", None), ("Part One", -1),
-                                         ("Chapter XII. End", 0),
-                                         ("Глава первая", 0)])
+@pytest.mark.parametrize("title,depth", [("Часть II. Болезни", -1), ("Глава 3 Types", 0), ("1.2. Нос", 1),
+                                         ("4.4.1 Hearing", 2), ("Introduction", None)])
 def test_title_depth(title, depth):
-    assert numbering.title_depth(title) == depth
+    assert numbering.title_depth(title, labels={"часть": -1, "глава": 0}) == depth
 
 
 def test_a_label_is_cut_from_a_title_only_when_its_number_is_well_formed():
@@ -250,10 +250,11 @@ def test_a_label_is_cut_from_a_title_only_when_its_number_is_well_formed():
 
 
 def test_a_label_in_running_text_is_not_a_chapter():
-    assert numbering._match("Глава 1 начинается с определения понятия", True, False) is None
-    assert numbering._match("part of a group.", True, True) is None
-    assert numbering._match("ГЛАВА 1 Большие данные", True, True)[:2] == ("chapter", (1,))
-    assert numbering._match("2.998e8", False, False) is None
+    kinds = {"глава": "chapter", "part": "part"}
+    assert numbering._match("Глава 1 начинается с определения понятия", True, False, kinds) is None
+    assert numbering._match("part of a group.", True, True, kinds) is None
+    assert numbering._match("ГЛАВА 1 Большие данные", True, True, kinds)[:2] == ("chapter", (1,))
+    assert numbering._match("2.998e8", False, False, kinds) is None
 
 
 def test_bold_sets_a_label_apart_only_when_the_body_is_not_bold():
@@ -261,9 +262,12 @@ def test_bold_sets_a_label_apart_only_when_the_body_is_not_bold():
 
     def book(body_bold):
         prose = [Line("ordinary words of the body " * 3, 30, 40 + 14 * i, 10, body_bold) for i in range(1, 6)]
-        return {5: [Line("Part 1 of the Civil Code regulates persons", 30, 40, 10, True), *prose]}
+        return {5: [Line("Part 1 of the Civil Code regulates persons", 30, 40, 10, True), *prose],
+                9: [Line("Part 2 of the Civil Code regulates things", 30, 40, 10, True), *prose],
+                **{page: prose for page in range(10, 15)}}
 
-    assert [c[2] for c in numbering._candidates(book(False), set())] == ["Part 1 of the Civil Code regulates persons"]
+    assert [c[2] for c in numbering._candidates(book(False), set())] == ["Part 1 of the Civil Code regulates persons",
+                                                                          "Part 2 of the Civil Code regulates things"]
     assert numbering._candidates(book(True), set()) == []
 
 
@@ -864,19 +868,6 @@ def test_contents_running_heads_and_folio_lines_are_known_by_repeat_and_number_n
     assert printed_contents._own_folio(line("Inhoud • 3"), 3) and not printed_contents._own_folio(line("Slot 495"), 3)
 
 
-def test_an_empty_label_list_matches_no_title(monkeypatch):
-    from stages.structure.sources import numbering
-
-    empty = {"text_layer": {"numbering": {"part": [], "chapter": []}}}
-    monkeypatch.setattr(numbering, "conf", lambda: empty)
-    numbering.label_pattern.cache_clear()
-    try:
-        assert numbering.title_depth("Part One Something") is None
-        assert not numbering.label_pattern("part").match(" 3 Topic")
-    finally:
-        numbering.label_pattern.cache_clear()
-
-
 def test_a_bare_label_is_the_word_the_book_sets_before_rising_numbers_in_any_language():
     from stages.structure.sources import headings
 
@@ -947,3 +938,218 @@ def test_what_stands_before_the_first_part_goes_up_whole():
               row("2.1. More", 20, 10.0, False), row("Chapter 3. Last", 0, 10.0, True)]
     entries, _ = printed_contents.levels(parsed)
     assert [e.level for e in entries] == [1, 1, 2, 1, 2, 3, 2]
+
+
+def test_a_series_starting_again_names_its_parent():
+    titles = ["List of Abbreviations", "I. One", "A. Overview", "B. Outline", "1. Basic", "2. Other", "a) Improve",
+              "b) Select", "II. Two", "A. Second", "1. Again", "a) Deep"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) == [0, 0, 1, 1, 2, 2, 3, 3, 0, 1, 2, 3]
+
+
+def test_a_letter_after_its_neighbour_is_no_numeral():
+    titles = ["I. One", "A. First", "B. Second", "C. Third", "D. Fourth", "1. Deep", "2. Deeper", "II. Two",
+              "A. Again", "1. Back"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) == [0, 1, 1, 1, 1, 2, 2, 0, 1, 2]
+
+
+def test_plain_titles_leave_the_levels_to_the_look():
+    titles = ["Preface", "Chapter one", "1 Values", "2 Program", "Summary"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) is None
+
+
+def test_small_numerals_nest_under_their_letter_and_no_level_stands_empty():
+    titles = ["Part One", "A. First", "i. Small", "ii. Next", "1. Deep", "2. Deeper", "iii. Last", "B. Second",
+              "Part Two", "A. Again", "i. Small", "1. Back"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) == [0, 1, 2, 2, 3, 3, 2, 1, 0, 1, 2, 3]
+
+
+def test_a_dotted_number_starts_again_at_its_last_part():
+    titles = ["I. One", "A. First", "1. Deep", "1.1 Deeper", "1.2 Next", "2. Other", "2.1 Again", "B. Second",
+              "1. Back", "1.1 More"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) == [0, 1, 2, 3, 3, 2, 3, 1, 2, 3]
+
+
+def _line(text: str, x: float, top: float) -> text_layer.Line:
+    return text_layer.Line(text, x, top, 10.0, False)
+
+
+def test_a_label_and_its_title_on_one_height_are_one_line():
+    lines = [_line("The Relationship between", 183, 110), _line("Part One:", 132, 110), _line("29", 436, 123),
+             _line("and Human Rights", 183, 125)]
+    assert [x.text for x in printed_contents._one_line_each(lines)] == ["Part One: The Relationship between",
+                                                                        "and Human Rights 29"]
+
+
+def test_a_label_and_a_whole_title_close_by_are_one_line():
+    label = replace(_line("Chapter § 3", 132, 100), right=186)
+    lines = [label, _line("An international instrument 73", 192, 100)]
+    assert [x.text for x in printed_contents._one_line_each(lines)] == ["Chapter § 3 An international instrument 73"]
+
+
+def test_two_entries_side_by_side_stay_two():
+    lines = [_line("Preface 3", 50, 100), _line("Notes 200", 300, 100)]
+    assert [x.text for x in printed_contents._one_line_each(lines)] == ["Preface 3", "Notes 200"]
+
+
+def test_the_rarer_label_stands_above_and_a_lone_one_labels_nothing():
+    titles = ["Part I One", "Chapter 1 Start", "A. First", "1. Deep", "a) Deeper", "Chapter 2 Next", "A. Again",
+              "1. Back", "a) More", "Part II Two", "Chapter 3 Last", "A. Third", "1. Down", "a) Low", "Annex I: Tables"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) == [0, 1, 2, 3, 4, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0]
+
+
+def test_numbers_alone_are_no_mixed_forms():
+    assert not series.mixed(["1 One", "1.1 Two", "1.1.1 Three"])
+    assert series.mixed(["I. One", "A. Two", "1. Three"])
+
+
+def test_a_label_after_the_rest_stands_beside_them():
+    titles = ["Chapter 1 Start", "A. First", "1. Deep", "a) Deeper", "Chapter 2 Next", "A. Again", "1. Back", "a) More",
+              "Chapter 3 Last", "Annex 1: Tables", "Annex 2: Lists"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) == [0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 0]
+
+
+def test_unnumbered_lines_between_top_labels_stand_beside_them():
+    titles = ["Preface", "Part I One", "Chapter 1 Start", "A. First", "1. Deep", "a) Deeper", "Interlude",
+              "Part II Two", "Chapter 2 Next", "A. Again", "1. Back", "a) More", "Chapter 3 Last", "B. Other",
+              "1. More", "a) Low"]
+    assert series.nesting(titles, [100.0] * len(titles), 5) == [0, 0, 1, 2, 3, 4, 0, 0, 1, 2, 3, 4, 1, 2, 3, 4]
+
+
+def test_a_books_labels_come_from_its_titles():
+    titles = ["Lyuk I One", "Sura 1 Start", "Sura 2 Next", "Lyuk II Two", "Sura 3 Last", "Table 4: Lone"]
+    assert series.label_depths(titles) == {"lyuk": -1, "sura": 0}
+    assert series.label_depths(["Part 1 Learn", "1 Shell", "2 Files", "Part 2 Use", "3 More"]) == {"part": -1}
+    assert series.label_depths(["Part 1 Learn", "1 – Shell", "2 – Files", "Part 2 Use"]) == {"part": -1}
+    assert series.label_depths(["Chapter 1-Intro", "Chapter 2-More"]) == {"chapter": 0}
+    assert series.label_depths(["Deep Learning: Foreword", "Chapter 1 A", "Chapter 2 B"]) == {"chapter": 0}
+    assert series.label_depths(["Chapter 1 A", "Interlude 1 B", "Chapter 2 C", "Chapter 3 D"])["chapter"] == 0
+    assert "interlude" not in series.label_depths(["Interlude 1 B", "Chapter 2 C", "Chapter 3 D"])
+    assert series.label_depths(["Good case: high", "Good case: low", "Why I Care", "One thing"]) == {}
+    assert numbering.title_depth("Sura 5 More", labels={"lyuk": -1, "sura": 0}) == 0
+    assert numbering.title_depth("Part 5 More", labels={"lyuk": -1, "sura": 0}) is None
+
+
+def test_a_label_in_the_text_is_set_apart_with_a_number_and_does_not_run_with_the_pages():
+    from text_layer import Line
+
+    def line(text, bold=True):
+        return Line(text, 30, 40, 10, bold)
+
+    prose = [Line("ordinary words of the body " * 3, 30, 40 + 14 * i, 10, False) for i in range(1, 6)]
+    lines = {page: [*prose] for page in range(1, 30)}
+    for page, text in ((5, "Глава 1 Начало"), (15, "Глава 2 Дальше"), (25, "Глава 3 Конец")):
+        lines[page] = [line(text), *prose]
+    for page in (7, 8, 9):
+        lines[page] = [line(f"Introduction {page + 2}"), *prose]
+    lines[11] = [line("like this:", False), *prose]
+    lines[12] = [line("Abbreviated Assignment"), *prose]
+    lines[13] = [line("exit 0 else"), *prose]
+    lines[14] = [line("exit 0 fi"), *prose]
+    body = numbering.body_element.learn(lines, frozenset())
+    assert numbering._kinds(lines, set(), body, 8) == {"глава": "chapter"}
+
+
+def test_a_books_contents_stop_the_search_in_its_text():
+    from stages.structure import collect
+
+    printed = SourceEntries("printed_contents", entries=[Entry("Глава 1. Начало", 1, 3), Entry("Глава 2. Конец", 1, 9)])
+    marks = SourceEntries("bookmarks", failed="switched off")
+    assert collect._has_contents(marks, printed, ())
+    assert not collect._has_contents(marks, printed, ("printed_contents",))
+
+
+def test_labels_in_a_row_inside_a_chapter_stand_under_it():
+    titles = ["Часть I Основы", "Глава 1. Начало", "Уровень 1. Первый", "Уровень 2. Второй", "Глава 2. Дальше",
+              "Часть II Итоги", "Глава 3. Конец"]
+    assert series.label_depths(titles) == {"глава": 0, "часть": -1, "уровень": 0}
+
+
+def test_a_labelled_part_without_a_page_stays_and_an_author_drops():
+    def row(title, printed):
+        return (Entry(title, None, printed=printed), text_layer.Line(title, 50, 10, 10.0, True), 5)
+
+    block = [row("Part I First", None), row("Adapting to Sea Level", "3"), row("Sarra Sefrioui", None),
+             row("Common Fisheries", "23"), row("Part II Second", None), row("Exploring Ambiguity", "165")]
+    assert [e.title for e, _, _ in printed_contents._headings_only(block)] == [
+        "Part I First", "Adapting to Sea Level", "Common Fisheries", "Part II Second", "Exploring Ambiguity"]
+
+
+def test_a_title_cut_short_beside_a_whole_entry_is_the_other_column():
+    lines = [_line("A long title that", 50, 100), _line("Notes 200", 300, 100)]
+    assert [x.text for x in printed_contents._one_line_each(lines)] == ["A long title that", "Notes 200"]
+
+
+def test_a_label_on_its_own_line_takes_the_title_under_it():
+    def row(title, printed):
+        return (Entry(title, None, printed=printed), text_layer.Line(title, 50, 10, 10.0, True), 5)
+
+    block = [row("PART I", None), row("Theoretical implications", "1"), row("Chapter one", "3"),
+             row("PART II", None), row("Applied", "50")]
+    assert [e.title for e, _, _ in printed_contents._headings_only(block)] == [
+        "PART I Theoretical implications", "Chapter one", "PART II Applied"]
+
+
+def test_a_running_label_repeated_over_its_pages_is_still_a_series():
+    assert numbering._a_series([(5, "1"), (6, "1"), (7, "1"), (30, "2"), (31, "2"), (60, "3")])
+
+
+def test_one_bookmark_is_no_contents():
+    from stages.structure import collect
+
+    one = SourceEntries("bookmarks", entries=[Entry("Cover", 1, 1)])
+    assert not collect._has_contents(one, SourceEntries("printed_contents", failed="none"), ())
+
+
+def test_a_scan_keeps_parts_over_chapters_without_a_word_list():
+    from stages.structure import scan
+
+    found = [Entry(t, None) for t in ("Part I Start", "Chapter 1 A", "Chapter 2 B", "Part II End", "Chapter 3 C")]
+    scan.levels(found)
+    assert [e.level for e in found] == [1, 2, 2, 1, 2]
+
+
+def test_annex_after_the_last_series_stays_beside_it():
+    titles = ["I. One", "A. First", "1. Deep", "II. Two", "A. Again", "1. Back", "Annex I: Tables"]
+    assert series.nesting(titles, [100.0] * len(titles), 5)[-1] == 0
+
+
+def test_a_part_without_a_page_lets_its_chapter_open_its_own_entry():
+    lines = [_line("3.9 Conclusion 107", 59, 460), _line("Part II Primary areas of bank regulation", 128, 484),
+             _line("and internal governance", 163, 499), _line("CHAPTER 4 THE ROLE OF RISK MANAGEMENT AND", 54, 514),
+             _line("CAPITAL REGULATION 111", 122, 527), _line("4.1 Introductory overview 111", 59, 551)]
+    titles = [e.title for e, _ in printed_contents._entries(5, lines)]
+    assert "CHAPTER 4 THE ROLE OF RISK MANAGEMENT AND CAPITAL REGULATION" in titles
+
+
+def test_a_wrapped_title_stays_whole_when_a_line_only_looks_numbered():
+    assert not series.opens_entry("3 May System 113", False)
+    assert series.opens_entry("2. Historic Exclusion", True)
+    assert series.opens_entry("1.1 Introduction 1", False)
+    assert not series.opens_entry("Property Litigation: The CLIP Principles", False)
+    assert series.opens_entry("CHAPTER 4 THE ROLE OF RISK", False)
+
+
+def test_a_numbered_chapter_without_a_page_stays():
+    def row(title, printed):
+        return (Entry(title, None, printed=printed), text_layer.Line(title, 50, 10, 10.0, True), 5)
+
+    block = [row("1. Roots", None), row("1.1 Introduction", "1"), row("Sarra Sefrioui", None), row("1.2 Purpose", "1")]
+    assert [e.title for e, _, _ in printed_contents._headings_only(block)] == ["1. Roots", "1.1 Introduction",
+                                                                              "1.2 Purpose"]
+
+
+def test_a_letter_or_numeral_without_its_mark_opens_no_entry():
+    assert not series.opens_entry("C Language 17", False)
+    assert series.opens_entry("C. Language 17", False)
+    assert series.opens_entry("II. Second 40", False)
+    assert not series.numbered("Carlos M. Correa")
+
+
+def test_a_label_alone_keeps_off_a_next_entry_with_its_own_label():
+    def row(title, printed):
+        return (Entry(title, None, printed=printed), text_layer.Line(title, 50, 10, 10.0, True), 5)
+
+    block = [row("Part I", None), row("Chapter 1 Start", "1"), row("Chapter 2 Next", "9"), row("Part II", None),
+             row("Chapter 3 End", "20")]
+    assert [e.title for e, _, _ in printed_contents._headings_only(block)] == [
+        "Part I", "Chapter 1 Start", "Chapter 2 Next", "Part II", "Chapter 3 End"]

@@ -31,6 +31,7 @@ from stages.structure.sources import (
     labelled,
     numbering,
     printed_contents,
+    series,
 )
 from stages.structure.sources.numbering import title_depth
 
@@ -173,7 +174,10 @@ def choose(book_id: int, off: tuple[str, ...] = (), raster: bool = False) -> tup
             printed = seen
             text = pages.page_text(lines, set(seen.notes["pages"]))
             placement = pages.place(seen.entries, text, total)
-        counted = numbering.read(book_files, set(printed.notes.get("pages", [])), lines, _band(book_id, lines))
+        # a book with a contents or bookmarks has its structure there: nothing more is sought in its text
+        counted = SourceEntries("numbering", failed="the contents hold the structure") \
+            if _has_contents(marks, printed, off) else numbering.read(book_files, set(printed.notes.get("pages", [])),
+                                                                      lines, _band(book_id, lines))
     by_file = files.read(book_files)
     found = {s.source: s.entries for s in (marks, printed, by_file, counted) if s.source not in off}
     styled = _styled(found, lines if not scanned(book_id) else None, total, frozenset(printed.notes.get("pages") or []),
@@ -237,16 +241,22 @@ NEIGHBOURS = 0.3
 BACKWARDS = 0.1
 
 
-def _number(entry: Entry, kind: str) -> int | None:
-    m = numbering.label_pattern(kind).match(entry.title.strip())
-    return numerals.value(m.group("num")) if m else None
+def _has_contents(marks: SourceEntries, printed: SourceEntries, off: tuple[str, ...]) -> bool:
+    return any(s.source not in off and sum(e.page is not None for e in s.entries) >= reconcile.MIN_ENTRIES
+               for s in (printed, marks))
+
+
+def _number(entry: Entry, depth: int, labels: dict[str, int]) -> int | None:
+    m = series.LABELLED.match(entry.title.strip())
+    return numerals.value(m.group("num")) if m and labels.get(m.group("word").lower()) == depth else None
 
 
 # labelled entries outside the longest rising run of their kind's numbers are cross-references set like headings
 def _out_of_turn(entries: list[Entry]) -> list[Entry]:
     out = []
-    for kind in ("part", "chapter"):
-        numbered = [(e, n) for e in entries if (n := _number(e, kind)) is not None]
+    labels = series.label_depths([e.title for e in entries])
+    for depth in (-1, 0):
+        numbered = [(e, n) for e in entries if (n := _number(e, depth, labels)) is not None]
         best = [1] * len(numbered)
         for i in range(len(numbered)):
             for j in range(i):
@@ -263,13 +273,14 @@ def _out_of_turn(entries: list[Entry]) -> list[Entry]:
 
 # labelled chapters that can stand as a structure: their numbers rise and they open pages apart
 def _labelled(entries: list[Entry]) -> int:
-    found = [e for e in entries if title_depth(e.title) in (-1, 0)]
+    labels = series.label_depths([e.title for e in entries])
+    found = [e for e in entries if title_depth(e.title, labels=labels) in (-1, 0)]
     if len(_out_of_turn(found)) > BACKWARDS * max(1, len(found) - 1):
         return 0
     # a part's page and its first chapter's page are neighbours by design, so each kind is measured among itself
     close = steps = 0
     for depth in (-1, 0):
-        pages = [e.page for e in found if e.page is not None and title_depth(e.title) == depth]
+        pages = [e.page for e in found if e.page is not None and title_depth(e.title, labels=labels) == depth]
         close += sum(b - a <= 1 for a, b in zip(pages, pages[1:], strict=False))
         steps += max(0, len(pages) - 1)
     return 0 if close > NEIGHBOURS * max(1, steps) else len(found)

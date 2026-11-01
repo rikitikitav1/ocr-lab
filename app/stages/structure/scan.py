@@ -12,7 +12,7 @@ from orm.catalogue import Book
 
 from stages import intake
 from stages.structure import pages as placing
-from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, conf, pages_of, windows
+from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, conf, pages_of, series, windows
 from stages.structure.sources.numbering import title_depth
 from stages.structure.sources.printed_contents import CONTENTS_RISING, ENTRY, TRAILING_LEADER
 
@@ -213,11 +213,11 @@ def labels(titles: list[str]) -> set[str]:
 
 def style(title: str, labelled: set[str] = frozenset(), roman: bool = True) -> tuple | None:
     text = title.strip()
+    if (word := series.label_of(text)) in labelled:
+        return ("label", word)
     if (m := STYLE_LABELLED.match(text)) and m.group(1).lower() in labelled:
         return ("label", m.group(1).lower())
     depth = title_depth(text, bare=True)
-    if depth == -1:
-        return ("part",)
     if STYLE_ROMAN.match(text) and (roman or LONG_ROMAN.match(text)):
         return ("roman",)
     if depth is not None:
@@ -230,7 +230,8 @@ def style(title: str, labelled: set[str] = frozenset(), roman: bool = True) -> t
 # the first numbering style met is outermost, a new one nests, an old one climbs back; unnumbered sits innermost
 def levels(found: list[Entry]) -> None:
     open_styles: list[tuple] = []
-    labelled = labels([e.title for e in found])
+    titles = [e.title for e in found]
+    labelled = labels(titles) | set(series.label_depths(titles))
     roman = any(LONG_ROMAN.match(e.title.strip()) for e in found)
     for e in found:
         found_style = style(e.title, labelled, roman)

@@ -8,7 +8,7 @@ import text_layer
 from elements import running_heads
 from orm.catalogue import BookFile
 
-from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, book_lines, conf, pages_of, windows
+from stages.structure.sources import PRINTED_AHEAD, Entry, SourceEntries, book_lines, conf, pages_of, series, windows
 from stages.structure.sources.numbering import title_depth
 
 LEADER = r"(?:\s*(?:\.\s?|·\s?|…|_){2,}\s*|\s{2,}|\s)"
@@ -32,6 +32,10 @@ WATERMARK_SAMPLE = 40
 WATERMARK_SHARE = 0.6
 FOLIO = re.compile(rf"^\s*{numerals.PAGE}\s*$", re.I)
 JOIN_SLACK = 3
+# pieces this share of the type size apart in height stand on one printed line
+BASELINE_SHARE = 0.3
+# pieces this many type sizes apart on one height are two columns
+COLUMN_GAP = 4
 # a page number with no leader, a mark that is no dash (a dash between numbers is a range), the next row's title
 ROW_MARK = re.compile(r"(?<=[^\s.·…_])\s+(\d{1,4})\s+([^\w\s.,:;()'\"’“”‐\-–—])\s+(?=\w)")
 ROW_MARK_LINES = 3
@@ -194,11 +198,19 @@ def _entries(page: int, lines: list[text_layer.Line]) -> list[tuple[Entry, text_
             pending = []
             continue
         m = ENTRY.match(line.text)
+        # the same row with its label and page number read as one line
+        if m is not None and len(pending) > 0 and LONE_LABEL.match(m.group("title")):
+            title = " ".join([m.group("title"), *(x.text for x in pending)])
+            out.append((Entry(title, None, printed=m.group("page"), evidence=f"contents page {page}"), line))
+            pending = []
+            continue
         # a Roman page number is lower case or follows a leader, or "Part I" reads as an entry on page I
         if m is not None and not m.group("page").isdigit() and not m.group("page").islower() \
                 and not DOTTED.search(line.text):
             m = None
-        if pending and not _continues(pending[-1], line, m is not None):
+        # a line opening with its own number or label starts an entry, whatever stands open above it
+        opens = bool(pending) and series.opens_entry(line.text, series.label_of(pending[0].text) is not None)
+        if pending and (opens or not _continues(pending[-1], line, m is not None)):
             out.append((Entry(" ".join(x.text for x in pending), None, evidence=f"contents page {page}"), pending[0]))
             pending = []
         if m is None:
@@ -213,16 +225,25 @@ def _entries(page: int, lines: list[text_layer.Line]) -> list[tuple[Entry, text_
     return out
 
 
+# the labels of a block: a lone top label counts when its line stands apart, with no page or set larger than the entries
+def _block_labels(block: list[tuple[Entry, text_layer.Line, int]]) -> dict[str, int]:
+    sizes = Counter(line.size for e, line, _ in block if e.printed is not None)
+    body = sizes.most_common(1)[0][0] if sizes else 0
+    standing = [e.printed is None or line.size > body for e, line, _ in block]
+    return series.label_depths([e.title for e, _, _ in block], standing=standing)
+
+
 # indents from the page's own left edge, or from pages of the same parity when only sections are there
 def _indented(entries: list[tuple[Entry, text_layer.Line, int]]) -> list[tuple[Entry, text_layer.Line, int]]:
     numbered = [(e, line, page) for e, line, page in entries if e.printed is not None]
-    top = min((title_depth(e.title) or 0 for e, _, _ in numbered), default=0)
+    labels = _block_labels(entries)
+    top = min((title_depth(e.title, labels=labels) or 0 for e, _, _ in numbered), default=0)
     own, parity = {}, {}
     for e, line, page in numbered:
         own[page] = min(own.get(page, line.x), line.x)
-        if (title_depth(e.title) or 0) == top:
+        if (title_depth(e.title, labels=labels) or 0) == top:
             parity[page % 2] = min(parity.get(page % 2, line.x), line.x)
-    tops = {page for e, _, page in numbered if (title_depth(e.title) or 0) == top}
+    tops = {page for e, _, page in numbered if (title_depth(e.title, labels=labels) or 0) == top}
     edge = {page: own[page] if page in tops else parity.get(page % 2, own[page]) for page in own}
     return [(e, replace(line, x=line.x - edge.get(page, line.x)), page) for e, line, page in entries]
 
@@ -288,8 +309,39 @@ def _rows(line: text_layer.Line, mark: str | None) -> list[text_layer.Line]:
     return [replace(line, text=line.text[a:b].strip()) for a, b in zip(starts, ends, strict=True)]
 
 
+# a whole entry far from its neighbour on one height stands in the next column: a label's title sits close by
+def _a_column(left: text_layer.Line, right: text_layer.Line) -> bool:
+    whole = ENTRY.match(left.text) is not None or ENTRY.match(right.text) is not None
+    return whole and not FOLIO.match(right.text) and right.x - left.right > COLUMN_GAP * left.size
+
+
+def _piece_of(line: text_layer.Line, group: list[text_layer.Line]) -> bool:
+    if line.turned or abs(line.top - group[0].top) > BASELINE_SHARE * max(line.size, group[0].size):
+        return False
+    return not any(_a_column(*sorted((line, x), key=lambda piece: piece.x)) for x in group)
+
+
+# a label, its title and a page number the file keeps apart read as the one line they are printed on
+def _one_line_each(page_lines: list[text_layer.Line]) -> list[text_layer.Line]:
+    groups: list[list[text_layer.Line]] = []
+    for line in page_lines:
+        group = next((g for g in groups[-3:] if not g[0].turned and _piece_of(line, g)), None)
+        if group is None:
+            groups.append([line])
+        else:
+            group.append(line)
+    out = []
+    for group in groups:
+        pieces = sorted(group, key=lambda x: x.x)
+        main = max(pieces, key=lambda x: len(x.text))
+        out.append(replace(pieces[0], text=" ".join(x.text.strip() for x in pieces), size=main.size, bold=main.bold,
+                           right=max(x.right for x in pieces)) if len(pieces) > 1 else pieces[0])
+    return out
+
+
 def parse(pages: list[int], lines: dict[int, list[text_layer.Line]],
           total: int) -> tuple[list[tuple[Entry, text_layer.Line, int]], list[list]]:
+    lines = {**lines, **{p: _one_line_each(lines[p]) for p in pages if p in lines}}
     blocks: list[list] = [[]]
     running, feet = _running_heads(pages, lines), _repeated_edge(pages, lines, _last_line)
     sizes = Counter(x.size for p in pages for x in lines.get(p, []) if ENTRY.match(x.text))
@@ -319,13 +371,37 @@ def parse(pages: list[int], lines: dict[int, list[text_layer.Line]],
     return _headings_only(fullest), [b for b in blocks if b is not fullest]
 
 
-# a line without a page number is a title only when set larger than the entries, so the imprint drops
+# a line without a page number is a title when set larger than the entries or labelled, so the imprint drops
 def _headings_only(block: list[tuple[Entry, text_layer.Line, int]]) -> list[tuple[Entry, text_layer.Line, int]]:
     sizes = Counter(line.size for e, line, _ in block if e.printed is not None)
     if not sizes:
         return block
     body = sizes.most_common(1)[0][0]
-    return [(e, line, p) for e, line, p in block if e.printed is not None or line.size > body]
+    labels = _block_labels(block)
+    kept = [(e, line, p) for e, line, p in block
+            if e.printed is not None or line.size > body or series.label_of(e.title) in labels
+            or series.numbered(e.title)]
+    return _labels_with_titles(kept, labels)
+
+
+# a label on its own line and the title under it are one entry
+def _labels_with_titles(block: list[tuple[Entry, text_layer.Line, int]],
+                        labels: dict[str, int]) -> list[tuple[Entry, text_layer.Line, int]]:
+    out, pending, pending_row = [], None, None
+    for e, line, page in block:
+        if pending is not None:
+            # a next entry with its own label or number is no title of this one
+            if series.label_of(e.title) in labels or series.numbered(e.title):
+                out.append(pending_row)
+            else:
+                e = replace(e, title=f"{pending.title} {e.title}")
+            pending = None
+        alone = e.printed is None and len(e.title.split()) == 2 and series.label_of(e.title) in labels
+        if alone:
+            pending, pending_row = e, (e, line, page)
+        else:
+            out.append((e, line, page))
+    return out
 
 
 # an entry's look is its first word's: a line's dot leaders outvote its title, so only a line without them reads true
@@ -340,15 +416,16 @@ def _styles(parsed: list[tuple[Entry, text_layer.Line]]) -> dict[tuple, tuple]:
     return {s: s if s in common else min(common, key=lambda c: (abs(c[0] - s[0]), c[1] != s[1])) for s in seen}
 
 
-def _depth(entry: Entry) -> int | None:
-    return title_depth(entry.title, bare=True)
+def _depth(entry: Entry, labels: dict[str, int]) -> int | None:
+    return title_depth(entry.title, bare=True, labels=labels)
 
 
 # a look most of whose numbered entries sit at one depth with none above it: its depth, edge and a bare number's width
-def _depth_of_look(parsed: list[tuple[Entry, text_layer.Line, int]]) -> dict[tuple, tuple[int, float, float]]:
+def _depth_of_look(parsed: list[tuple[Entry, text_layer.Line, int]],
+                   labels: dict[str, int]) -> dict[tuple, tuple[int, float, float]]:
     seen: dict[tuple, list] = {}
     for entry, line, _ in parsed:
-        if (depth := _depth(entry)) is not None:
+        if (depth := _depth(entry, labels)) is not None:
             seen.setdefault(_look(line), []).append((depth, line, entry))
     out = {}
     for look, rows in seen.items():
@@ -363,15 +440,16 @@ def _depth_of_look(parsed: list[tuple[Entry, text_layer.Line, int]]) -> dict[tup
 
 
 # as deep as its look's numbered ones unless further in than their number takes, else as its nearest numbered neighbour
-def _depths(parsed: list[tuple[Entry, text_layer.Line, int]]) -> list[int]:
-    by_look = _depth_of_look(parsed)
+def _depths(parsed: list[tuple[Entry, text_layer.Line, int]], labels: dict[str, int]) -> list[int]:
+    by_look = _depth_of_look(parsed, labels)
     out = []
     for entry, line, page in parsed:
-        depth = _depth(entry)
+        depth = _depth(entry, labels)
         if depth is None and (seen := by_look.get(_look(line))):
             depth = seen[0] + (line.x - seen[1] > INDENT_GAP + seen[2])
         if depth is None:
-            peers = [(abs(x.x - line.x), x.x, _depth(e)) for e, x, p in parsed if p == page and _depth(e) is not None]
+            peers = [(abs(x.x - line.x), x.x, _depth(e, labels)) for e, x, p in parsed
+                     if p == page and _depth(e, labels) is not None]
             if peers:
                 _, x, depth = min(peers)
                 depth += line.x - x > INDENT_GAP
@@ -391,14 +469,24 @@ def _lift_head(entries: list[Entry]) -> None:
             e.level -= shift
 
 
-# levels: size and weight first, then title numbers when most entries have one, else the indent
+# levels: title numbers when most entries have one, else the series the numbering forms, else size, weight and indent
 def levels(parsed: list[tuple[Entry, text_layer.Line, int]]) -> tuple[list[Entry], str]:
     style = _styles([(e, line) for e, line, _ in parsed])
     # rows split out of one printed line count as that line
     printed = {(page, line.top, line.x): e for e, line, page in reversed(parsed)}
-    by_numbers = sum(_depth(e) is not None for e in printed.values()) >= NUMBERED_SHARE * len(printed)
+    titles = [e.title for e, _, _ in parsed]
+    labels = _block_labels(parsed)
+    by_numbers = sum(_depth(e, labels) is not None for e in printed.values()) >= NUMBERED_SHARE * len(printed)
+    if not by_numbers or series.mixed(titles):
+        nested = series.nesting(titles, [max(x.x, 0) for _, x, _ in parsed], INDENT_GAP)
+        if nested:
+            for (entry, _, _), level in zip(parsed, nested, strict=True):
+                entry.level = level + 1
+            entries = [entry for entry, _, _ in parsed]
+            _lift_head(entries)
+            return entries, "series"
     if by_numbers:
-        inner = _depths(parsed)
+        inner = _depths(parsed, labels)
     else:
         steps = _indent_steps([max(line.x, 0) for e, line, _ in parsed if e.printed is not None])
         inner = [steps[max(line.x, 0)] if e.printed is not None else 0 for e, line, _ in parsed]

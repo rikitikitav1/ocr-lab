@@ -12,8 +12,6 @@ text_layer:
   numbering:
     head_lines: 8          # a part or chapter label counts only among the first lines of a page (an epigraph may come first)
     max_chars: 120         # a numbered line longer than this is prose, not a heading
-    part: [part, часть, частина, teil, partie, parte, część]
-    chapter: [chapter, глава, розділ, kapitel, chapitre, capítulo, capitolo, rozdział]
   # headings told by type when no contents source holds the book; grouped and levelled as scan_layer.headings
   headings:
     larger: 1.15           # a line this much larger than the body's commonest size, or bold over a plain body, is a heading

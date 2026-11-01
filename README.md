@@ -92,20 +92,24 @@ Where each step stands: [docs/status.md](docs/status.md).
    and attempts. A field can be set by hand (`PATCH /v1/books/{id}/metadata/{name}`, a new version);
    the book content itself is never edited by hand. `POST /v1/books/{id}/recollect` collects again; with `"run": true` it starts a run once the structure is collected, so `what` must hold `structure`.
 6. **Page layout** (CPU lane). After the metadata (or straight after intake when `then` has no `metadata`), the
-   book's running heads, page numbers, footnote lines and the share of letters set in a monospace face are learned
-   from its text layer (`GET /v1/books/{id}/layout`). The assembly reads them and the run's preset is chosen by them;
+   book's running heads, page numbers, footnote lines, a notice repeated at its foot and the share of letters set in
+   a monospace face are learned from its text layer (`GET /v1/books/{id}/layout`). The assembly reads them and leaves
+   the notice out of the text, and the run's preset is chosen by them;
    a run works on the page layout version it started on. The structure job is queued after it, and the heading
    layout after the structure.
 7. **Structure** (CPU lane; GPU only to recognise a raster). The contents printed in the book
    are found in the text layer, or on the raster when neither the text, the bookmarks nor chapter
    files give one; contents spread over several pages are read as one, and their printed pages are put
-   on PDF pages. Reconciled with the bookmarks, chapter files and numbering, the result is a structure
-   version, a tree of nodes with every node's level, parent, first and last page (`GET /v1/books/{id}/structure`). When nothing else holds
+   on PDF pages. A contents' levels are read from the book, with no word lists: a numbering series that starts
+   again names its parent (`A.` under `II.`), a word before different numbers is a label, the rarer label that
+   breaks up the commoner stands above it, and size, weight and indent decide the rest. Reconciled with the
+   bookmarks and chapter files, the result is a structure version; a book with a contents or bookmarks takes
+   no labelled chapters from its text. It is a tree of nodes with every node's level, parent, first and last page (`GET /v1/books/{id}/structure`). When nothing else holds
    the contents, a text book's nodes come from the lines its text layer sets apart by size or weight, grouped by
    look as the headings below are (the numbering votes on them); they are refused as a broken text layer when half
    of them hold letters the book's languages do not write. Failing that, the chapters opening with the book knob's
    label `structure.chapter_label` are the structure when it is set (for a scan too; the text-layer headings are then
-   not read), then the labelled chapters in the text ("Chapter N", three or more, numbers rising), then a word the
+   not read), then the labelled chapters in the text (a word and a figure or Roman number set apart or alone on a line at a page's head, three or more, numbers rising from low and not keeping step with the pages), then a word the
    text repeats before its chapters' numbers ("Глава осма"). With none of these, every page is read as a picture and the headings grouped by look give the
    nodes (book knob `structure.from_headings`, on by default); when they give none, or more than one node
    to two pages, a book of at most 100 pages is one node and a longer one fails with "structure not
